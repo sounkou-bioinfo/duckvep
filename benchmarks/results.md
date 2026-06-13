@@ -37,22 +37,26 @@ streams.
 
 ## Ensembl-VEP concordance
 
-Per-(variant, transcript) consequence agreement between duckvep and the
-**live Ensembl VEP** (REST API), over sampled real ClinVar variants —
-annotated with the reference FASTA so coding calls (synonymous vs
-missense) are exact.
+Per-(variant, transcript) consequence agreement vs the **live Ensembl
+VEP** (REST API), over sampled real ClinVar variants annotated with the
+reference FASTA (so coding calls — synonymous vs missense — are exact).
+Both duckvep **and** fastVEP (the underlying engine) are compared
+against Ensembl VEP:
 
 ``` duckdb
-SELECT date, n_variants AS "variants", pairs AS "shared pairs",
+SELECT date, engine, n_variants AS "variants", pairs AS "shared pairs",
        agree, pct AS "concordance %"
 FROM 'data/vep_dumps/concordance_log.csv'
-ORDER BY date DESC;
+ORDER BY date DESC, engine;
 ```
 
-| date       | variants | shared pairs | agree | concordance % |
-|------------|---------:|-------------:|------:|--------------:|
-| 2026-06-14 |      500 |         7083 |  7067 |         99.77 |
+| date       | engine  | variants | shared pairs | agree | concordance % |
+|------------|---------|---------:|-------------:|------:|--------------:|
+| 2026-06-14 | duckvep |      200 |         2677 |  2677 |         100.0 |
+| 2026-06-14 | fastvep |      200 |         2677 |  2677 |         100.0 |
 
-Disagreements are transcript-boundary/version edges (GFF3 release vs
+duckvep matches Ensembl VEP because it wraps the same engine; the table
+also shows fastVEP itself vs Ensembl VEP. Remaining disagreements (at
+larger samples) are transcript-boundary/version edges (GFF3 release vs
 VEP’s transcript set), not systematic. Dated annotation dumps accumulate
 under `data/vep_dumps/<date>/annotations.parquet`.

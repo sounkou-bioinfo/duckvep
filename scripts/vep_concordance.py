@@ -78,29 +78,60 @@ COPY (
 ) TO '/tmp/dv.json' (FORMAT json);"""
 subprocess.run([DUCKDB, "-unsigned", "-c", sql], check=True)
 
-# 4. Dated Parquet dump (both sources) + concordance summary, via DuckDB.
+# 3b. fastVEP (the underlying engine) on the same sample — validates engine vs VEP.
+FASTVEP = os.environ.get("FASTVEP", f"{ROOT}/../DuckfastVEP/target/release/fastvep")
+fv_rows = []
+if os.path.exists(FASTVEP):
+    with open("/tmp/sample.vcf", "w") as fh:
+        fh.write("##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+        for (c, p, r, a) in sample:
+            fh.write(f"{c}\t{p}\t.\t{r}\t{a}\t.\t.\t.\n")
+    fv = subprocess.run([FASTVEP, "annotate", "-i", "/tmp/sample.vcf", "--gff3", GFF3,
+                         "--fasta", FASTA, "--output-format", "tab"], capture_output=True, text=True)
+    cols = None
+    for line in fv.stdout.splitlines():
+        if line.startswith("##"):
+            continue
+        f = line.split("\t")
+        if line.startswith("#"):
+            cols = {n: i for i, n in enumerate(f)}; continue
+        if not cols:
+            continue
+        loc, allele, tid, csq = f[cols["Location"]], f[cols["Allele"]], f[cols["Feature"]], f[cols["Consequence"]]
+        pos = int(loc.split(":")[1].split("-")[0])
+        fv_rows.append(dict(source="fastvep", date=DATE, pos=pos, ref="", alt=allele,
+            transcript_id=tid, gene_symbol="", consequence="&".join(sorted(csq.split(","))), impact=""))
+    with open("/tmp/fv.json", "w") as fh:
+        for r in fv_rows:
+            fh.write(json.dumps(r) + "\n")
+    print(f"fastVEP: {len(fv_rows)} rows", file=sys.stderr)
+
+# 4. Dated Parquet dump (all sources) + THREE-WAY concordance vs Ensembl VEP.
+fv_union = "UNION ALL BY NAME SELECT * FROM read_json('/tmp/fv.json')" if fv_rows else ""
+# Join on (pos, alt, transcript_id): SNVs, and fastVEP's tab output omits ref.
 summary_sql = f"""
 CREATE TABLE ann AS
   SELECT * FROM read_json('/tmp/vep_raw.json', columns={{source:'VARCHAR',date:'VARCHAR',pos:'BIGINT',ref:'VARCHAR',alt:'VARCHAR',transcript_id:'VARCHAR',gene_symbol:'VARCHAR',consequence:'VARCHAR',impact:'VARCHAR'}})
-  UNION ALL BY NAME
-  SELECT * FROM read_json('/tmp/dv.json');
+  UNION ALL BY NAME SELECT * FROM read_json('/tmp/dv.json')
+  {fv_union};
 COPY (SELECT * FROM ann ORDER BY pos, transcript_id, source) TO '{OUTDIR}/annotations.parquet' (FORMAT parquet);
-WITH v AS (SELECT pos,ref,alt,transcript_id,consequence FROM ann WHERE source='vep'),
-     d AS (SELECT pos,ref,alt,transcript_id,consequence FROM ann WHERE source='duckvep')
-SELECT count(*) AS pairs,
-       count(*) FILTER (WHERE v.consequence=d.consequence) AS agree,
-       round(100.0*count(*) FILTER (WHERE v.consequence=d.consequence)/nullif(count(*),0),2) AS pct
-FROM v JOIN d USING (pos,ref,alt,transcript_id);
+WITH v AS (SELECT pos,alt,transcript_id,consequence FROM ann WHERE source='vep')
+SELECT e.source AS engine, count(*) AS pairs,
+       count(*) FILTER (WHERE v.consequence=e.consequence) AS agree,
+       round(100.0*count(*) FILTER (WHERE v.consequence=e.consequence)/nullif(count(*),0),2) AS pct
+FROM (SELECT * FROM ann WHERE source<>'vep') e
+JOIN v USING (pos,alt,transcript_id)
+GROUP BY e.source ORDER BY e.source;
 """
 out = subprocess.run([DUCKDB, "-csv", "-c", summary_sql], capture_output=True, text=True).stdout.strip().splitlines()
-pairs, agree, pct = out[-1].split(",")
 log = f"{ROOT}/data/vep_dumps/concordance_log.csv"
 new = not os.path.exists(log)
+print(f"\n=== Concordance vs Ensembl VEP ({DATE}) ===")
 with open(log, "a") as fh:
     if new:
-        fh.write("date,n_variants,pairs,agree,pct\n")
-    fh.write(f"{DATE},{len(sample)},{pairs},{agree},{pct}\n")
-print(f"\n=== Ensembl-VEP concordance ({DATE}) ===")
-print(f"  pairs={pairs} agree={agree} concordance={pct}%")
+        fh.write("date,engine,n_variants,pairs,agree,pct\n")
+    for row in out[1:]:  # skip header
+        engine, pairs, agree, pct = row.split(",")
+        fh.write(f"{DATE},{engine},{len(sample)},{pairs},{agree},{pct}\n")
+        print(f"  {engine:8s} vs VEP: pairs={pairs} agree={agree} concordance={pct}%")
 print(f"  dump: {OUTDIR}/annotations.parquet")
-print(f"  log:  {log}")
