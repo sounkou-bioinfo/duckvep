@@ -106,42 +106,43 @@ suboptimal for a columnar/DuckDB use case — chiefly: route around the
 `-io`/`-hgvs`) and build the lean transcript+reference+predictor closure
 directly. See `vendor/NOTICE.md`.
 
-## 1c. The transcript Parquet is the contract; exporters are interchangeable
+## 1c. Ensembl is the source of truth; persist the slices we need into local DuckDB
 
-The **runtime** transcript model is a nested **Parquet** (+ faidx FASTA). That is
-the only thing duckvep requires at annotation time — **no MySQL, no duckhts, no
-network**. Multiple *build-time* exporters produce that same Parquet, so we are
-never locked to one source:
+**Scope decision:** duckvep targets the organisms Ensembl's VEP MySQL (or a
+compatible service / local mirror) offers — we do **not** chase general-organism
+GFF3. Riding on Ensembl's canonical core schema buys **exact `ensembl-vep` and
+`haplosaurus` compatibility by construction**: same transcript set, same
+attributes, same HGVS exceptions — not a re-derived approximation. (VEP's own
+cache is Perl `Storable` *derived from this same DB*; we skip that format
+entirely.)
 
-- **GFF3 + FASTA → Parquet (default, portable).** Offline, any organism. We
-  already parse GFF3 to the transcript model (`parse_gff3` in the vendored
-  cache); the only change is serializing to the nested Parquet instead of
-  bincode. This is the self-sufficient baseline — we can always generate the
-  format ourselves.
-- **Ensembl MySQL → Parquet (optional convenience).** DuckDB's `mysql` extension
-  attaches `ensembldb.ensembl.org` and reconstructs the model in SQL — handy for
-  human/Ensembl without downloading a GFF3 (verified: 71,935 genes / 279,860
-  transcripts; BRCA1 region round-trip). VEP's own cache is Perl `Storable`,
-  derived from this same DB, so we skip parsing that format entirely.
-  `scripts/ensembl-transcripts.sql`. **Build-time only.**
+**Runtime artifact = a local DuckDB database** holding the slices we require,
+synced once from Ensembl MySQL. At annotation time duckvep reads the local
+slices (`ATTACH … (READ_ONLY)`) — **no MySQL, no network, no duckhts**. This
+local DB *is* the cache; it replaces the bincode `transcript_cache.rs` and is
+strictly richer.
 
-Either exporter writes the identical *core* schema, so the runtime kernel is
-source-agnostic. This deletes the GFF3 parser's bincode `transcript_cache.rs`.
+**Slices to persist** (`scripts/ensembl-sync.sql`):
 
-**The exporters are not fully equivalent, and that's useful.** Ensembl MySQL
-carries data GFF3 lacks that VEP actually applies — and which changes HGVS /
-consequence: `transcript_attrib`/`seq_region_attrib` HGVS **exceptions** (RNA
-edits `_rna_edit`, selenocysteine, incomplete CDS `cds_start_NF`/`cds_end_NF`,
-ribosomal slippage), `xref` gene/transcript **aliases & synonyms**, and
-**known-variant** cross-refs. These ride into the transcript Parquet as extra
-columns / sidecar tables. So: **GFF3+FASTA → core consequence parity**;
-**Ensembl exporter → exact HGVS / VEP concordance** (the exception data is the
-difference between "right consequence term" and "byte-identical HGVS string").
+- **Coordinates & names:** `coord_system`, `seq_region`, `seq_region_synonym`
+  (contig-name aliasing), `seq_region_attrib`.
+- **Model:** `gene`, `transcript`, `exon`, `exon_transcript`, `translation`.
+- **HGVS exceptions VEP applies:** `transcript_attrib`, `translation_attrib`,
+  `attrib_type` (decode) — RNA edits `_rna_edit`, selenocysteine, incomplete CDS
+  `cds_start_NF`/`cds_end_NF`, ribosomal slippage.
+- **Aliases:** `xref`, `external_synonym`, `object_xref`, `external_db`.
 
-**duckhts is a compatible peer, not a dependency.** duckvep is self-contained
-(its own readers + interval overlap). Where a user has duckhts loaded, our
-functions compose with its `cgranges`/variant-key UDFs (shared variant-table
-contract), but nothing in duckvep *requires* it at build or runtime.
+Materialized as DuckDB tables (or nested Parquet), sorted by `(chrom, pos)` for
+zone-map pruning. Reference **sequence** stays a bgzip+faidx FASTA (Ensembl's
+per-release FASTA) — sequence is the one thing not worth holding in the DB.
+
+**GFF3+FASTA** remains only a degraded fallback for non-Ensembl inputs (core
+consequence, no HGVS-exception fidelity).
+
+**Self-contained — duckhts is not a dependency or an integration target.**
+duckvep ships its own readers, interval overlap, and variant keys. We may
+*borrow patterns* (cgranges-style interval search, key encoding) and reimplement
+them here, but nothing requires loading another extension at build or run time.
 
 ## 2. Architecture (decided)
 
