@@ -9,3 +9,4 @@ venv
 /data/giab
 *.duckdb_extension
 README.html
+.claude
