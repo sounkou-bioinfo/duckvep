@@ -328,31 +328,59 @@ metadata, or into the bundled `duckdb` file. This replaces `sa-build` and every
 
 ---
 
-## 5. Reference & transcript cache (the one place we keep a "cache")
+## 5. The cache is a native DuckDB file (core-only runtime)
 
-Consequence/HGVS need random access + precomputed coordinate maps, not a scan —
-but still on **standard substrates**, not bespoke encodings.
+The runtime cache is a **native DuckDB database** (`.duckdb`) holding relational
+tables, read with `ATTACH … (READ_ONLY)`. **Runtime requires DuckDB core only —
+no Parquet, no MySQL, no extensions** (verified: a GFF-built cache reads back in
+plain `duckdb` with no `-unsigned` and nothing loaded). This replaces the bincode
+`transcript_cache.rs`.
 
-- **FASTA → bgzip + faidx (`.fai`/`.gzi`).** That *is* the cache: O(1) region
-  access, read by noodles. Also exposed as `read_fasta(path, region)`. The
-  consequence UDF opens it once and calls `fetch_sequence(chrom, start, end)` —
-  the closure `fastvep_genome::Transcript::build_sequences` already expects.
-- **GFF3 → nested transcript Parquet**, one row per transcript (exons/CDS arrays
-  with phase, strand, biotype, canonical, gene, source label for `--merged`),
-  KV footer carries assembly/source/version. Replaces
-  `transcript_cache.rs` (bincode+zstd). Wins: **chrom predicate pushdown** (load
-  only the chroms being annotated), SQL-inspectable, language-agnostic, no
-  custom format. Optional opt-in columns: precomputed spliced cDNA / protein
-  sequence (fewer FASTA seeks, bigger cache — VEP-style).
-- **Runtime:** `vep_load_cache()` loads the transcript Parquet once, builds the
-  in-memory interval tree (existing `get_transcripts` overlap path), and holds
-  it in extension state keyed by `path+mtime`; reused across all rows and
-  repeated queries. Same speed model as today (precompute + load-once), with
-  pushdown as a free upgrade.
+**Schema (relational, mirrors Ensembl):** `transcripts(transcript_id, chrom,
+start, end_pos, strand, biotype, gene_id, gene_symbol, canonical, coding, tsl,
+appris, flags[])`, `exons(transcript_id, rank, start, end_pos, phase,
+end_phase)`, `translations(...)`, `chrom_alias(alias, chrom, source)`,
+plus HGVS-exception attribs on the Ensembl path. Sorted by `(chrom, start)` for
+zone-map pruning.
 
-Kept verbatim: `fastvep_genome::Transcript` and all its coordinate logic
-(`genomic_to_cdna`, `cdna_to_cds`, `exon_at`, …). Only the *serialization*
-changes (bincode → Parquet).
+**Two importers, one schema** (the cache *is* the contract):
+
+- **GFF importer** — `read_gff_transcripts(gff3)` (+ `read_gff_exons`) table
+  functions reuse `parse_gff3`; build with `CREATE TABLE transcripts AS SELECT *
+  FROM read_gff_transcripts('x.gff3')`. Portable/offline, any organism. ✅
+- **Ensembl MySQL sync** — `scripts/ensembl-sync.sql` `CREATE TABLE … AS SELECT`
+  from attached `ensembldb`, adding HGVS exceptions + `chrom_alias` from
+  `seq_region_synonym`. Exact ensembl-vep / haplosaurus fidelity. ✅ (both proven)
+
+MySQL/Parquet are *build-time only*; either way the runtime artifact is the same
+core-only `.duckdb`.
+
+- **Chromosome aliases are first-class.** `chrom_alias` maps input contig names
+  (`1`/`chr17`/`NC_000017.11`/`CM000679.2`) to the cache's `chrom` — the naming
+  reconciliation ensembl-vep does. Ensembl fills it from `seq_region_synonym`;
+  the GFF path takes an optional synonyms file (else chr-prefix normalization).
+- **FASTA → bgzip + faidx.** Sequence is the one thing not in the DB: O(1) region
+  access via noodles for coding consequences. Also `read_fasta(path, region)`.
+- **Runtime:** the kernel loads transcripts from the attached cache once into the
+  in-memory interval index (`get_transcripts` overlap), held in extension state
+  keyed by `path+mtime`, reused across rows/queries.
+
+Kept verbatim: `fastvep_genome::Transcript` coordinate logic. Only the cache
+*substrate* changes (bincode → native DuckDB tables).
+
+**Runtime pattern = ATTACH the cache `.duckdb`** (DuckDB-core ATTACH, no
+extension):
+
+```sql
+ATTACH 'grch38.cache.duckdb' AS cache (READ_ONLY);   -- transcripts/exons/chrom_alias
+ATTACH 'clinvar.duckdb'      AS clinvar (READ_ONLY);  -- annotation sources, same way
+-- annotate read_vcf variants against cache.transcripts (kernel loads from the
+-- attached cache), then LEFT JOIN clinvar.* — all in one query.
+```
+
+Attachments are per-session (re-attach each run) and may be local **or remote**
+(`ATTACH 'https://…/grch38.cache.duckdb'` is read-only) — so caches can be
+CDN-hosted, which is also what makes the WASM/no-server path work (§2).
 
 ---
 

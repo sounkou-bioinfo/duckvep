@@ -29,8 +29,15 @@ CREATE OR REPLACE TABLE translation AS SELECT * FROM ens.translation
 
 -- 2. Coordinates & contig-name aliasing.
 CREATE OR REPLACE TABLE seq_region AS SELECT * FROM ens.seq_region;
-CREATE OR REPLACE TABLE seq_region_synonym AS SELECT * FROM ens.seq_region_synonym;
 CREATE OR REPLACE TABLE coord_system AS SELECT * FROM ens.coord_system;
+
+-- chrom_alias: maps input contig names (chr17 / NC_000017.11 / CM000679.2) to the
+-- cache's chrom — the naming reconciliation ensembl-vep does. First-class table.
+CREATE OR REPLACE TABLE chrom_alias AS
+  SELECT sr.name AS chrom, srs.synonym AS alias, edb.db_name AS source
+  FROM ens.seq_region sr
+  JOIN ens.seq_region_synonym srs ON srs.seq_region_id = sr.seq_region_id
+  LEFT JOIN ens.external_db edb ON edb.external_db_id = srs.external_db_id;
 
 -- 3. HGVS exceptions VEP applies (rna_edit, selenocysteine, incomplete CDS, …).
 CREATE OR REPLACE TABLE attrib_type AS SELECT * FROM ens.attrib_type;

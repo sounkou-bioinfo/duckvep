@@ -1,0 +1,29 @@
+# name: test/sql/gff_import.test
+# description: read_gff_transcripts — GFF importer builds the cache transcripts table
+# group: [duckvep]
+
+require duckvep
+
+# BRCA1 canonical transcript is coding; flat transcript row shape.
+query TTTT
+SELECT gene_symbol, canonical, coding, strand
+FROM read_gff_transcripts('test/data/test.gff3')
+WHERE transcript_id = 'ENST00000357654';
+----
+BRCA1	true	true	-1
+
+# Importer yields a non-empty transcript set with at least one canonical.
+query II
+SELECT count(*) > 0, count(*) FILTER (WHERE canonical) > 0
+FROM read_gff_transcripts('test/data/test.gff3');
+----
+true	true
+
+# Build a native DuckDB cache table from it (core-only runtime substrate).
+statement ok
+CREATE TABLE transcripts AS SELECT * FROM read_gff_transcripts('test/data/test.gff3');
+
+query I
+SELECT count(*) FROM transcripts WHERE coding;
+----
+2
