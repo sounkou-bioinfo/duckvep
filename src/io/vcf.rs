@@ -194,6 +194,78 @@ fn fill_string_list(
     list.set_len(total);
 }
 
+/// `vcf_samples(path)` — one row per sample in header order: `(idx, sample)`.
+///
+/// `idx` is 1-based so it lines up with DuckDB's `UNNEST(... WITH ORDINALITY)`,
+/// letting the positional `gt` list from [`ReadVcf`] be exploded into tidy
+/// per-sample genotypes (annotation stays site-wise; see DESIGN.md §3.0).
+pub struct VcfSamples;
+
+pub struct VcfSamplesBind {
+    names: Vec<String>,
+}
+
+pub struct VcfSamplesInit {
+    cursor: AtomicUsize,
+}
+
+impl VTab for VcfSamples {
+    type BindData = VcfSamplesBind;
+    type InitData = VcfSamplesInit;
+
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn Error>> {
+        bind.add_result_column("idx", LogicalTypeHandle::from(LogicalTypeId::Bigint));
+        bind.add_result_column("sample", LogicalTypeHandle::from(LogicalTypeId::Varchar));
+
+        let path = bind.get_parameter(0).to_string();
+        let mut reader = vcf::io::reader::Builder::default().build_from_path(&path)?;
+        let header = reader.read_header()?;
+        let names = header.sample_names().iter().cloned().collect();
+        Ok(VcfSamplesBind { names })
+    }
+
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn Error>> {
+        Ok(VcfSamplesInit {
+            cursor: AtomicUsize::new(0),
+        })
+    }
+
+    fn func(
+        func: &TableFunctionInfo<Self>,
+        output: &mut DataChunkHandle,
+    ) -> Result<(), Box<dyn Error>> {
+        let bind = func.get_bind_data();
+        let init = func.get_init_data();
+
+        let start = init.cursor.load(Ordering::Relaxed);
+        let total = bind.names.len();
+        let n = (total - start).min(VECTOR_SIZE);
+        let names = &bind.names[start..start + n];
+
+        {
+            let mut v = output.flat_vector(0);
+            let s = unsafe { v.as_mut_slice::<i64>() };
+            for (i, _) in names.iter().enumerate() {
+                s[i] = (start + i + 1) as i64;
+            }
+        }
+        {
+            let v = output.flat_vector(1);
+            for (i, name) in names.iter().enumerate() {
+                v.insert(i, name.as_str());
+            }
+        }
+
+        init.cursor.store(start + n, Ordering::Relaxed);
+        output.set_len(n);
+        Ok(())
+    }
+
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)])
+    }
+}
+
 /// Parsed `chrom[:start-end]` region filter.
 struct Region {
     chrom: String,
