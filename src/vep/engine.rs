@@ -18,8 +18,31 @@ use fastvep_core::{Allele, GenomicPosition, Strand};
 use noodles::vcf;
 use std::error::Error;
 use std::fs::File;
+use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
+
+/// Detected gene-model input format (by content, not file extension).
+enum ModelFormat {
+    /// Our columnar Parquet transcript cache (magic `PAR1`).
+    ParquetCache,
+    /// gzip/bgzf-compressed GFF3 (magic `1f 8b`).
+    GzippedGff3,
+    /// Plain-text GFF3.
+    Gff3,
+}
+
+fn detect_model_format(path: &str) -> std::io::Result<ModelFormat> {
+    let mut head = [0u8; 4];
+    let n = File::open(path)?.read(&mut head)?;
+    Ok(if n >= 4 && &head == b"PAR1" {
+        ModelFormat::ParquetCache
+    } else if n >= 2 && head[0] == 0x1f && head[1] == 0x8b {
+        ModelFormat::GzippedGff3
+    } else {
+        ModelFormat::Gff3
+    })
+}
 
 pub const DEFAULT_DISTANCE: u64 = 5000;
 
@@ -43,28 +66,30 @@ pub(crate) fn build_context(
     fasta: Option<&str>,
     distance: u64,
 ) -> Result<EngineContext, Box<dyn Error>> {
-    // The `model` argument is either:
-    //  - a `.parquet` transcript cache -> load it directly (the fast path), or
-    //  - a GFF3 -> parse it, and write a columnar Parquet cache next to it
-    //    (`<gff3>.transcripts.parquet`) so subsequent loads take the fast path.
-    // Parsing the GFF3 (~280k transcripts) dominates load (~5.7 s); the cache
-    // load is ~1 s. `build_sequences` is cheap (~0.3 s) and FASTA-specific, so we
-    // rebuild it fresh below rather than caching it. (DESIGN.md §5.)
-    let mut transcripts = if gff3.ends_with(".parquet") {
-        tcache::load(Path::new(gff3))?
-    } else {
-        let cache_path = tcache::cache_path(gff3);
-        if tcache::is_fresh(&cache_path, Path::new(gff3)) {
-            tcache::load(&cache_path)?
-        } else {
-            let gff_file = File::open(gff3)?;
-            let t = if gff3.ends_with(".gz") || gff3.ends_with(".bgz") {
-                parse_gff3(flate2::read::MultiGzDecoder::new(gff_file))?
+    // The `model` argument is detected by content (not extension):
+    //  - a Parquet transcript cache -> load it directly (the fast path), or
+    //  - a GFF3 (plain or gzip) -> parse it, and write a columnar Parquet cache
+    //    next to it (`<gff3>.transcripts.parquet`) so later loads take the fast
+    //    path. Parsing ~280k transcripts dominates load (~5.7 s); the cache load
+    //    is ~1 s. `build_sequences` is cheap (~0.3 s) and FASTA-specific, so we
+    //    rebuild it fresh below rather than caching it. (DESIGN.md §5.)
+    let mut transcripts = match detect_model_format(gff3)? {
+        ModelFormat::ParquetCache => tcache::load(Path::new(gff3))?,
+        format => {
+            let cache_path = tcache::cache_path(gff3);
+            if tcache::is_fresh(&cache_path, Path::new(gff3)) {
+                tcache::load(&cache_path)?
             } else {
-                parse_gff3(gff_file)?
-            };
-            let _ = tcache::save(&t, &cache_path);
-            t
+                let gff_file = File::open(gff3)?;
+                let t = match format {
+                    ModelFormat::GzippedGff3 => {
+                        parse_gff3(flate2::read::MultiGzDecoder::new(gff_file))?
+                    }
+                    _ => parse_gff3(gff_file)?,
+                };
+                let _ = tcache::save(&t, &cache_path);
+                t
+            }
         }
     };
 
