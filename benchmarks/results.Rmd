@@ -6,7 +6,7 @@ output: github_document
      Tables render live from the recorded data via duckknit. -->
 
 ```{r setup, include=FALSE}
-knitr::knit_engines$set(duckdb = duckknit::eng_duckdb)
+knitr::knit_engines$set(sql = duckknit::eng_duckdb)
 knitr::opts_chunk$set(mode = "markdown", comment = "", results = "asis", session = "bench")
 ```
 
@@ -30,7 +30,7 @@ science. **Setup:** Ensembl GFF3 gene models; release builds (`opt-level=3`,
 
 ## Throughput (consequence)
 
-```{duckdb}
+```{sql}
 SELECT organism, transcripts, variants, source,
        printf('%.1fs', time_s) AS time,
        printf('%d', CAST(variants / time_s AS BIGINT)) AS "variants/s"
@@ -43,7 +43,7 @@ Multi-organism rows are added by running `scripts/benchmark.sh "<organism>"
 
 ## Head-to-head (full output, same gene model)
 
-```{duckdb}
+```{sql}
 SELECT dataset, variants, tool, wall_clock AS "wall", peak_rss_mb AS "rss (MB)", note
 FROM 'benchmarks/data/timings.csv'
 ORDER BY variants DESC, tool;
@@ -56,7 +56,7 @@ timing is pending its cache install; concordance vs the live VEP is below.
 
 ## Footprint
 
-```{duckdb}
+```{sql}
 SELECT tool, dependencies, footprint, runtime_note
 FROM 'benchmarks/data/footprint.csv';
 ```
@@ -78,7 +78,7 @@ Per-(variant, transcript) consequence agreement vs the **live Ensembl VEP** (RES
 API), over sampled real ClinVar variants annotated with the reference FASTA (so
 synonymous vs missense is exact). Both duckvep **and** fastVEP vs Ensembl VEP:
 
-```{duckdb}
+```{sql}
 SELECT date, engine, n_variants AS "variants", pairs AS "shared pairs",
        agree, pct AS "concordance %"
 FROM 'data/vep_dumps/concordance_log.csv'

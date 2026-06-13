@@ -4,7 +4,7 @@
 # root: `Rscript scripts/render-benchmarks.R` (or `make benchmarks`).
 
 options(duckknit.duckdb = normalizePath("scripts/duckdb-unsigned"))
-knitr::knit_engines$set(duckdb = duckknit::eng_duckdb)
+knitr::knit_engines$set(sql = duckknit::eng_duckdb)
 rmarkdown::render("benchmarks/results.Rmd", output_file = "results.md",
                   knit_root_dir = normalizePath("."), quiet = TRUE)
 duckknit::duckknit_kill_all_sessions()

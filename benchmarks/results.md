@@ -25,7 +25,7 @@ single run each. Reproduce with `scripts/benchmark.sh` and
 
 ## Throughput (consequence)
 
-``` duckdb
+``` sql
 SELECT organism, transcripts, variants, source,
        printf('%.1fs', time_s) AS time,
        printf('%d', CAST(variants / time_s AS BIGINT)) AS "variants/s"
@@ -44,7 +44,7 @@ Multi-organism rows are added by running
 
 ## Head-to-head (full output, same gene model)
 
-``` duckdb
+``` sql
 SELECT dataset, variants, tool, wall_clock AS "wall", peak_rss_mb AS "rss (MB)", note
 FROM 'benchmarks/data/timings.csv'
 ORDER BY variants DESC, tool;
@@ -66,7 +66,7 @@ concordance vs the live VEP is below.
 
 ## Footprint
 
-``` duckdb
+``` sql
 SELECT tool, dependencies, footprint, runtime_note
 FROM 'benchmarks/data/footprint.csv';
 ```
@@ -97,7 +97,7 @@ VEP** (REST API), over sampled real ClinVar variants annotated with the
 reference FASTA (so synonymous vs missense is exact). Both duckvep
 **and** fastVEP vs Ensembl VEP:
 
-``` duckdb
+``` sql
 SELECT date, engine, n_variants AS "variants", pairs AS "shared pairs",
        agree, pct AS "concordance %"
 FROM 'data/vep_dumps/concordance_log.csv'

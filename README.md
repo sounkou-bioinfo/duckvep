@@ -29,7 +29,7 @@ DuckDB-WASM in the browser with no server.
 
 ## Load it
 
-``` duckdb
+``` sql
 LOAD 'build/debug/duckvep.duckdb_extension';
 ```
 
@@ -38,7 +38,7 @@ LOAD 'build/debug/duckvep.duckdb_extension';
 One row per variant. `alt` and `filter` are lists; `end_pos` carries the
 variant interval (`INFO/END` for SV/CNV, else `pos + len(ref) - 1`).
 
-``` duckdb
+``` sql
 SELECT chrom, pos, end_pos, ref, alt, qual, filter
 FROM read_vcf('test/data/sites.vcf')
 LIMIT 5;
@@ -57,7 +57,7 @@ LIMIT 5;
 Symbolic (`<DEL>`, `<CNV>`), breakend, and multiallelic alleles survive
 as list elements, and `end_pos` makes interval filters work:
 
-``` duckdb
+``` sql
 SELECT pos, end_pos, ref, alt, end_pos - pos AS span
 FROM read_vcf('test/data/sv.vcf')
 WHERE end_pos - pos > 100
@@ -74,7 +74,7 @@ ORDER BY pos;
 `gt` is the positional per-sample genotype list (phasing preserved as
 `0|1`):
 
-``` duckdb
+``` sql
 SELECT pos, ref, alt, gt
 FROM read_vcf('test/data/ms.vcf');
 ```
@@ -88,7 +88,7 @@ FROM read_vcf('test/data/ms.vcf');
 tidy per-sample rows on demand — no re-annotation, because annotation is
 site-wise:
 
-``` duckdb
+``` sql
 SELECT v.pos, s.sample, g.gt
 FROM read_vcf('test/data/ms.vcf') v,
      UNNEST(v.gt) WITH ORDINALITY AS g(gt, idx)
@@ -107,7 +107,7 @@ ORDER BY v.pos, s.idx;
 
 ### Region filter
 
-``` duckdb
+``` sql
 SELECT count(*) AS n
 FROM read_vcf('test/data/sv.vcf', region := 'chr1:4000-13000');
 ```
@@ -124,7 +124,7 @@ scalar returning a native `LIST<STRUCT>` — `UNNEST` it. Driven by
 DuckDB’s scan, so variants come from `read_vcf`, `read_parquet`, or any
 relation.
 
-``` duckdb
+``` sql
 SELECT vep_load_cache('test/data/test.gff3', '');
 ```
 
@@ -132,7 +132,7 @@ SELECT vep_load_cache('test/data/test.gff3', '');
 |-------------------------------------------|
 | loaded                                    |
 
-``` duckdb
+``` sql
 SELECT c.transcript_id, c.consequence, c.impact, c.canonical
 FROM UNNEST(vep_consequence('17', 43124090, 'A', 'G')) AS u(c)
 WHERE c.gene_symbol = 'BRCA1'
@@ -151,7 +151,7 @@ Or annotate a whole VCF in one call with `vep_annotate(vcf, gff3 := …)`
 — one row per (variant, transcript, allele), at parity with Ensembl VEP
 / fastVEP (same engine):
 
-``` duckdb
+``` sql
 SELECT pos, ref, alt, gene_symbol, transcript_id, consequence, impact
 FROM vep_annotate('test/data/sites.vcf', gff3 := 'test/data/test.gff3')
 WHERE canonical AND impact <> 'MODIFIER'
@@ -173,7 +173,7 @@ valid variant provider — `read_vcf`, `read_parquet`, `read_csv`, an
 attached DB, or a literal relation. The downstream UDFs consume the
 columns, not the format:
 
-``` duckdb
+``` sql
 SELECT chrom, pos, ref, alt
 FROM (VALUES ('chr1', 100, 'A', ['G']),
              ('chr2', 200, 'C', ['T', 'TA'])) AS t(chrom, pos, ref, alt);
