@@ -10,3 +10,4 @@ venv
 *.duckdb_extension
 README.html
 .claude
+concordance.out/

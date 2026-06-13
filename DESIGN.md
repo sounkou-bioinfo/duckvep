@@ -77,6 +77,28 @@ crates) with thin frontends over it:
 This is why the engine must be a DuckDB-free module: it keeps libduckdb linkage
 isolated to the extension target alone.
 
+**Kernel vs data plane (so DuckDB-free does *not* mean slow scans).** "Engine
+core" is really two things, and only the first is DuckDB-free:
+
+- **Compute kernel** — the consequence/HGVS algorithm: `(variant, overlapping
+  transcripts, ref_seq) → rows`. Pure CPU (interval lookup, coordinate math,
+  codon translation). DuckDB cannot speed this up; it does no scan/join/filter.
+  It must take data *in* and do **no IO** — DuckDB calls it, never the reverse.
+- **Data plane** — scanning variants, reading the transcript model + reference,
+  filtering, joining, parallelism, spilling. This is **DuckDB's job** when we run
+  as the extension (vectorized, parallel, pushdown, any source), and noodles/
+  Arrow in the standalone CLI.
+
+Keeping the kernel DuckDB-free is what *enables* the good scans: the kernel is a
+scalar over DuckDB-scanned rows. The idiomatic path is therefore the scalar
+`vep_consequence(chrom,pos,ref,alt)` driven by `read_vcf`/`read_parquet` (§3.2),
+**not** a table function that re-reads the VCF itself.
+
+> **Known suboptimality to fix:** the current `vep_annotate(vcf, …)` reads the
+> VCF with noodles in `bind` — a closed pipeline that bypasses DuckDB's scan. It
+> stays as a convenience, but the scalar `vep_consequence` + load-once transcript
+> Parquet (DuckDB-scanned, chrom pushdown) is the primary, performant path.
+
 **Vendored, not depended.** The fastVEP crates are hard-copied under `vendor/`
 (Apache-2.0, `Huang-lab/fastVEP@785922e`) so we can fix decisions that are
 suboptimal for a columnar/DuckDB use case — chiefly: route around the
