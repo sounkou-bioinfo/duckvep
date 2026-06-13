@@ -1,0 +1,39 @@
+# name: test/sql/read_vcf.test
+# description: read_vcf — sites, SV interval (end_pos), multi-sample phased GT
+# group: [duckvep]
+
+require duckvep
+
+# Sites: pos, SV-aware end_pos, multiallelic alt list, multi-sample gt list.
+query IIII
+SELECT pos, end_pos, len(alt), len(gt)
+FROM read_vcf('test/data/ms.vcf') ORDER BY pos;
+----
+1000	1000	1	3
+2000	2000	2	3
+
+# Phasing is preserved verbatim in the positional gt list.
+query I
+SELECT gt[1] FROM read_vcf('test/data/ms.vcf') WHERE pos = 1000;
+----
+0|1
+
+# SV/CNV: INFO/END drives end_pos so interval filters work.
+query II
+SELECT pos, end_pos FROM read_vcf('test/data/sv.vcf')
+WHERE end_pos - pos > 100 ORDER BY pos;
+----
+5000	8000
+12000	20000
+
+# Symbolic + breakend alleles survive as list elements.
+query I
+SELECT alt[1] FROM read_vcf('test/data/sv.vcf') WHERE pos = 5000;
+----
+<DEL>
+
+# Region named-parameter filter (start-based): matches pos 5000, 9000, 12000.
+query I
+SELECT count(*) FROM read_vcf('test/data/sv.vcf', region := 'chr1:4000-13000');
+----
+3

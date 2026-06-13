@@ -1,0 +1,26 @@
+[package]
+name = "duckvep"
+version = "0.1.0"
+edition = "2021"
+description = "DuckDB-native variant effect prediction: SQL readers (noodles), VEP consequence/HGVS/ACMG UDFs, Parquet annotation sources"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+lto = true
+strip = true
+
+[[example]]
+# crate-type can't be (at the moment) be overriden for specific targets
+# src/wasm_lib.rs forwards to src/lib.rs so that we can change from cdylib
+# (that is needed while compiling natively) to staticlib (needed since the
+# actual linking will be done via emcc
+name = "duckvep"
+path = "src/wasm_lib.rs"
+crate-type = ["staticlib"]
+
+[dependencies]
+duckdb = { version = "~1.10503.1", features = ["loadable-extension"] }
+noodles = { version = "0.87", features = ["vcf", "bgzf", "core"] }

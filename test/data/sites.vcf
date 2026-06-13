@@ -1,0 +1,11 @@
+##fileformat=VCFv4.2
+##INFO=<ID=DP,Number=1,Type=Integer,Description="Total Depth">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+17	43124090	rs_cds_brca1	A	G	30	PASS	DP=50
+17	43106500	rs_cds_brca1_mid	T	C	30	PASS	DP=50
+17	43125300	rs_5utr_brca1	C	T	30	PASS	DP=50
+17	43120000	rs_intron_brca1	C	T	30	PASS	DP=50
+17	43043000	rs_downstream_brca1	T	C	30	PASS	DP=50
+17	43045700	rs_3utr_brca1	T	C	30	PASS	DP=50
+17	43124090	rs_del_brca1	AA	A	30	PASS	DP=50
+17	7675088	rs_cds_tp53	C	T	30	PASS	DP=50

@@ -1,0 +1,9 @@
+##fileformat=VCFv4.2
+##INFO=<ID=END,Number=1,Type=Integer,Description="End">
+##INFO=<ID=SVTYPE,Number=1,Type=String,Description="SV type">
+##contig=<ID=chr1>
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+chr1	1000	.	A	G,T	50	PASS	.
+chr1	5000	sv1	N	<DEL>	.	q10;lowqual	SVTYPE=DEL;END=8000
+chr1	9000	bnd1	G	G]chr2:200],<INS>	20	PASS	SVTYPE=BND
+chr1	12000	cnv1	A	<CNV>	.	.	SVTYPE=CNV;END=20000
