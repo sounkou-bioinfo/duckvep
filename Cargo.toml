@@ -24,3 +24,52 @@ crate-type = ["staticlib"]
 [dependencies]
 duckdb = { version = "~1.10503.1", features = ["loadable-extension"] }
 noodles = { version = "0.87", features = ["vcf", "bgzf", "core"] }
+flate2 = "1"
+
+# Vendored fastVEP compute engine (Apache-2.0, from Huang-lab/fastVEP @ 785922e).
+# Hard-copied (not a dep) so we can adapt suboptimal-for-us decisions: we depend
+# only on the lean consequence closure and route around `fastvep-annotate`/`-sa`.
+# See DESIGN.md §6 (wrap-then-delete) and vendor/NOTICE.
+fastvep-core = { path = "vendor/fastvep-core" }
+fastvep-genome = { path = "vendor/fastvep-genome" }
+fastvep-cache = { path = "vendor/fastvep-cache" }
+fastvep-consequence = { path = "vendor/fastvep-consequence" }
+
+# Workspace so the vendored crates resolve their `workspace = true` keys here.
+[workspace]
+members = [
+    "vendor/fastvep-core",
+    "vendor/fastvep-genome",
+    "vendor/fastvep-cache",
+    "vendor/fastvep-consequence",
+]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Vendored fastVEP crate (Apache-2.0, Huang-lab/fastVEP)"
+
+[workspace.dependencies]
+# Internal (vendored)
+fastvep-core = { path = "vendor/fastvep-core" }
+fastvep-genome = { path = "vendor/fastvep-genome" }
+fastvep-cache = { path = "vendor/fastvep-cache" }
+fastvep-consequence = { path = "vendor/fastvep-consequence" }
+# External (mirrors upstream workspace.dependencies)
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+rayon = "1.10"
+flate2 = "1"
+memmap2 = "0.9"
+log = "0.4"
+noodles-bgzf = "0.46"
+noodles-core = "0.19"
+noodles-tabix = "0.61"
+noodles-csi = "0.55"
+bincode = "1"
+zstd = "0.13"
+lru = "0.12"
+tempfile = "3"

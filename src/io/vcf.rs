@@ -8,6 +8,7 @@
 //! `alt` and `filter` are `LIST<VARCHAR>` so multiallelic (`A,AT`), symbolic
 //! (`<DEL>`, `<CNV>`), and breakend alleles are first-class.
 
+use crate::vec_util::fill_string_list;
 use duckdb::core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId};
 use duckdb::vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab};
 use noodles::vcf;
@@ -164,34 +165,6 @@ impl VTab for ReadVcf {
             LogicalTypeHandle::from(LogicalTypeId::Varchar),
         )])
     }
-}
-
-/// Fill a `LIST<VARCHAR>` output column from a per-row slice of strings.
-fn fill_string_list(
-    output: &mut DataChunkHandle,
-    col: usize,
-    rows: &[VcfRow],
-    get: impl Fn(&VcfRow) -> &[String],
-) {
-    let total: usize = rows.iter().map(|r| get(r).len()).sum();
-    let mut list = output.list_vector(col);
-    {
-        let child = list.child(total.max(1));
-        let mut off = 0usize;
-        for r in rows {
-            for (j, s) in get(r).iter().enumerate() {
-                child.insert(off + j, s.as_str());
-            }
-            off += get(r).len();
-        }
-    }
-    let mut off = 0usize;
-    for (i, r) in rows.iter().enumerate() {
-        let len = get(r).len();
-        list.set_entry(i, off, len);
-        off += len;
-    }
-    list.set_len(total);
 }
 
 /// `vcf_samples(path)` — one row per sample in header order: `(idx, sample)`.

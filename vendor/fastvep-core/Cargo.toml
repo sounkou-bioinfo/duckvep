@@ -1,0 +1,10 @@
+[package]
+name = "fastvep-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core genomic types for fastVEP"
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }

@@ -1,0 +1,11 @@
+[package]
+name = "fastvep-consequence"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Consequence prediction engine for fastVEP (small variants + structural variants)"
+
+[dependencies]
+fastvep-core = { workspace = true }
+fastvep-genome = { workspace = true }
+log = { workspace = true }

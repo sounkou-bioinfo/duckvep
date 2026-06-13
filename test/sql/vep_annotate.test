@@ -1,0 +1,28 @@
+# name: test/sql/vep_annotate.test
+# description: vep_annotate — consequence engine parity (wraps fastVEP predict)
+# group: [duckvep]
+
+require duckvep
+
+# Canonical BRCA1 transcript gets missense_variant / MODERATE at 17:43124090 G;
+# non-coding transcripts at the same site are MODIFIER.
+query TTT
+SELECT consequence[1], impact, canonical
+FROM vep_annotate('test/data/sites.vcf', gff3 := 'test/data/test.gff3')
+WHERE pos = 43124090 AND alt = 'G' AND transcript_id = 'ENST00000357654';
+----
+missense_variant	MODERATE	true
+
+# Every protein-coding canonical call carries an impact; no empty consequences.
+query I
+SELECT count(*)
+FROM vep_annotate('test/data/sites.vcf', gff3 := 'test/data/test.gff3')
+WHERE len(consequence) = 0;
+----
+0
+
+# gff3 is required.
+statement error
+SELECT count(*) FROM vep_annotate('test/data/sites.vcf');
+----
+requires gff3

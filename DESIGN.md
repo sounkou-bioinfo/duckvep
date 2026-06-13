@@ -60,6 +60,30 @@ human-hardcoded bit layout.
 
 ---
 
+## 1b. Layering: core library → extension → CLI → C API
+
+One DuckDB-free **engine core** (`src/vep/engine.rs` + the vendored fastVEP
+crates) with thin frontends over it:
+
+- **Engine core** — consequence/HGVS/ACMG + IO. Zero `duckdb` dependency.
+- **DuckDB extension** (`cdylib`) — the only target that touches DuckDB, via
+  `duckdb` with the `loadable-extension` feature, which resolves DuckDB symbols
+  from the *host* process at load (it doesn't even bundle libduckdb).
+- **CLI binary** — links the core only, so **no libduckdb**. A small
+  `fastvep annotate`-style compute tool. SQL access is "run `duckdb` and
+  `LOAD duckvep`", so the CLI never pulls DuckDB.
+- **C API** — another `extern "C"` shim over the core; also no libduckdb.
+
+This is why the engine must be a DuckDB-free module: it keeps libduckdb linkage
+isolated to the extension target alone.
+
+**Vendored, not depended.** The fastVEP crates are hard-copied under `vendor/`
+(Apache-2.0, `Huang-lab/fastVEP@785922e`) so we can fix decisions that are
+suboptimal for a columnar/DuckDB use case — chiefly: route around the
+`AnnotationContext` god-object (which drags in `fastvep-sa`/`-classification`/
+`-io`/`-hgvs`) and build the lean transcript+reference+predictor closure
+directly. See `vendor/NOTICE.md`.
+
 ## 2. Architecture (decided)
 
 - **Engine:** DuckDB loadable extension, `duckvep.duckdb_extension`, built on
