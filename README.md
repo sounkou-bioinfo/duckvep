@@ -118,19 +118,31 @@ FROM read_vcf('test/data/sv.vcf', region := 'chr1:4000-13000');
 
 ## Variant effect prediction
 
-Build the engine once (parses the gene model into a columnar Parquet
-cache), then `vep_consequence(chrom, pos, ref, alt)` is a scan-driven
-scalar returning a native `LIST<STRUCT>` — `UNNEST` it. Driven by
-DuckDB’s scan, so variants come from `read_vcf`, `read_parquet`, or any
-relation.
+`vep_load_cache('<gene model>', '<fasta>')` builds the consequence
+engine **once** into the connection’s state, so later
+`vep_consequence`/`vep_annotate` calls reuse it (the result `loaded` is
+just a confirmation). The gene model is either a GFF3 or duckvep’s
+**columnar Parquet cache**: a GFF3 is parsed *and* written to
+`<gff3>.transcripts.parquet` for next time; pass that `.parquet` to skip
+the parse. The FASTA (`''` = none) is needed for exact coding calls
+(synonymous vs missense).
 
 ``` sql
+-- first call parses test.gff3 and writes test.gff3.transcripts.parquet;
+```
+
+``` sql
+-- next time, load the cache directly: vep_load_cache('test.gff3.transcripts.parquet','')
 SELECT vep_load_cache('test/data/test.gff3', '');
 ```
 
 | vep_load_cache(‘test/data/test.gff3’, ’’) |
 |-------------------------------------------|
 | loaded                                    |
+
+Then `vep_consequence(chrom, pos, ref, alt)` is a scan-driven scalar
+returning a native `LIST<STRUCT>` — `UNNEST` it. Driven by DuckDB’s
+scan, so variants come from `read_vcf`, `read_parquet`, or any relation.
 
 ``` sql
 SELECT c.transcript_id, c.consequence, c.impact, c.canonical

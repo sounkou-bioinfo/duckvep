@@ -43,22 +43,29 @@ pub(crate) fn build_context(
     fasta: Option<&str>,
     distance: u64,
 ) -> Result<EngineContext, Box<dyn Error>> {
-    // Parsing the GFF3 (~280k transcripts) dominates load (~5.7 s); cache the
-    // *parsed* model as columnar Parquet (gff3-keyed, fasta-independent) so
-    // re-runs skip it. `build_sequences` is cheap (~0.3 s) and FASTA-specific, so
-    // we rebuild it fresh below rather than caching it. (DESIGN.md §5.)
-    let cache_path = tcache::cache_path(gff3);
-    let mut transcripts = if tcache::is_fresh(&cache_path, Path::new(gff3)) {
-        tcache::load(&cache_path)?
+    // The `model` argument is either:
+    //  - a `.parquet` transcript cache -> load it directly (the fast path), or
+    //  - a GFF3 -> parse it, and write a columnar Parquet cache next to it
+    //    (`<gff3>.transcripts.parquet`) so subsequent loads take the fast path.
+    // Parsing the GFF3 (~280k transcripts) dominates load (~5.7 s); the cache
+    // load is ~1 s. `build_sequences` is cheap (~0.3 s) and FASTA-specific, so we
+    // rebuild it fresh below rather than caching it. (DESIGN.md §5.)
+    let mut transcripts = if gff3.ends_with(".parquet") {
+        tcache::load(Path::new(gff3))?
     } else {
-        let gff_file = File::open(gff3)?;
-        let t = if gff3.ends_with(".gz") || gff3.ends_with(".bgz") {
-            parse_gff3(flate2::read::MultiGzDecoder::new(gff_file))?
+        let cache_path = tcache::cache_path(gff3);
+        if tcache::is_fresh(&cache_path, Path::new(gff3)) {
+            tcache::load(&cache_path)?
         } else {
-            parse_gff3(gff_file)?
-        };
-        let _ = tcache::save(&t, &cache_path);
-        t
+            let gff_file = File::open(gff3)?;
+            let t = if gff3.ends_with(".gz") || gff3.ends_with(".bgz") {
+                parse_gff3(flate2::read::MultiGzDecoder::new(gff_file))?
+            } else {
+                parse_gff3(gff_file)?
+            };
+            let _ = tcache::save(&t, &cache_path);
+            t
+        }
     };
 
     let seq: Option<SeqProvider> = match fasta {

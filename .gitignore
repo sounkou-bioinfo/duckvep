@@ -19,3 +19,4 @@ benchmarks/data/
 data/vep_cache/
 benchmarks/results.html
 *.html
+test/data/*.transcripts.parquet
