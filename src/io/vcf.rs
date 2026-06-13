@@ -273,41 +273,58 @@ struct Region {
     end: i64,
 }
 
-fn parse_region(s: &str) -> Region {
+/// Normalize a contig name for comparison so `chr1` and `1` match (a common
+/// VCF/region naming mismatch). Only the leading `chr` is stripped.
+fn normalize_chrom(c: &str) -> &str {
+    c.strip_prefix("chr").unwrap_or(c)
+}
+
+fn parse_region(s: &str) -> Result<Region, String> {
+    let bad = |what: &str| format!("invalid region '{s}': bad {what}");
     match s.split_once(':') {
-        None => Region {
+        None => Ok(Region {
             chrom: s.to_string(),
             start: i64::MIN,
             end: i64::MAX,
-        },
+        }),
         Some((chrom, range)) => {
-            let (start, end) = range
-                .split_once('-')
-                .map(|(a, b)| {
-                    (
-                        a.replace(',', "").parse().unwrap_or(i64::MIN),
-                        b.replace(',', "").parse().unwrap_or(i64::MAX),
-                    )
-                })
-                .unwrap_or((i64::MIN, i64::MAX));
-            Region {
+            let (a, b) = range.split_once('-').ok_or_else(|| bad("range"))?;
+            let start = a.replace(',', "").parse().map_err(|_| bad("start"))?;
+            let end = b.replace(',', "").parse().map_err(|_| bad("end"))?;
+            Ok(Region {
                 chrom: chrom.to_string(),
                 start,
                 end,
-            }
+            })
         }
     }
 }
 
-/// Variant END coordinate. `INFO/END` (SV/CNV with symbolic ALTs) takes
-/// precedence; otherwise the precise interval `pos + len(ref) - 1`.
+/// Field value lookup in a raw VCF INFO string (`KEY=value;KEY2=...`).
+fn info_value<'a>(info_raw: &'a str, key: &str) -> Option<&'a str> {
+    info_raw
+        .split(';')
+        .find_map(|f| f.strip_prefix(key).filter(|r| r.starts_with('=')))
+        .map(|r| &r[1..])
+}
+
+/// Variant END coordinate. `INFO/END` wins (SV/CNV with symbolic ALTs); else
+/// `INFO/SVLEN` (insertions stay a reference point); else the precise interval
+/// `pos + len(ref) - 1`.
 fn compute_end(pos: i64, reference: &str, info_raw: &str) -> i64 {
-    for field in info_raw.split(';') {
-        if let Some(v) = field.strip_prefix("END=") {
-            if let Ok(e) = v.parse::<i64>() {
-                return e;
-            }
+    if let Some(e) = info_value(info_raw, "END").and_then(|v| v.parse::<i64>().ok()) {
+        return e;
+    }
+    if let Some(svlen) = info_value(info_raw, "SVLEN")
+        .and_then(|v| v.split(',').next())
+        .and_then(|v| v.parse::<i64>().ok())
+    {
+        // Insertions add sequence between pos and pos+1; they don't span the
+        // reference, so their interval end stays at pos.
+        if info_value(info_raw, "SVTYPE") == Some("INS") {
+            return pos;
         }
+        return pos + svlen.abs();
     }
     pos + (reference.len() as i64 - 1).max(0)
 }
@@ -339,7 +356,7 @@ fn split_field(raw: &str, sep: char) -> Vec<String> {
 }
 
 fn read_all(path: &str, region: Option<&str>) -> Result<Vec<VcfRow>, Box<dyn Error>> {
-    let filt = region.map(parse_region);
+    let filt = region.map(parse_region).transpose()?;
     let mut reader = vcf::io::reader::Builder::default().build_from_path(path)?;
     let _header = reader.read_header()?;
 
@@ -352,16 +369,19 @@ fn read_all(path: &str, region: Option<&str>) -> Result<Vec<VcfRow>, Box<dyn Err
             .transpose()?
             .map(usize::from)
             .unwrap_or(0) as i64;
+        let reference = record.reference_bases().to_string();
+        let info = record.info().as_ref().to_string();
+        let end = compute_end(pos, &reference, &info);
 
         if let Some(r) = &filt {
-            if chrom != r.chrom || pos < r.start || pos > r.end {
+            // Keep records whose interval [pos, end] overlaps the region, so
+            // SVs/indels starting before the region but spanning into it match.
+            if normalize_chrom(&chrom) != normalize_chrom(&r.chrom) || pos > r.end || end < r.start
+            {
                 continue;
             }
         }
 
-        let reference = record.reference_bases().to_string();
-        let info = record.info().as_ref().to_string();
-        let end = compute_end(pos, &reference, &info);
         let gt = parse_gts(record.samples().as_ref());
         rows.push(VcfRow {
             chrom,

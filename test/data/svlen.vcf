@@ -1,0 +1,9 @@
+##fileformat=VCFv4.2
+##INFO=<ID=END,Number=1,Type=Integer,Description="End">
+##INFO=<ID=SVLEN,Number=.,Type=Integer,Description="SV length">
+##INFO=<ID=SVTYPE,Number=1,Type=String,Description="SV type">
+##contig=<ID=1>
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+1	5000	del_svlen	N	<DEL>	.	PASS	SVTYPE=DEL;SVLEN=-500
+1	9000	ins_svlen	N	<INS>	.	PASS	SVTYPE=INS;SVLEN=300
+1	12000	del_end	N	<DEL>	.	PASS	SVTYPE=DEL;END=20000

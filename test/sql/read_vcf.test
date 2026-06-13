@@ -32,8 +32,29 @@ SELECT alt[1] FROM read_vcf('test/data/sv.vcf') WHERE pos = 5000;
 ----
 <DEL>
 
-# Region named-parameter filter (start-based): matches pos 5000, 9000, 12000.
+# Region filter is interval-overlap: matches pos 5000, 9000, 12000.
 query I
 SELECT count(*) FROM read_vcf('test/data/sv.vcf', region := 'chr1:4000-13000');
 ----
 3
+
+# SVLEN drives end_pos when INFO/END is absent; insertions stay a reference point.
+query TII
+SELECT id, pos, end_pos FROM read_vcf('test/data/svlen.vcf') ORDER BY pos;
+----
+del_svlen	5000	5500
+ins_svlen	9000	9000
+del_end	12000	20000
+
+# Interval overlap + chrom-name normalization: '1' matches a 'chr1' region, and
+# a DEL at 5000-5500 is returned by a region fully inside its span.
+query I
+SELECT id FROM read_vcf('test/data/svlen.vcf', region := 'chr1:5200-5300');
+----
+del_svlen
+
+# Malformed region bounds are an error, not a silent match-all.
+statement error
+SELECT count(*) FROM read_vcf('test/data/svlen.vcf', region := 'chr1:1OO-2OO');
+----
+invalid region
