@@ -2,4 +2,5 @@
 //! (consequence / HGVS / ACMG) for exact parity. See DESIGN.md §3.
 
 pub mod annotate;
+pub mod consequence;
 mod engine;

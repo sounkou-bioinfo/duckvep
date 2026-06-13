@@ -94,10 +94,12 @@ scalar over DuckDB-scanned rows. The idiomatic path is therefore the scalar
 `vep_consequence(chrom,pos,ref,alt)` driven by `read_vcf`/`read_parquet` (§3.2),
 **not** a table function that re-reads the VCF itself.
 
-> **Known suboptimality to fix:** the current `vep_annotate(vcf, …)` reads the
-> VCF with noodles in `bind` — a closed pipeline that bypasses DuckDB's scan. It
-> stays as a convenience, but the scalar `vep_consequence` + load-once transcript
-> Parquet (DuckDB-scanned, chrom pushdown) is the primary, performant path.
+**Implemented:** `vep_load_cache(gff3, fasta)` builds the engine once into a
+global; `vep_consequence(chrom,pos,ref,alt)` is an Arrow scalar over
+DuckDB-scanned rows (any source), returning a JSON array of per-transcript
+consequences to `json_each`/`UNNEST` — verified at parity with `vep_annotate` and
+fastVEP. `vep_annotate(vcf, …)` remains as a one-call convenience (it reads the
+VCF itself); the scalar is the primary, scan-driven path.
 
 **Vendored, not depended.** The fastVEP crates are hard-copied under `vendor/`
 (Apache-2.0, `Huang-lab/fastVEP@785922e`) so we can fix decisions that are

@@ -1,0 +1,32 @@
+# name: test/sql/vep_consequence.test
+# description: scan-driven scalar vep_consequence + load-once vep_load_cache
+# group: [duckvep]
+
+require duckvep
+
+# Load the engine once into the global cache.
+statement ok
+SELECT vep_load_cache('test/data/test.gff3', '');
+
+# Scalar over a scanned row: canonical BRCA1 transcript -> missense (parity with
+# vep_annotate / fastVEP). Returned JSON carries transcript + consequence + impact.
+query I
+SELECT vep_consequence('17', 43124090, 'A', 'G') LIKE '%ENST00000357654%'
+   AND vep_consequence('17', 43124090, 'A', 'G') LIKE '%missense_variant%'
+   AND vep_consequence('17', 43124090, 'A', 'G') LIKE '%MODERATE%';
+----
+true
+
+# Driven by DuckDB's own scan of read_vcf — any source works.
+query I
+SELECT count(*) > 0
+FROM read_vcf('test/data/sites.vcf') v, UNNEST(v.alt) AS a(alt)
+WHERE vep_consequence(v.chrom, v.pos, v.ref, a.alt) <> '[]';
+----
+true
+
+# Intergenic / no-overlap variant returns an empty array, not an error.
+query I
+SELECT vep_consequence('99', 1, 'A', 'G');
+----
+[]
