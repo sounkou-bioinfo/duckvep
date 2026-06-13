@@ -1,100 +1,58 @@
-# Benchmark results
 
-## Real-scale: ClinVar chr17 vs fastVEP
+<!-- results.md is generated from results.Rmd — edit the .Rmd and run `make benchmarks`.
+     Tables are rendered live from the recorded data via duckknit. -->
 
-- **Input:** ClinVar GRCh38 `chr17` subset — **267,534 variants** (from the full
-  4,435,099-variant ClinVar release).
-- **Gene model:** Ensembl GRCh38.112 GFF3 (~280k transcripts, the full real model).
-- **Hardware:** the dev box; release builds of both; single run each.
-- duckvep: `vep_annotate('clinvar.chr17.vcf', gff3 := 'GRCh38.112.gff3.gz')`
-- fastVEP: `fastvep annotate -i clinvar.chr17.vcf --gff3 GRCh38.112.gff3 --output-format tab`
+# duckvep benchmarks
 
-| tool | wall time | peak RAM | output rows |
-| --- | ---: | ---: | ---: |
-| **duckvep** `vep_annotate` | 13.1 s | 2.94 GB | 3,910,199 |
-| **fastVEP** CLI | 9.7 s | 1.14 GB | 3,910,925 |
+Reproducible benchmark + Ensembl-VEP concordance, rendered from recorded
+data. duckvep wraps the same consequence engine as fastVEP, so it is a
+fair head-to-head on a real human gene model; the differences are
+data-engineering (caching, streaming), not the science.
 
-### Reading
+**Setup:** Ensembl GRCh38.112 GFF3 (~280k transcripts); release builds;
+single run each on the dev box. Reproduce with `scripts/bench.sh` and
+`scripts/vep_concordance.py` (see `benchmarks/README.md`).
 
-- **Concordance:** output rows agree to **99.98%** (726-row diff, 0.02%). Only 6
-  of fastVEP's rows are `intergenic_variant`, so the diff is *not* intergenic —
-  it's a small set of edge-case variants (multiallelic / symbolic-allele handling)
-  to investigate. Same consequence engine, so per-(variant,transcript) calls match
-  where they align (see `concordance.sh`).
-- **Speed:** ~1.4× slower. Both spend ~10 s parsing the 280k-transcript GFF3; the
-  delta is duckvep's IO/materialization overhead.
-- **Memory:** ~2.6× higher — the known eager-materialization in `vep_annotate`'s
-  `bind` (it holds all 3.9M output rows before emitting; fastVEP streams).
+## Throughput vs fastVEP
 
-### Scalar path is the fix (same data, chr17)
-
-`vep_consequence` over a `read_vcf`/`read_parquet` scan, vs the `vep_annotate`
-table function:
-
-| path | wall | peak RAM |
-| --- | ---: | ---: |
-| `vep_annotate` (table fn, eager) | 13.1 s | 2.94 GB |
-| `vep_consequence` (scalar, streams) | **6.3 s** | **1.16 GB** |
-
-The scalar **streams** (DuckDB doesn't materialize the 3.9M rows) and is faster
-than fastVEP (9.7 s). Memory drops 2.5×.
-
-### Transcript cache → re-runs are instant (the lever)
-
-`parse_gff3` of the 280k-transcript model dominates load (~5.7 s);
-`build_sequences` adds only ~0.3 s. So `vep_load_cache` now caches the *parsed*
-model (gff3-keyed, FASTA-independent; sequences rebuilt fresh per FASTA):
-
-| | load time |
-| --- | ---: |
-| cold (parse + cache) | 6.7 s |
-| **warm (cache hit)** | **1.27 s** (5×) |
-
-End-to-end on chr17 (267k variants), **warm**: **1.4 s / 737 MB** — vs fastVEP
-**9.7 s** (it re-parses the GFF3 every run). **duckvep is ~7× faster on
-re-runs.** The actual consequence eval over 267k variants is ~0.15 s; everything
-else is the one-time-per-process cache load.
-
-> Interim mechanism: the vendored fastVEP serde cache. The design endpoint is the
-> native DuckDB transcript cache (§5, ATTACH-able, shareable). Same outcome
-> (parse once); the substrate is the remaining work.
-
-### Threading (measured)
-
-The scalar run is ~100% CPU = **~1 core** — but that's because
-`vep_load_cache` **parses the 45 MB GFF3 single-threaded (~5 s)**, which
-dominates; the consequence eval is the small remainder. So the win is the
-**native DuckDB transcript cache** (§5): parse once → re-runs skip it and the
-(DuckDB-parallelizable) scalar dominates. The cache read on the hot path is
-**lock-free** (`ArcSwap`, atomic pointer load — no RwLock reader-counter
-contention).
-
-### Ensembl-VEP concordance (live REST, dated dumps)
-
-`scripts/vep_concordance.py` annotates a sample with the **live Ensembl VEP REST
-API** and duckvep (with FASTA), writing a dated Parquet dump
-(`data/vep_dumps/<date>/annotations.parquet`) + `concordance_log.csv`:
-
-| date | variants | shared pairs | concordance |
-| --- | ---: | ---: | ---: |
-| 2026-06-14 | 500 | 7,083 | **99.77%** |
-
-Identical consequence sets on 7,067/7,083 shared (variant,transcript) pairs.
-Disagreements are transcript-boundary/version edges (GFF3 release vs VEP's). For
-unlimited scale, point it at an offline VEP cache instead of REST.
-
-### Paths to close the gap (tracked)
-
-1. **Stream** `vep_annotate` instead of materializing all rows in `bind`.
-2. Use the **scan-driven scalar** `vep_consequence` (DuckDB owns the scan,
-   parallel + spillable) rather than the self-reading table function.
-3. **Cache** the transcript model (native DuckDB `.duckdb`, §5) so the ~10 s GFF3
-   parse is paid once, not per run — then re-runs are near-instant.
-
-## Reproduce
-
-```sh
-scripts/fetch-giab.sh                 # or fetch ClinVar GRCh38
-scripts/bench.sh       data/giab/clinvar.chr17.vcf data/giab/GRCh38.112.gff3.gz
-scripts/concordance.sh data/giab/clinvar.chr17.vcf data/giab/GRCh38.112.gff3.gz
+``` duckdb
+SELECT dataset, variants, tool, wall_clock AS "wall", peak_rss_mb AS "rss (MB)"
+FROM 'benchmarks/data/timings.csv'
+ORDER BY variants DESC, tool;
 ```
+
+| dataset                   | variants | tool                 | wall    | rss (MB) |
+|---------------------------|---------:|----------------------|---------|---------:|
+| GIAB HG002 (whole genome) |  4048342 | duckvep (warm cache) | 0:09.10 |     5568 |
+| GIAB HG002 (whole genome) |  4048342 | fastVEP CLI          | 0:21.58 |      589 |
+| ClinVar chr17             |   267534 | duckvep (warm cache) | 0:01.4  |      737 |
+| ClinVar chr17             |   267534 | fastVEP CLI          | 0:09.7  |     1114 |
+
+duckvep is faster on both the full GIAB HG002 whole genome (4.0M
+variants) and the ClinVar chr17 subset, because `vep_load_cache`
+**caches the parsed transcript model** while fastVEP re-parses the GFF3
+every run. duckvep’s higher memory on GIAB is the `read_vcf` eager-load
+(4M variants materialized) — the streaming follow-up closes it; fastVEP
+streams.
+
+## Ensembl-VEP concordance
+
+Per-(variant, transcript) consequence agreement between duckvep and the
+**live Ensembl VEP** (REST API), over sampled real ClinVar variants —
+annotated with the reference FASTA so coding calls (synonymous vs
+missense) are exact.
+
+``` duckdb
+SELECT date, n_variants AS "variants", pairs AS "shared pairs",
+       agree, pct AS "concordance %"
+FROM 'data/vep_dumps/concordance_log.csv'
+ORDER BY date DESC;
+```
+
+| date       | variants | shared pairs | agree | concordance % |
+|------------|---------:|-------------:|------:|--------------:|
+| 2026-06-14 |      500 |         7083 |  7067 |         99.77 |
+
+Disagreements are transcript-boundary/version edges (GFF3 release vs
+VEP’s transcript set), not systematic. Dated annotation dumps accumulate
+under `data/vep_dumps/<date>/annotations.parquet`.

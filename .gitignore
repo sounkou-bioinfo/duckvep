@@ -15,3 +15,4 @@ data/vep_dumps/*/
 data/giab/*.fa
 data/giab/*.parquet
 *.cache
+benchmarks/data/

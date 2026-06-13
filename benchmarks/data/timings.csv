@@ -1,0 +1,5 @@
+dataset,variants,tool,wall_clock,peak_rss_mb
+GIAB HG002 (whole genome),4048342,duckvep (warm cache),0:09.10,5568
+GIAB HG002 (whole genome),4048342,fastVEP CLI,0:21.58,589
+ClinVar chr17,267534,duckvep (warm cache),0:01.4,737
+ClinVar chr17,267534,fastVEP CLI,0:09.7,1114
