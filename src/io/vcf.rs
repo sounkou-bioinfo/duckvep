@@ -1,9 +1,10 @@
 //! `read_vcf(path [, region := 'chr:start-end'])` — a DuckDB table function that
 //! reads VCF/BCF(.gz) via noodles and emits one row per record.
 //!
-//! v1 eagerly materializes rows in `bind` and serves them from `func`; region
-//! filtering is done in memory. Indexed (tabix/csi) streaming and `VARIANT`
-//! INFO are tracked follow-ups (see DESIGN.md §3.1, §8).
+//! **Streams**: the reader is opened lazily and `func` reads one ~2048-row chunk
+//! per call, so memory is bounded to a chunk regardless of file size (full GIAB
+//! 4M variants: ~2 GB vs ~7 GB eager). Region filtering is applied per record.
+//! Indexed (tabix/csi) seeking and `VARIANT` INFO are follow-ups (DESIGN.md §3.1).
 //!
 //! `alt` and `filter` are `LIST<VARCHAR>` so multiallelic (`A,AT`), symbolic
 //! (`<DEL>`, `<CNV>`), and breakend alleles are first-class.
@@ -11,9 +12,12 @@
 use crate::vec_util::fill_string_list;
 use duckdb::core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId};
 use duckdb::vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab};
-use noodles::vcf;
+use noodles::{bgzf, vcf};
 use std::error::Error;
+use std::fs::File;
+use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 /// One materialized VCF record, owned (so `BindData` is `Send + Sync`).
 pub struct VcfRow {
@@ -37,11 +41,44 @@ pub struct VcfRow {
 pub struct ReadVcf;
 
 pub struct VcfBind {
-    rows: Vec<VcfRow>,
+    path: String,
+    region: Option<Region>,
+}
+
+/// A `Send` VCF reader (plain or bgzf), opened lazily in `func`. Held behind a
+/// Mutex so `InitData` is `Send + Sync`; `read_vcf` scans single-threaded.
+enum VcfRdr {
+    Plain(vcf::io::Reader<BufReader<File>>),
+    Bgzf(vcf::io::Reader<bgzf::Reader<File>>),
+}
+
+impl VcfRdr {
+    fn open(path: &str) -> io::Result<Self> {
+        let mut file = File::open(path)?;
+        let mut magic = [0u8; 2];
+        let n = file.read(&mut magic)?;
+        file.seek(SeekFrom::Start(0))?;
+        if n == 2 && magic == [0x1f, 0x8b] {
+            let mut r = vcf::io::Reader::new(bgzf::Reader::new(file));
+            r.read_header()?;
+            Ok(VcfRdr::Bgzf(r))
+        } else {
+            let mut r = vcf::io::Reader::new(BufReader::new(file));
+            r.read_header()?;
+            Ok(VcfRdr::Plain(r))
+        }
+    }
+
+    fn read_record(&mut self, rec: &mut vcf::Record) -> io::Result<usize> {
+        match self {
+            VcfRdr::Plain(r) => r.read_record(rec),
+            VcfRdr::Bgzf(r) => r.read_record(rec),
+        }
+    }
 }
 
 pub struct VcfInit {
-    cursor: AtomicUsize,
+    reader: Mutex<Option<VcfRdr>>,
 }
 
 /// DuckDB's standard vector size.
@@ -69,15 +106,16 @@ impl VTab for ReadVcf {
         let region = bind
             .get_named_parameter("region")
             .map(|v| v.to_string())
-            .filter(|s| !s.is_empty());
+            .filter(|s| !s.is_empty())
+            .map(|s| parse_region(&s))
+            .transpose()?;
 
-        let rows = read_all(&path, region.as_deref())?;
-        Ok(VcfBind { rows })
+        Ok(VcfBind { path, region })
     }
 
     fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn Error>> {
         Ok(VcfInit {
-            cursor: AtomicUsize::new(0),
+            reader: Mutex::new(None),
         })
     }
 
@@ -88,10 +126,23 @@ impl VTab for ReadVcf {
         let bind = func.get_bind_data();
         let init = func.get_init_data();
 
-        let start = init.cursor.load(Ordering::Relaxed);
-        let total = bind.rows.len();
-        let n = (total - start).min(VECTOR_SIZE);
-        let rows = &bind.rows[start..start + n];
+        // Stream one chunk: read up to VECTOR_SIZE region-matching records.
+        let mut guard = init.reader.lock().map_err(|_| "reader lock poisoned")?;
+        if guard.is_none() {
+            *guard = Some(VcfRdr::open(&bind.path)?);
+        }
+        let rdr = guard.as_mut().unwrap();
+        let mut record = vcf::Record::default();
+        let mut chunk: Vec<VcfRow> = Vec::with_capacity(VECTOR_SIZE);
+        while chunk.len() < VECTOR_SIZE {
+            if rdr.read_record(&mut record)? == 0 {
+                break; // EOF
+            }
+            if let Some(row) = record_to_row(&record, bind.region.as_ref())? {
+                chunk.push(row);
+            }
+        }
+        let rows = &chunk[..];
 
         // Scalar columns, one vector borrow live at a time.
         {
@@ -150,8 +201,7 @@ impl VTab for ReadVcf {
         }
         fill_string_list(output, 9, rows, |r| &r.gt);
 
-        init.cursor.store(start + n, Ordering::Relaxed);
-        output.set_len(n);
+        output.set_len(chunk.len());
         Ok(())
     }
 
@@ -328,46 +378,40 @@ fn split_field(raw: &str, sep: char) -> Vec<String> {
     }
 }
 
-fn read_all(path: &str, region: Option<&str>) -> Result<Vec<VcfRow>, Box<dyn Error>> {
-    let filt = region.map(parse_region).transpose()?;
-    let mut reader = vcf::io::reader::Builder::default().build_from_path(path)?;
-    let _header = reader.read_header()?;
+/// Build a `VcfRow` from one record, or `None` if it is filtered out by `region`.
+fn record_to_row(
+    record: &vcf::Record,
+    region: Option<&Region>,
+) -> Result<Option<VcfRow>, Box<dyn Error>> {
+    let chrom = record.reference_sequence_name().to_string();
+    let pos = record
+        .variant_start()
+        .transpose()?
+        .map(usize::from)
+        .unwrap_or(0) as i64;
+    let reference = record.reference_bases().to_string();
+    let info = record.info().as_ref().to_string();
+    let end = compute_end(pos, &reference, &info);
 
-    let mut record = vcf::Record::default();
-    let mut rows = Vec::new();
-    while reader.read_record(&mut record)? != 0 {
-        let chrom = record.reference_sequence_name().to_string();
-        let pos = record
-            .variant_start()
-            .transpose()?
-            .map(usize::from)
-            .unwrap_or(0) as i64;
-        let reference = record.reference_bases().to_string();
-        let info = record.info().as_ref().to_string();
-        let end = compute_end(pos, &reference, &info);
-
-        if let Some(r) = &filt {
-            // Keep records whose interval [pos, end] overlaps the region, so
-            // SVs/indels starting before the region but spanning into it match.
-            if normalize_chrom(&chrom) != normalize_chrom(&r.chrom) || pos > r.end || end < r.start
-            {
-                continue;
-            }
+    if let Some(r) = region {
+        // Keep records whose interval [pos, end] overlaps the region, so
+        // SVs/indels starting before the region but spanning into it match.
+        if normalize_chrom(&chrom) != normalize_chrom(&r.chrom) || pos > r.end || end < r.start {
+            return Ok(None);
         }
-
-        let gt = parse_gts(record.samples().as_ref());
-        rows.push(VcfRow {
-            chrom,
-            pos,
-            end,
-            id: record.ids().as_ref().to_string(),
-            reference,
-            alt: split_field(record.alternate_bases().as_ref(), ','),
-            qual: record.quality_score().transpose()?.map(|q| q as f64),
-            filter: split_field(record.filters().as_ref(), ';'),
-            info,
-            gt,
-        });
     }
-    Ok(rows)
+
+    let gt = parse_gts(record.samples().as_ref());
+    Ok(Some(VcfRow {
+        chrom,
+        pos,
+        end,
+        id: record.ids().as_ref().to_string(),
+        reference,
+        alt: split_field(record.alternate_bases().as_ref(), ','),
+        qual: record.quality_score().transpose()?.map(|q| q as f64),
+        filter: split_field(record.filters().as_ref(), ';'),
+        info,
+        gt,
+    }))
 }

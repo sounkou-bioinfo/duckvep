@@ -16,3 +16,4 @@ data/giab/*.fa
 data/giab/*.parquet
 *.cache
 benchmarks/data/
+data/vep_cache/

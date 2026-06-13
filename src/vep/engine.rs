@@ -8,11 +8,11 @@
 
 use fastvep_cache::fasta::{FastaReader, MmapFastaReader};
 use fastvep_cache::gff::parse_gff3;
-use fastvep_cache::transcript_cache;
 use fastvep_cache::providers::{
     FastaSequenceProvider, IndexedTranscriptProvider, MmapFastaSequenceProvider, SequenceProvider,
     TranscriptProvider,
 };
+use fastvep_cache::transcript_cache;
 use fastvep_consequence::ConsequencePredictor;
 use fastvep_core::{Allele, GenomicPosition, Strand};
 use noodles::vcf;

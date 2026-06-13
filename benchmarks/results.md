@@ -21,12 +21,13 @@ FROM 'benchmarks/data/timings.csv'
 ORDER BY variants DESC, tool;
 ```
 
-| dataset                   | variants | tool                 | wall    | rss (MB) |
-|---------------------------|---------:|----------------------|---------|---------:|
-| GIAB HG002 (whole genome) |  4048342 | duckvep (warm cache) | 0:09.10 |     5568 |
-| GIAB HG002 (whole genome) |  4048342 | fastVEP CLI          | 0:21.58 |      589 |
-| ClinVar chr17             |   267534 | duckvep (warm cache) | 0:01.4  |      737 |
-| ClinVar chr17             |   267534 | fastVEP CLI          | 0:09.7  |     1114 |
+| dataset                   | variants | tool                            | wall    | rss (MB) |
+|---------------------------|---------:|---------------------------------|---------|---------:|
+| GIAB HG002 (whole genome) |  4048342 | duckvep (warm cache; streaming) | 0:09.02 |     1985 |
+| GIAB HG002 (whole genome) |  4048342 | fastVEP CLI                     | 0:19.46 |     1113 |
+| ClinVar chr17             |   267534 | duckvep (cold / parses GFF3)    | 0:07.23 |     1370 |
+| ClinVar chr17             |   267534 | duckvep (warm cache)            | 0:01.88 |     1276 |
+| ClinVar chr17             |   267534 | fastVEP CLI                     | 0:06.07 |      694 |
 
 duckvep is faster on both the full GIAB HG002 whole genome (4.0M
 variants) and the ClinVar chr17 subset, because `vep_load_cache`
