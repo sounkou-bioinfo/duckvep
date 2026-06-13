@@ -602,20 +602,65 @@ padding-top: 0px;
 <body>
 
 <!-- results.md is generated from results.Rmd — edit the .Rmd and run `make benchmarks`.
-     Tables are rendered live from the recorded data via duckknit. -->
+     Tables render live from the recorded data via duckknit. -->
 
 <h1 id="duckvep-benchmarks">duckvep benchmarks</h1>
-<p>Reproducible benchmark + Ensembl-VEP concordance, rendered from
+<p>Reproducible throughput + Ensembl-VEP concordance, rendered from
 recorded data. duckvep wraps the same consequence engine as fastVEP, so
-it is a fair head-to-head on a real human gene model; the differences
-are data-engineering (caching, streaming), not the science.</p>
-<p><strong>Setup:</strong> Ensembl GRCh38.112 GFF3 (~280k transcripts);
-release builds; single run each on the dev box. Reproduce with
-<code>scripts/bench.sh</code> and
-<code>scripts/vep_concordance.py</code> (see
-<code>benchmarks/README.md</code>).</p>
-<h2 id="throughput-vs-fastvep">Throughput vs fastVEP</h2>
-<pre class="duckdb"><code>SELECT dataset, variants, tool, wall_clock AS &quot;wall&quot;, peak_rss_mb AS &quot;rss (MB)&quot;
+head-to-heads are fair; the differences are data-engineering (caching,
+streaming, columnar), not the science. <strong>Setup:</strong> Ensembl
+GFF3 gene models; release builds (<code>opt-level=3</code>,
+<code>lto=fat</code>); steady-state (warm transcript cache); single run
+each. Reproduce with <code>scripts/benchmark.sh</code> and
+<code>scripts/vep_concordance.py</code>.</p>
+<blockquote>
+<p>Scope note: duckvep currently emits <strong>consequence +
+amino-acids/codons</strong>; HGVS strings and supplementary annotations
+are not yet wired, so throughput is “consequence”, not “full
+annotation”. Numbers are labelled accordingly.</p>
+</blockquote>
+<h2 id="throughput-consequence">Throughput (consequence)</h2>
+<pre class="duckdb"><code>SELECT organism, transcripts, variants, source,
+       printf(&#39;%.1fs&#39;, time_s) AS time,
+       printf(&#39;%d&#39;, CAST(variants / time_s AS BIGINT)) AS &quot;variants/s&quot;
+FROM &#39;benchmarks/data/throughput.csv&#39;
+ORDER BY variants DESC;</code></pre>
+<table>
+<thead>
+<tr class="header">
+<th>organism</th>
+<th align="right">transcripts</th>
+<th align="right">variants</th>
+<th>source</th>
+<th>time</th>
+<th>variants/s</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Human (full WGS)</td>
+<td align="right">252980</td>
+<td align="right">4048342</td>
+<td>GIAB HG002</td>
+<td>9.0s</td>
+<td>449816</td>
+</tr>
+<tr class="even">
+<td>Human (chr17)</td>
+<td align="right">252980</td>
+<td align="right">267534</td>
+<td>ClinVar</td>
+<td>1.9s</td>
+<td>140807</td>
+</tr>
+</tbody>
+</table>
+<p>Multi-organism rows are added by running
+<code>scripts/benchmark.sh &quot;&lt;organism&gt;&quot; &lt;assembly&gt; &lt;gff3&gt; &lt;vcf&gt; [fasta]</code>
+(yeast / fly / arabidopsis / mouse / human).</p>
+<h2 id="head-to-head-full-output-same-gene-model">Head-to-head (full
+output, same gene model)</h2>
+<pre class="duckdb"><code>SELECT dataset, variants, tool, wall_clock AS &quot;wall&quot;, peak_rss_mb AS &quot;rss (MB)&quot;, note
 FROM &#39;benchmarks/data/timings.csv&#39;
 ORDER BY variants DESC, tool;</code></pre>
 <table>
@@ -626,6 +671,7 @@ ORDER BY variants DESC, tool;</code></pre>
 <th>tool</th>
 <th>wall</th>
 <th align="right">rss (MB)</th>
+<th>note</th>
 </tr>
 </thead>
 <tbody>
@@ -635,6 +681,7 @@ ORDER BY variants DESC, tool;</code></pre>
 <td>duckvep (warm cache; streaming)</td>
 <td>0:09.02</td>
 <td align="right">1985</td>
+<td>cached GFF3; streaming read_vcf</td>
 </tr>
 <tr class="even">
 <td>GIAB HG002 (whole genome)</td>
@@ -642,6 +689,7 @@ ORDER BY variants DESC, tool;</code></pre>
 <td>fastVEP CLI</td>
 <td>0:19.46</td>
 <td align="right">1113</td>
+<td>streams + re-parses GFF3</td>
 </tr>
 <tr class="odd">
 <td>ClinVar chr17</td>
@@ -649,6 +697,7 @@ ORDER BY variants DESC, tool;</code></pre>
 <td>duckvep (cold / parses GFF3)</td>
 <td>0:07.23</td>
 <td align="right">1370</td>
+<td>+fasta; parity with fastVEP</td>
 </tr>
 <tr class="even">
 <td>ClinVar chr17</td>
@@ -656,6 +705,7 @@ ORDER BY variants DESC, tool;</code></pre>
 <td>duckvep (warm cache)</td>
 <td>0:01.88</td>
 <td align="right">1276</td>
+<td>+fasta; caching win</td>
 </tr>
 <tr class="odd">
 <td>ClinVar chr17</td>
@@ -663,39 +713,69 @@ ORDER BY variants DESC, tool;</code></pre>
 <td>fastVEP CLI</td>
 <td>0:06.07</td>
 <td align="right">694</td>
+<td>+fasta</td>
 </tr>
 </tbody>
 </table>
-<p>duckvep is faster on both the full GIAB HG002 whole genome (4.0M
-variants) and the ClinVar chr17 subset, because
-<code>vep_load_cache</code> <strong>caches the parsed transcript
-model</strong> while fastVEP re-parses the GFF3 every run. duckvep’s
-higher memory on GIAB is the <code>read_vcf</code> eager-load (4M
-variants materialized) — the streaming follow-up closes it; fastVEP
-streams.</p>
+<p>duckvep’s edge is <strong>caching</strong> the parsed transcript
+model (warm); a <em>cold</em> run (parsing the GFF3) is ~parity with
+fastVEP — same engine. Streaming <code>read_vcf</code> keeps memory
+bounded (full GIAB 2.0 GB vs 7.3 GB eager). Offline Ensembl-VEP timing
+is pending its cache install; concordance vs the live VEP is below.</p>
+<h2 id="footprint">Footprint</h2>
+<pre class="duckdb"><code>SELECT tool, dependencies, footprint, runtime_note
+FROM &#39;benchmarks/data/footprint.csv&#39;;</code></pre>
+<table>
+<thead>
+<tr class="header">
+<th>tool</th>
+<th>dependencies</th>
+<th>footprint</th>
+<th>runtime_note</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>duckvep</td>
+<td>DuckDB (+ a 1.4 MB extension)</td>
+<td>1.4 MB extension</td>
+<td>runs in any DuckDB (CLI/Python/WASM); transcript cache 45 MB
+Parquet</td>
+</tr>
+<tr class="even">
+<td>fastVEP</td>
+<td>none</td>
+<td>~5.5 MB binary</td>
+<td>standalone Rust binary</td>
+</tr>
+<tr class="odd">
+<td>Ensembl VEP</td>
+<td>Perl 5.22+, DBI, 10+ CPAN modules</td>
+<td>~200 MB + ~25 GB cache</td>
+<td>interpreted Perl + species cache</td>
+</tr>
+</tbody>
+</table>
 <h2 id="memory--parallelism">Memory &amp; parallelism</h2>
 <ul>
 <li><strong>Streaming <code>read_vcf</code></strong> bounds memory to
-one ~2048-row chunk regardless of file size: full GIAB dropped
-<strong>7.3 GB → 2.0 GB</strong>.</li>
-<li><strong>Transcript cache</strong> is a columnar
-<strong>Parquet</strong> (zstd, ~45 MB, <code>read_parquet</code>-able);
-warm load ~1.1 s vs ~5.7 s GFF3 parse.</li>
-<li><strong><code>Arc&lt;str&gt;</code></strong> for the repeated
-categorical fields (transcript/gene/biotype) shares one allocation
-across the millions of output rows instead of re-copying.</li>
+one ~2048-row chunk: full GIAB <strong>7.3 GB → 2.0 GB</strong>.</li>
+<li><strong>Columnar Parquet transcript cache</strong> (zstd ~45 MB,
+<code>read_parquet</code>-able); warm load ~1.1 s vs ~5.7 s GFF3
+parse.</li>
+<li><strong><code>Arc&lt;str&gt;</code></strong> shares the repeated
+categorical fields across output rows.</li>
 <li><strong>Parallel scan:</strong> the consequence scalar is
-thread-safe (lock-free <code>ArcSwap</code> cache), so over a parallel
-source (<code>read_parquet</code>) DuckDB runs it on multiple cores —
-measured <strong>100% → 199% CPU</strong>; <code>read_vcf</code> itself
-scans single-threaded.</li>
+thread-safe (lock-free <code>ArcSwap</code> cache), so over
+<code>read_parquet</code> DuckDB runs it on multiple cores (<strong>100%
+→ 199% CPU</strong>); <code>read_vcf</code> itself streams
+single-threaded.</li>
 </ul>
 <h2 id="ensembl-vep-concordance">Ensembl-VEP concordance</h2>
 <p>Per-(variant, transcript) consequence agreement vs the <strong>live
 Ensembl VEP</strong> (REST API), over sampled real ClinVar variants
-annotated with the reference FASTA (so coding calls — synonymous vs
-missense — are exact). Both duckvep <strong>and</strong> fastVEP (the
-underlying engine) are compared against Ensembl VEP:</p>
+annotated with the reference FASTA (so synonymous vs missense is exact).
+Both duckvep <strong>and</strong> fastVEP vs Ensembl VEP:</p>
 <pre class="duckdb"><code>SELECT date, engine, n_variants AS &quot;variants&quot;, pairs AS &quot;shared pairs&quot;,
        agree, pct AS &quot;concordance %&quot;
 FROM &#39;data/vep_dumps/concordance_log.csv&#39;
@@ -731,9 +811,7 @@ ORDER BY date DESC, engine;</code></pre>
 </tbody>
 </table>
 <p>duckvep matches Ensembl VEP because it wraps the same engine; the
-table also shows fastVEP itself vs Ensembl VEP. Remaining disagreements
-(at larger samples) are transcript-boundary/version edges (GFF3 release
-vs VEP’s transcript set), not systematic. Dated annotation dumps
+table also shows fastVEP itself vs Ensembl VEP. Dated annotation dumps
 accumulate under
 <code>data/vep_dumps/&lt;date&gt;/annotations.parquet</code>.</p>
 

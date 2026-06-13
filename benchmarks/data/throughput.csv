@@ -1,0 +1,3 @@
+organism,assembly,transcripts,variants,source,time_s,note
+Human (full WGS),GRCh38,252980,4048342,GIAB HG002,9.0,consequence; streaming + warm cache
+Human (chr17),GRCh38,252980,267534,ClinVar,1.9,consequence; +fasta; warm cache

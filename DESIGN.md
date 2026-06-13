@@ -392,6 +392,16 @@ CDN-hosted, which is also what makes the WASM/no-server path work (§2).
 
 ---
 
+## 5b. GFF3 conformance (honest)
+
+The GFF importer uses fastVEP's `parse_gff3`, which is **permissive**: it parses
+well-formed Ensembl/RefSeq GFF3 correctly but warns-and-skips malformed lines and
+defaults a missing `phase` to a sentinel — it is **not** a strict spec validator
+(unlike duckhts's `GFFBase`). For our inputs (Ensembl GFF3) this is fine and
+matches fastVEP/VEP; strict validation (borrowing duckhts's approach) is a
+possible hardening. Benchmarks are `.Rmd`-driven (`benchmarks/results.Rmd`,
+duckknit) in the same spirit as duckhts's conformance reports.
+
 ## 6. Migration: wrap-then-delete (decided)
 
 Never lose a working product mid-flight.
