@@ -106,6 +106,31 @@ suboptimal for a columnar/DuckDB use case — chiefly: route around the
 `-io`/`-hgvs`) and build the lean transcript+reference+predictor closure
 directly. See `vendor/NOTICE.md`.
 
+## 1c. Sources via DuckDB itself (Ensembl MySQL) — don't parse caches
+
+VEP's cache is Perl `Storable` — parsing it in C/Rust is the exact
+re-implement-someone's-format trap this project avoids. But the cache is
+*derived from* Ensembl's public MySQL core DB, and DuckDB's `mysql` extension
+attaches it directly:
+
+```sql
+INSTALL mysql; LOAD mysql;
+ATTACH 'host=ensembldb.ensembl.org port=5306 user=anonymous
+        database=homo_sapiens_core_112_38' AS ens (TYPE mysql, READ_ONLY);
+-- 71,935 genes / 279,860 transcripts, queryable as SQL (verified).
+```
+
+So the transcript model is a **SQL query** over `gene`/`transcript`/`exon`/
+`exon_transcript`/`translation`/`seq_region`, snapshotted to **Parquet once**
+(`scripts/ensembl-transcripts.sql`). This deletes the GFF3 parser *and*
+`transcript_cache.rs` (bincode). Annotation/cache sources are likewise any
+MySQL/Parquet/Arrow table DuckDB can read.
+
+Consequence of the data plane being SQL: duckvep is **mostly SQL + a thin Rust
+kernel**. The variant↔transcript interval overlap and exact joins are done in
+SQL via **duckhts's `cgranges` and variant-key UDFs** (load both extensions),
+not a Rust interval tree. The kernel only does per-row codon/coordinate compute.
+
 ## 2. Architecture (decided)
 
 - **Engine:** DuckDB loadable extension, `duckvep.duckdb_extension`, built on
