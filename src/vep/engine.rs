@@ -8,6 +8,7 @@
 
 use fastvep_cache::fasta::{FastaReader, MmapFastaReader};
 use fastvep_cache::gff::parse_gff3;
+use fastvep_cache::transcript_cache;
 use fastvep_cache::providers::{
     FastaSequenceProvider, IndexedTranscriptProvider, MmapFastaSequenceProvider, SequenceProvider,
     TranscriptProvider,
@@ -41,12 +42,25 @@ pub(crate) fn build_context(
     fasta: Option<&str>,
     distance: u64,
 ) -> Result<EngineContext, Box<dyn Error>> {
-    let gff_file = File::open(gff3)?;
-    let mut transcripts = if gff3.ends_with(".gz") || gff3.ends_with(".bgz") {
-        parse_gff3(flate2::read::MultiGzDecoder::new(gff_file))?
-    } else {
-        parse_gff3(gff_file)?
-    };
+    // Parsing the GFF3 (~280k transcripts) dominates load (~5.7 s); cache the
+    // *parsed* model (gff3-keyed, fasta-independent) so re-runs skip it.
+    // `build_sequences` is cheap (~0.3 s) and FASTA-specific, so we rebuild it
+    // fresh below rather than caching it. (Interim toward the native DuckDB
+    // transcript cache, DESIGN.md §5.)
+    let cache_path = transcript_cache::default_cache_path(Path::new(gff3));
+    let mut transcripts =
+        if cache_path.exists() && transcript_cache::cache_is_fresh(&cache_path, Path::new(gff3)) {
+            transcript_cache::load_cache(&cache_path)?
+        } else {
+            let gff_file = File::open(gff3)?;
+            let t = if gff3.ends_with(".gz") || gff3.ends_with(".bgz") {
+                parse_gff3(flate2::read::MultiGzDecoder::new(gff_file))?
+            } else {
+                parse_gff3(gff_file)?
+            };
+            let _ = transcript_cache::save_cache(&t, &cache_path);
+            t
+        };
 
     let seq: Option<SeqProvider> = match fasta {
         Some(path) if Path::new(&format!("{path}.fai")).exists() => Some(Box::new(

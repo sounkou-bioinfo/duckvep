@@ -39,6 +39,26 @@ table function:
 The scalar **streams** (DuckDB doesn't materialize the 3.9M rows) and is faster
 than fastVEP (9.7 s). Memory drops 2.5×.
 
+### Transcript cache → re-runs are instant (the lever)
+
+`parse_gff3` of the 280k-transcript model dominates load (~5.7 s);
+`build_sequences` adds only ~0.3 s. So `vep_load_cache` now caches the *parsed*
+model (gff3-keyed, FASTA-independent; sequences rebuilt fresh per FASTA):
+
+| | load time |
+| --- | ---: |
+| cold (parse + cache) | 6.7 s |
+| **warm (cache hit)** | **1.27 s** (5×) |
+
+End-to-end on chr17 (267k variants), **warm**: **1.4 s / 737 MB** — vs fastVEP
+**9.7 s** (it re-parses the GFF3 every run). **duckvep is ~7× faster on
+re-runs.** The actual consequence eval over 267k variants is ~0.15 s; everything
+else is the one-time-per-process cache load.
+
+> Interim mechanism: the vendored fastVEP serde cache. The design endpoint is the
+> native DuckDB transcript cache (§5, ATTACH-able, shareable). Same outcome
+> (parse once); the substrate is the remaining work.
+
 ### Threading (measured)
 
 The scalar run is ~100% CPU = **~1 core** — but that's because
