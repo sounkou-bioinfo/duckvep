@@ -11,3 +11,6 @@ venv
 README.html
 .claude
 concordance.out/
+data/vep_dumps/*/
+data/giab/*.fa
+data/giab/*.parquet

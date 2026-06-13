@@ -12,18 +12,22 @@
 //! batches, which is why we avoid it.
 
 use crate::vep::engine::{build_context, AnnotatedRow, EngineContext, DEFAULT_DISTANCE};
+use arc_swap::ArcSwapOption;
 use duckdb::arrow::array::{Array, AsArray};
 use duckdb::arrow::datatypes::Int64Type;
 use duckdb::core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId};
 use duckdb::vscalar::{ScalarFunctionSignature, VScalar};
 use duckdb::vtab::arrow::{data_chunk_to_arrow, WritableVector};
 use std::error::Error;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock};
 
-/// Load-once engine, shared across DuckDB worker threads.
-static CACHE: OnceLock<RwLock<Option<Arc<EngineContext>>>> = OnceLock::new();
-fn cache() -> &'static RwLock<Option<Arc<EngineContext>>> {
-    CACHE.get_or_init(|| RwLock::new(None))
+/// Load-once engine, shared across DuckDB worker threads. `ArcSwapOption` gives
+/// **lock-free** reads (an atomic pointer load + Arc clone) on the hot scalar
+/// path — no reader-counter contention, no guard held across the compute — while
+/// `vep_load_cache` can still atomically swap in a new engine.
+static CACHE: OnceLock<ArcSwapOption<EngineContext>> = OnceLock::new();
+fn cache() -> &'static ArcSwapOption<EngineContext> {
+    CACHE.get_or_init(ArcSwapOption::empty)
 }
 
 fn varchar() -> LogicalTypeHandle {
@@ -50,7 +54,7 @@ impl VScalar for VepLoadCache {
             Some(fasta.value(0))
         };
         let ctx = build_context(gff3.value(0), fastav, DEFAULT_DISTANCE)?;
-        *cache().write().map_err(|_| "cache lock poisoned")? = Some(Arc::new(ctx));
+        cache().store(Some(Arc::new(ctx)));
 
         let v = output.flat_vector();
         for i in 0..input.len() {
@@ -111,9 +115,9 @@ impl VScalar for VepConsequence {
         let mut list_offsets: Vec<usize> = Vec::with_capacity(nrows + 1);
         list_offsets.push(0);
         {
-            let guard = cache().read().map_err(|_| "cache lock poisoned")?;
-            let ctx = guard
-                .as_ref()
+            // Lock-free snapshot: atomic load + Arc clone, released for reload.
+            let ctx = cache()
+                .load_full()
                 .ok_or("vep_consequence: call vep_load_cache(gff3, fasta) first")?;
             for i in 0..nrows {
                 flat.extend(ctx.annotate_variant(

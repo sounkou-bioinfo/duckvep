@@ -26,6 +26,43 @@
 - **Memory:** ~2.6× higher — the known eager-materialization in `vep_annotate`'s
   `bind` (it holds all 3.9M output rows before emitting; fastVEP streams).
 
+### Scalar path is the fix (same data, chr17)
+
+`vep_consequence` over a `read_vcf`/`read_parquet` scan, vs the `vep_annotate`
+table function:
+
+| path | wall | peak RAM |
+| --- | ---: | ---: |
+| `vep_annotate` (table fn, eager) | 13.1 s | 2.94 GB |
+| `vep_consequence` (scalar, streams) | **6.3 s** | **1.16 GB** |
+
+The scalar **streams** (DuckDB doesn't materialize the 3.9M rows) and is faster
+than fastVEP (9.7 s). Memory drops 2.5×.
+
+### Threading (measured)
+
+The scalar run is ~100% CPU = **~1 core** — but that's because
+`vep_load_cache` **parses the 45 MB GFF3 single-threaded (~5 s)**, which
+dominates; the consequence eval is the small remainder. So the win is the
+**native DuckDB transcript cache** (§5): parse once → re-runs skip it and the
+(DuckDB-parallelizable) scalar dominates. The cache read on the hot path is
+**lock-free** (`ArcSwap`, atomic pointer load — no RwLock reader-counter
+contention).
+
+### Ensembl-VEP concordance (live REST, dated dumps)
+
+`scripts/vep_concordance.py` annotates a sample with the **live Ensembl VEP REST
+API** and duckvep (with FASTA), writing a dated Parquet dump
+(`data/vep_dumps/<date>/annotations.parquet`) + `concordance_log.csv`:
+
+| date | variants | shared pairs | concordance |
+| --- | ---: | ---: | ---: |
+| 2026-06-14 | 500 | 7,083 | **99.77%** |
+
+Identical consequence sets on 7,067/7,083 shared (variant,transcript) pairs.
+Disagreements are transcript-boundary/version edges (GFF3 release vs VEP's). For
+unlimited scale, point it at an offline VEP cache instead of REST.
+
 ### Paths to close the gap (tracked)
 
 1. **Stream** `vep_annotate` instead of materializing all rows in `bind`.

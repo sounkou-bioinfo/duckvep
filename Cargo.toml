@@ -34,6 +34,7 @@ fastvep-core = { path = "vendor/fastvep-core" }
 fastvep-genome = { path = "vendor/fastvep-genome" }
 fastvep-cache = { path = "vendor/fastvep-cache" }
 fastvep-consequence = { path = "vendor/fastvep-consequence" }
+arc-swap = "1.9.1"
 
 # Workspace so the vendored crates resolve their `workspace = true` keys here.
 [workspace]
