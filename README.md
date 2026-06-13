@@ -12,9 +12,10 @@ treats annotation databases as plain Parquet/DuckDB tables joined by the
 optimizer — instead of hand-rolled file formats. See
 [DESIGN.md](DESIGN.md) for the full design and rationale.
 
-> Status: early. `read_vcf` and `vcf_samples` are implemented; the
-> consequence / HGVS / ACMG UDFs and the Parquet annotation pipeline are
-> in progress.
+> Status: `read_vcf`/`vcf_samples`, `vep_consequence` (scan-driven
+> scalar) and `vep_annotate`, plus a columnar Parquet transcript cache,
+> are implemented and Ensembl-VEP-concordant. HGVS strings and
+> supplementary-annotation joins are next.
 
 ## Build
 
@@ -114,6 +115,56 @@ FROM read_vcf('test/data/sv.vcf', region := 'chr1:4000-13000');
 |   n |
 |----:|
 |   3 |
+
+## Variant effect prediction
+
+Build the engine once (parses the gene model into a columnar Parquet
+cache), then `vep_consequence(chrom, pos, ref, alt)` is a scan-driven
+scalar returning a native `LIST<STRUCT>` — `UNNEST` it. Driven by
+DuckDB’s scan, so variants come from `read_vcf`, `read_parquet`, or any
+relation.
+
+``` duckdb
+SELECT vep_load_cache('test/data/test.gff3', '');
+```
+
+| vep_load_cache(‘test/data/test.gff3’, ’’) |
+|-------------------------------------------|
+| loaded                                    |
+
+``` duckdb
+SELECT c.transcript_id, c.consequence, c.impact, c.canonical
+FROM UNNEST(vep_consequence('17', 43124090, 'A', 'G')) AS u(c)
+WHERE c.gene_symbol = 'BRCA1'
+ORDER BY c.canonical DESC
+LIMIT 4;
+```
+
+| transcript_id   | consequence                       | impact   | canonical |
+|-----------------|-----------------------------------|----------|-----------|
+| ENST00000357654 | \[missense_variant\]              | MODERATE | true      |
+| ENST00000921914 | \[non_coding_transcript_variant\] | MODIFIER | false     |
+| ENST00000471181 | \[non_coding_transcript_variant\] | MODIFIER | false     |
+| ENST00000352993 | \[non_coding_transcript_variant\] | MODIFIER | false     |
+
+Or annotate a whole VCF in one call with `vep_annotate(vcf, gff3 := …)`
+— one row per (variant, transcript, allele), at parity with Ensembl VEP
+/ fastVEP (same engine):
+
+``` duckdb
+SELECT pos, ref, alt, gene_symbol, transcript_id, consequence, impact
+FROM vep_annotate('test/data/sites.vcf', gff3 := 'test/data/test.gff3')
+WHERE canonical AND impact <> 'MODIFIER'
+ORDER BY pos LIMIT 5;
+```
+
+|      pos | ref | alt | gene_symbol | transcript_id   | consequence            | impact   |
+|---------:|-----|-----|-------------|-----------------|------------------------|----------|
+|  7675088 | C   | T   | TP53        | ENST00000269305 | \[missense_variant\]   | MODERATE |
+| 43045700 | T   | C   | BRCA1       | ENST00000357654 | \[missense_variant\]   | MODERATE |
+| 43106500 | T   | C   | BRCA1       | ENST00000357654 | \[missense_variant\]   | MODERATE |
+| 43124090 | A   | G   | BRCA1       | ENST00000357654 | \[missense_variant\]   | MODERATE |
+| 43124090 | AA  | A   | BRCA1       | ENST00000357654 | \[frameshift_variant\] | HIGH     |
 
 ## Variants from any source
 
