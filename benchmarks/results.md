@@ -1,62 +1,42 @@
 
 <!-- results.md is generated from results.Rmd — edit the .Rmd and run `make benchmarks`.
-     Tables render live from the recorded data via duckknit. -->
+     Tables are read **directly from the recorded CSVs** and rendered with knitr. -->
 
 # duckvep benchmarks
 
-**Rendered with R Markdown** (`results.Rmd`,
-[duckknit](https://github.com/rundel/duckknit)): narrative, SQL code,
-and the **live results** are inline — every table below is produced by
-running the query against the recorded data at render time (the same
-reproducible, R-driven style as the fastVEP paper and duckhts).
-Regenerate with `make benchmarks`.
+R Markdown report — every table below is read **directly from a recorded
+CSV** under `benchmarks/data/` (regenerate the data with
+`scripts/benchmark.sh` / `scripts/vep_concordance.py`, then
+`make benchmarks`). duckvep wraps the same consequence engine as
+fastVEP, so head-to-heads are fair; the differences are data-engineering
+(caching, streaming, columnar), not the science. **Setup:** Ensembl GFF3
+gene models; release builds (`opt-level=3`, `lto=fat`); steady state
+(warm transcript cache); single run each.
 
-duckvep wraps the same consequence engine as fastVEP, so head-to-heads
-are fair; the differences are data-engineering (caching, streaming,
-columnar), not the science. **Setup:** Ensembl GFF3 gene models; release
-builds (`opt-level=3`, `lto=fat`); steady-state (warm transcript cache);
-single run each. Reproduce with `scripts/benchmark.sh` and
-`scripts/vep_concordance.py`.
-
-> Scope note: duckvep currently emits **consequence +
-> amino-acids/codons**; HGVS strings and supplementary annotations are
-> not yet wired, so throughput is “consequence”, not “full annotation”.
-> Numbers are labelled accordingly.
+> Scope: duckvep currently emits **consequence + amino-acids/codons**;
+> HGVS strings and supplementary annotations are not yet wired, so
+> throughput is “consequence”, not “full annotation”.
 
 ## Throughput (consequence)
 
-``` sql
-SELECT organism, transcripts, variants, source,
-       printf('%.1fs', time_s) AS time,
-       printf('%d', CAST(variants / time_s AS BIGINT)) AS "variants/s"
-FROM 'benchmarks/data/throughput.csv'
-ORDER BY variants DESC;
-```
+| organism         | assembly | transcripts | variants  | source     | time | variants/s |
+|:-----------------|:---------|:------------|:----------|:-----------|:-----|:-----------|
+| Human (full WGS) | GRCh38   | 252,980     | 4,048,342 | GIAB HG002 | 9.0s | 449,816    |
+| Human (chr17)    | GRCh38   | 252,980     | 267,534   | ClinVar    | 1.9s | 140,807    |
 
-| organism         | transcripts | variants | source     | time | variants/s |
-|------------------|------------:|---------:|------------|------|------------|
-| Human (full WGS) |      252980 |  4048342 | GIAB HG002 | 9.0s | 449816     |
-| Human (chr17)    |      252980 |   267534 | ClinVar    | 1.9s | 140807     |
-
-Multi-organism rows are added by running
+Add organisms by running
 `scripts/benchmark.sh "<organism>" <assembly> <gff3> <vcf> [fasta]`
 (yeast / fly / arabidopsis / mouse / human).
 
-## Head-to-head (full output, same gene model)
+## Head-to-head vs fastVEP (full output, same gene model)
 
-``` sql
-SELECT dataset, variants, tool, wall_clock AS "wall", peak_rss_mb AS "rss (MB)", note
-FROM 'benchmarks/data/timings.csv'
-ORDER BY variants DESC, tool;
-```
-
-| dataset                   | variants | tool                            | wall    | rss (MB) | note                            |
-|---------------------------|---------:|---------------------------------|---------|---------:|---------------------------------|
-| GIAB HG002 (whole genome) |  4048342 | duckvep (warm cache; streaming) | 0:09.02 |     1985 | cached GFF3; streaming read_vcf |
-| GIAB HG002 (whole genome) |  4048342 | fastVEP CLI                     | 0:19.46 |     1113 | streams + re-parses GFF3        |
-| ClinVar chr17             |   267534 | duckvep (cold / parses GFF3)    | 0:07.23 |     1370 | +fasta; parity with fastVEP     |
-| ClinVar chr17             |   267534 | duckvep (warm cache)            | 0:01.88 |     1276 | +fasta; caching win             |
-| ClinVar chr17             |   267534 | fastVEP CLI                     | 0:06.07 |      694 | +fasta                          |
+| dataset                   | variants | tool                            | wall_clock | peak_rss_mb | output | note                            |
+|:--------------------------|---------:|:--------------------------------|:-----------|------------:|:-------|:--------------------------------|
+| GIAB HG002 (whole genome) |  4048342 | fastVEP CLI                     | 0:19.46    |        1113 | full   | streams + re-parses GFF3        |
+| GIAB HG002 (whole genome) |  4048342 | duckvep (warm cache; streaming) | 0:09.02    |        1985 | full   | cached GFF3; streaming read_vcf |
+| ClinVar chr17             |   267534 | fastVEP CLI                     | 0:06.07    |         694 | full   | +fasta                          |
+| ClinVar chr17             |   267534 | duckvep (cold / parses GFF3)    | 0:07.23    |        1370 | full   | +fasta; parity with fastVEP     |
+| ClinVar chr17             |   267534 | duckvep (warm cache)            | 0:01.88    |        1276 | full   | +fasta; caching win             |
 
 duckvep’s edge is **caching** the parsed transcript model (warm); a
 *cold* run (parsing the GFF3) is ~parity with fastVEP — same engine.
@@ -66,13 +46,8 @@ concordance vs the live VEP is below.
 
 ## Footprint
 
-``` sql
-SELECT tool, dependencies, footprint, runtime_note
-FROM 'benchmarks/data/footprint.csv';
-```
-
 | tool        | dependencies                      | footprint              | runtime_note                                                           |
-|-------------|-----------------------------------|------------------------|------------------------------------------------------------------------|
+|:------------|:----------------------------------|:-----------------------|:-----------------------------------------------------------------------|
 | duckvep     | DuckDB (+ a 1.4 MB extension)     | 1.4 MB extension       | runs in any DuckDB (CLI/R/Python/WASM); transcript cache 45 MB Parquet |
 | fastVEP     | none                              | ~5.5 MB binary         | standalone Rust binary                                                 |
 | Ensembl VEP | Perl 5.22+, DBI, 10+ CPAN modules | ~200 MB + ~25 GB cache | interpreted Perl + species cache                                       |
@@ -97,17 +72,10 @@ VEP** (REST API), over sampled real ClinVar variants annotated with the
 reference FASTA (so synonymous vs missense is exact). Both duckvep
 **and** fastVEP vs Ensembl VEP:
 
-``` sql
-SELECT date, engine, n_variants AS "variants", pairs AS "shared pairs",
-       agree, pct AS "concordance %"
-FROM 'data/vep_dumps/concordance_log.csv'
-ORDER BY date DESC, engine;
-```
-
-| date       | engine  | variants | shared pairs | agree | concordance % |
-|------------|---------|---------:|-------------:|------:|--------------:|
-| 2026-06-14 | duckvep |      200 |         2677 |  2677 |         100.0 |
-| 2026-06-14 | fastvep |      200 |         2677 |  2677 |         100.0 |
+| date       | engine  | n_variants | pairs | agree | pct |
+|:-----------|:--------|-----------:|------:|------:|----:|
+| 2026-06-14 | duckvep |        200 |  2677 |  2677 | 100 |
+| 2026-06-14 | fastvep |        200 |  2677 |  2677 | 100 |
 
 duckvep matches Ensembl VEP because it wraps the same engine; the table
 also shows fastVEP itself vs Ensembl VEP. Dated annotation dumps

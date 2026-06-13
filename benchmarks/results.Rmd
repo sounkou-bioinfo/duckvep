@@ -3,50 +3,46 @@ output: github_document
 ---
 
 <!-- results.md is generated from results.Rmd — edit the .Rmd and run `make benchmarks`.
-     Tables render live from the recorded data via duckknit. -->
+     Tables are read **directly from the recorded CSVs** and rendered with knitr. -->
 
 ```{r setup, include=FALSE}
-knitr::knit_engines$set(sql = duckknit::eng_duckdb)
-knitr::opts_chunk$set(mode = "markdown", comment = "", results = "asis", session = "bench")
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+csv <- function(p) read.csv(p, check.names = FALSE, stringsAsFactors = FALSE)
+kbl <- function(df, ...) knitr::kable(df, ...)
 ```
 
 # duckvep benchmarks
 
-**Rendered with R Markdown** (`results.Rmd`, [duckknit](https://github.com/rundel/duckknit)):
-narrative, SQL code, and the **live results** are inline — every table below is
-produced by running the query against the recorded data at render time (the same
-reproducible, R-driven style as the fastVEP paper and duckhts). Regenerate with
-`make benchmarks`.
+R Markdown report — every table below is read **directly from a recorded CSV**
+under `benchmarks/data/` (regenerate the data with `scripts/benchmark.sh` /
+`scripts/vep_concordance.py`, then `make benchmarks`). duckvep wraps the same
+consequence engine as fastVEP, so head-to-heads are fair; the differences are
+data-engineering (caching, streaming, columnar), not the science. **Setup:**
+Ensembl GFF3 gene models; release builds (`opt-level=3`, `lto=fat`); steady state
+(warm transcript cache); single run each.
 
-duckvep wraps the same consequence engine as fastVEP, so head-to-heads are fair;
-the differences are data-engineering (caching, streaming, columnar), not the
-science. **Setup:** Ensembl GFF3 gene models; release builds (`opt-level=3`,
-`lto=fat`); steady-state (warm transcript cache); single run each. Reproduce with
-`scripts/benchmark.sh` and `scripts/vep_concordance.py`.
-
-> Scope note: duckvep currently emits **consequence + amino-acids/codons**; HGVS
+> Scope: duckvep currently emits **consequence + amino-acids/codons**; HGVS
 > strings and supplementary annotations are not yet wired, so throughput is
-> "consequence", not "full annotation". Numbers are labelled accordingly.
+> "consequence", not "full annotation".
 
 ## Throughput (consequence)
 
-```{sql}
-SELECT organism, transcripts, variants, source,
-       printf('%.1fs', time_s) AS time,
-       printf('%d', CAST(variants / time_s AS BIGINT)) AS "variants/s"
-FROM 'benchmarks/data/throughput.csv'
-ORDER BY variants DESC;
+```{r}
+t <- csv("benchmarks/data/throughput.csv")
+t[["variants/s"]] <- formatC(round(t$variants / t$time_s), format = "d", big.mark = ",")
+t$variants <- formatC(t$variants, format = "d", big.mark = ",")
+t$transcripts <- formatC(t$transcripts, format = "d", big.mark = ",")
+t$time <- sprintf("%.1fs", t$time_s)
+kbl(t[, c("organism", "assembly", "transcripts", "variants", "source", "time", "variants/s")])
 ```
 
-Multi-organism rows are added by running `scripts/benchmark.sh "<organism>"
-<assembly> <gff3> <vcf> [fasta]` (yeast / fly / arabidopsis / mouse / human).
+Add organisms by running `scripts/benchmark.sh "<organism>" <assembly> <gff3>
+<vcf> [fasta]` (yeast / fly / arabidopsis / mouse / human).
 
-## Head-to-head (full output, same gene model)
+## Head-to-head vs fastVEP (full output, same gene model)
 
-```{sql}
-SELECT dataset, variants, tool, wall_clock AS "wall", peak_rss_mb AS "rss (MB)", note
-FROM 'benchmarks/data/timings.csv'
-ORDER BY variants DESC, tool;
+```{r}
+kbl(csv("benchmarks/data/timings.csv"))
 ```
 
 duckvep's edge is **caching** the parsed transcript model (warm); a *cold* run
@@ -56,9 +52,8 @@ timing is pending its cache install; concordance vs the live VEP is below.
 
 ## Footprint
 
-```{sql}
-SELECT tool, dependencies, footprint, runtime_note
-FROM 'benchmarks/data/footprint.csv';
+```{r}
+kbl(csv("benchmarks/data/footprint.csv"))
 ```
 
 ## Memory & parallelism
@@ -78,11 +73,8 @@ Per-(variant, transcript) consequence agreement vs the **live Ensembl VEP** (RES
 API), over sampled real ClinVar variants annotated with the reference FASTA (so
 synonymous vs missense is exact). Both duckvep **and** fastVEP vs Ensembl VEP:
 
-```{sql}
-SELECT date, engine, n_variants AS "variants", pairs AS "shared pairs",
-       agree, pct AS "concordance %"
-FROM 'data/vep_dumps/concordance_log.csv'
-ORDER BY date DESC, engine;
+```{r}
+kbl(csv("data/vep_dumps/concordance_log.csv"))
 ```
 
 duckvep matches Ensembl VEP because it wraps the same engine; the table also
