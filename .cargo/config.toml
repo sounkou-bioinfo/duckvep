@@ -1,3 +1,18 @@
-# statically linking the C runtime on windows seems sensible?
+# Statically link the C runtime on Windows so the distributed extension is
+# self-contained: no MSVC redistributable (MSVC) and no libgcc/libstdc++/
+# winpthread runtime DLLs (MinGW/Rtools). Safe for a loadable DuckDB extension
+# because the C extension ABI does not pass CRT-allocated objects across the
+# host/extension boundary.
+
+# MSVC toolchain (windows_amd64 in the CI matrix).
 [target.x86_64-pc-windows-msvc]
+rustflags = ["-Ctarget-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-Ctarget-feature=+crt-static"]
+
+# MinGW / Rtools toolchain (windows_amd64_mingw in the CI matrix). crt-static
+# pulls Rust's self-contained mingw libs and static-links the runtime; if any
+# libgcc/winpthread DLL dependency remains, add `-Clink-self-contained=yes`.
+[target.x86_64-pc-windows-gnu]
 rustflags = ["-Ctarget-feature=+crt-static"]
