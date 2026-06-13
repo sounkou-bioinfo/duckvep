@@ -149,7 +149,7 @@ impl VScalar for VepConsequence {
                 ($i:expr, $f:ident) => {{
                     let v = sv.child($i, total);
                     for (j, r) in flat.iter().enumerate() {
-                        v.insert(j, r.$f.as_str());
+                        v.insert(j, &*r.$f);
                     }
                 }};
             }

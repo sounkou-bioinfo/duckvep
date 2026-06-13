@@ -673,6 +673,23 @@ model</strong> while fastVEP re-parses the GFF3 every run. duckvep’s
 higher memory on GIAB is the <code>read_vcf</code> eager-load (4M
 variants materialized) — the streaming follow-up closes it; fastVEP
 streams.</p>
+<h2 id="memory--parallelism">Memory &amp; parallelism</h2>
+<ul>
+<li><strong>Streaming <code>read_vcf</code></strong> bounds memory to
+one ~2048-row chunk regardless of file size: full GIAB dropped
+<strong>7.3 GB → 2.0 GB</strong>.</li>
+<li><strong>Transcript cache</strong> is a columnar
+<strong>Parquet</strong> (zstd, ~45 MB, <code>read_parquet</code>-able);
+warm load ~1.1 s vs ~5.7 s GFF3 parse.</li>
+<li><strong><code>Arc&lt;str&gt;</code></strong> for the repeated
+categorical fields (transcript/gene/biotype) shares one allocation
+across the millions of output rows instead of re-copying.</li>
+<li><strong>Parallel scan:</strong> the consequence scalar is
+thread-safe (lock-free <code>ArcSwap</code> cache), so over a parallel
+source (<code>read_parquet</code>) DuckDB runs it on multiple cores —
+measured <strong>100% → 199% CPU</strong>; <code>read_vcf</code> itself
+scans single-threaded.</li>
+</ul>
 <h2 id="ensembl-vep-concordance">Ensembl-VEP concordance</h2>
 <p>Per-(variant, transcript) consequence agreement vs the <strong>live
 Ensembl VEP</strong> (REST API), over sampled real ClinVar variants

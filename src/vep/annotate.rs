@@ -88,7 +88,7 @@ impl VTab for VepAnnotate {
             ($idx:expr, $field:ident) => {{
                 let v = output.flat_vector($idx);
                 for (i, r) in rows.iter().enumerate() {
-                    v.insert(i, r.$field.as_str());
+                    v.insert(i, &*r.$field);
                 }
             }};
         }

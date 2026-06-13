@@ -19,6 +19,7 @@ use noodles::vcf;
 use std::error::Error;
 use std::fs::File;
 use std::path::Path;
+use std::sync::Arc;
 
 pub const DEFAULT_DISTANCE: u64 = 5000;
 
@@ -131,17 +132,19 @@ impl EngineContext {
             ref_seq.as_deref(),
         );
 
+        let chrom_arc: Arc<str> = Arc::from(chrom);
+        let empty: Arc<str> = Arc::from("");
         for tc in &result.transcript_consequences {
             for ac in &tc.allele_consequences {
                 rows.push(AnnotatedRow {
-                    chrom: chrom.to_string(),
+                    chrom: chrom_arc.clone(),
                     pos: pos as i64,
                     reference: ref_str.to_string(),
                     alt: ac.allele.to_string(),
-                    gene_id: tc.gene_id.to_string(),
-                    gene_symbol: tc.gene_symbol.as_deref().unwrap_or("").to_string(),
-                    transcript_id: tc.transcript_id.to_string(),
-                    biotype: tc.biotype.to_string(),
+                    gene_id: tc.gene_id.clone(),
+                    gene_symbol: tc.gene_symbol.clone().unwrap_or_else(|| empty.clone()),
+                    transcript_id: tc.transcript_id.clone(),
+                    biotype: tc.biotype.clone(),
                     canonical: tc.canonical,
                     consequence: ac
                         .consequences
@@ -162,14 +165,17 @@ impl EngineContext {
 /// One annotated (variant, transcript, allele) row. Plain owned data so it can
 /// cross any frontend boundary (DuckDB vectors, CLI output, C API).
 pub(crate) struct AnnotatedRow {
-    pub chrom: String,
+    // Categorical/repeated fields are `Arc<str>` shared from the `Transcript`
+    // model — cloning is a refcount bump, not a re-allocation, across the
+    // millions of (variant, transcript) rows.
+    pub chrom: Arc<str>,
     pub pos: i64,
     pub reference: String,
     pub alt: String,
-    pub gene_id: String,
-    pub gene_symbol: String,
-    pub transcript_id: String,
-    pub biotype: String,
+    pub gene_id: Arc<str>,
+    pub gene_symbol: Arc<str>,
+    pub transcript_id: Arc<str>,
+    pub biotype: Arc<str>,
     pub canonical: bool,
     pub consequence: Vec<String>,
     pub impact: String,
