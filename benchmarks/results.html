@@ -605,8 +605,13 @@ padding-top: 0px;
      Tables render live from the recorded data via duckknit. -->
 
 <h1 id="duckvep-benchmarks">duckvep benchmarks</h1>
-<p>Reproducible throughput + Ensembl-VEP concordance, rendered from
-recorded data. duckvep wraps the same consequence engine as fastVEP, so
+<p><strong>Rendered with R Markdown</strong> (<code>results.Rmd</code>,
+<a href="https://github.com/rundel/duckknit">duckknit</a>): narrative,
+SQL code, and the <strong>live results</strong> are inline — every table
+below is produced by running the query against the recorded data at
+render time (the same reproducible, R-driven style as the fastVEP paper
+and duckhts). Regenerate with <code>make benchmarks</code>.</p>
+<p>duckvep wraps the same consequence engine as fastVEP, so
 head-to-heads are fair; the differences are data-engineering (caching,
 streaming, columnar), not the science. <strong>Setup:</strong> Ensembl
 GFF3 gene models; release builds (<code>opt-level=3</code>,

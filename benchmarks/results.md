@@ -4,13 +4,19 @@
 
 # duckvep benchmarks
 
-Reproducible throughput + Ensembl-VEP concordance, rendered from
-recorded data. duckvep wraps the same consequence engine as fastVEP, so
-head-to-heads are fair; the differences are data-engineering (caching,
-streaming, columnar), not the science. **Setup:** Ensembl GFF3 gene
-models; release builds (`opt-level=3`, `lto=fat`); steady-state (warm
-transcript cache); single run each. Reproduce with
-`scripts/benchmark.sh` and `scripts/vep_concordance.py`.
+**Rendered with R Markdown** (`results.Rmd`,
+[duckknit](https://github.com/rundel/duckknit)): narrative, SQL code,
+and the **live results** are inline — every table below is produced by
+running the query against the recorded data at render time (the same
+reproducible, R-driven style as the fastVEP paper and duckhts).
+Regenerate with `make benchmarks`.
+
+duckvep wraps the same consequence engine as fastVEP, so head-to-heads
+are fair; the differences are data-engineering (caching, streaming,
+columnar), not the science. **Setup:** Ensembl GFF3 gene models; release
+builds (`opt-level=3`, `lto=fat`); steady-state (warm transcript cache);
+single run each. Reproduce with `scripts/benchmark.sh` and
+`scripts/vep_concordance.py`.
 
 > Scope note: duckvep currently emits **consequence +
 > amino-acids/codons**; HGVS strings and supplementary annotations are
