@@ -71,11 +71,11 @@ SELECT tool, dependencies, footprint, runtime_note
 FROM 'benchmarks/data/footprint.csv';
 ```
 
-| tool        | dependencies                      | footprint              | runtime_note                                                         |
-|-------------|-----------------------------------|------------------------|----------------------------------------------------------------------|
-| duckvep     | DuckDB (+ a 1.4 MB extension)     | 1.4 MB extension       | runs in any DuckDB (CLI/Python/WASM); transcript cache 45 MB Parquet |
-| fastVEP     | none                              | ~5.5 MB binary         | standalone Rust binary                                               |
-| Ensembl VEP | Perl 5.22+, DBI, 10+ CPAN modules | ~200 MB + ~25 GB cache | interpreted Perl + species cache                                     |
+| tool        | dependencies                      | footprint              | runtime_note                                                           |
+|-------------|-----------------------------------|------------------------|------------------------------------------------------------------------|
+| duckvep     | DuckDB (+ a 1.4 MB extension)     | 1.4 MB extension       | runs in any DuckDB (CLI/R/Python/WASM); transcript cache 45 MB Parquet |
+| fastVEP     | none                              | ~5.5 MB binary         | standalone Rust binary                                                 |
+| Ensembl VEP | Perl 5.22+, DBI, 10+ CPAN modules | ~200 MB + ~25 GB cache | interpreted Perl + species cache                                       |
 
 ## Memory & parallelism
 
