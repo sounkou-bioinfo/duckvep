@@ -95,11 +95,17 @@ scalar over DuckDB-scanned rows. The idiomatic path is therefore the scalar
 **not** a table function that re-reads the VCF itself.
 
 **Implemented:** `vep_load_cache(gff3, fasta)` builds the engine once into a
-global; `vep_consequence(chrom,pos,ref,alt)` is an Arrow scalar over
-DuckDB-scanned rows (any source), returning a JSON array of per-transcript
-consequences to `json_each`/`UNNEST` — verified at parity with `vep_annotate` and
-fastVEP. `vep_annotate(vcf, …)` remains as a one-call convenience (it reads the
-VCF itself); the scalar is the primary, scan-driven path.
+global; `vep_consequence(chrom,pos,ref,alt)` is a raw `VScalar` over
+DuckDB-scanned rows (any source) returning a native **`LIST<STRUCT>`** (typed:
+`consequence VARCHAR[]`, `canonical BOOLEAN`, `protein_pos BIGINT`, …), directly
+`UNNEST(...) AS u(c)` then `c.consequence`/`c.impact` — verified at parity with
+`vep_annotate`/fastVEP over a multi-row scan. `vep_annotate(vcf, …)` remains a
+one-call convenience; the scalar is the primary, scan-driven path.
+
+> **No Arrow on the output path.** The scalar writes DuckDB vectors directly via
+> the core `ListVector`/`StructVector` API (same as the VTabs). `VArrowScalar`'s
+> Arrow→vector conversion mangles nested structs for multi-row batches (struct
+> fields come back NULL); we use Arrow only to *read* the input batch.
 
 **Vendored, not depended.** The fastVEP crates are hard-copied under `vendor/`
 (Apache-2.0, `Huang-lab/fastVEP@785922e`) so we can fix decisions that are

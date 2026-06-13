@@ -608,7 +608,6 @@ dependencies = [
  "fastvep-genome",
  "flate2",
  "noodles",
- "serde_json",
 ]
 
 [[package]]
