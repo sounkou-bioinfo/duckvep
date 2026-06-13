@@ -35,6 +35,9 @@ fastvep-genome = { path = "vendor/fastvep-genome" }
 fastvep-cache = { path = "vendor/fastvep-cache" }
 fastvep-consequence = { path = "vendor/fastvep-consequence" }
 arc-swap = "1.9.1"
+serde_json.workspace = true
+arrow = "58"
+parquet = { version = "58", default-features = false, features = ["arrow", "zstd"] }
 
 # Workspace so the vendored crates resolve their `workspace = true` keys here.
 [workspace]
