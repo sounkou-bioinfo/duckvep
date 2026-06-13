@@ -1,116 +1,138 @@
-# DuckDB Rust extension template
-This is an **experimental** template for Rust based extensions based on the C Extension API of DuckDB. The goal is to
-turn this eventually into a stable basis for pure-Rust DuckDB extensions that can be submitted to the Community extensions
-repository
 
-Features:
-- No DuckDB build required
-- No C++ or C code required
-- CI/CD chain preconfigured
-- (Coming soon) Works with community extensions
+<!-- README.md is generated from README.Rmd — edit the .Rmd and run `make readme`.
+     SQL blocks below are executed live against the built extension via duckknit. -->
 
-## Cloning
+# duckvep
 
-Clone the repo with submodules
+**DuckDB-native variant effect prediction.** A loadable DuckDB extension
+(Rust, [`duckdb-rs`](https://github.com/duckdb/duckdb-rs)) that reads
+genomics formats via [noodles](https://github.com/zaeleus/noodles),
+exposes the VEP consequence / HGVS / ACMG engine as SQL functions, and
+treats annotation databases as plain Parquet/DuckDB tables joined by the
+optimizer — instead of hand-rolled file formats. See
+[DESIGN.md](DESIGN.md) for the full design and rationale.
 
-```shell
-git clone --recurse-submodules <repo>
+> Status: early. `read_vcf` and `vcf_samples` are implemented; the
+> consequence / HGVS / ACMG UDFs and the Parquet annotation pipeline are
+> in progress.
+
+## Build
+
+``` sh
+make debug      # builds build/debug/duckvep.duckdb_extension (native)
+make test       # runs the SQL test suite
 ```
 
-## Dependencies
-In principle, these extensions can be compiled with the Rust toolchain alone. However, this template relies on some additional
-tooling to make life a little easier and to be able to share CI/CD infrastructure with extension templates for other languages:
+The extension also builds to **WASM**, so the same readers run in
+DuckDB-WASM in the browser with no server.
 
-- Python3
-- Python3-venv
-- [Make](https://www.gnu.org/software/make)
-- Git
+## Load it
 
-Installing these dependencies will vary per platform:
-- For Linux, these come generally pre-installed or are available through the distro-specific package manager.
-- For MacOS, [homebrew](https://formulae.brew.sh/).
-- For Windows, [chocolatey](https://community.chocolatey.org/).
-
-## Building
-After installing the dependencies, building is a two-step process. Firstly run:
-```shell
-make configure
-```
-This will ensure a Python venv is set up with DuckDB and DuckDB's test runner installed. Additionally, depending on configuration,
-DuckDB will be used to determine the correct platform for which you are compiling.
-
-Then, to build the extension run:
-```shell
-make debug
-```
-This delegates the build process to cargo, which will produce a shared library in `target/debug/<shared_lib_name>`. After this step,
-a script is run to transform the shared library into a loadable extension by appending a binary footer. The resulting extension is written
-to the `build/debug` directory.
-
-To create optimized release binaries, simply run `make release` instead.
-
-### Running the extension
-To run the extension code, start `duckdb` with `-unsigned` flag. This will allow you to load the local extension file.
-
-```sh
-duckdb -unsigned
+``` duckdb
+LOAD 'build/debug/duckvep.duckdb_extension';
 ```
 
-After loading the extension by the file path, you can use the functions provided by the extension (in this case, `rusty_quack()`).
+## `read_vcf` — VCF/BCF as a SQL table
 
-```sql
-LOAD './build/debug/extension/rusty_quack/rusty_quack.duckdb_extension';
-SELECT * FROM rusty_quack('Jane');
-```
+One row per variant. `alt` and `filter` are lists; `end_pos` carries the
+variant interval (`INFO/END` for SV/CNV, else `pos + len(ref) - 1`).
 
-```
-┌─────────────────────┐
-│       column0       │
-│       varchar       │
-├─────────────────────┤
-│ Rusty Quack Jane 🐥 │
-└─────────────────────┘
+``` duckdb
+SELECT chrom, pos, end_pos, ref, alt, qual, filter
+FROM read_vcf('test/data/sites.vcf')
+LIMIT 5;
 ```
 
-## Testing
-This extension uses the DuckDB Python client for testing. This should be automatically installed in the `make configure` step.
-The tests themselves are written in the SQLLogicTest format, just like most of DuckDB's tests. A sample test can be found in
-`test/sql/<extension_name>.test`. To run the tests using the *debug* build:
+| chrom |      pos |  end_pos | ref | alt   | qual | filter   |
+|-------|---------:|---------:|-----|-------|-----:|----------|
+| 17    | 43124090 | 43124090 | A   | \[G\] | 30.0 | \[PASS\] |
+| 17    | 43106500 | 43106500 | T   | \[C\] | 30.0 | \[PASS\] |
+| 17    | 43125300 | 43125300 | C   | \[T\] | 30.0 | \[PASS\] |
+| 17    | 43120000 | 43120000 | C   | \[T\] | 30.0 | \[PASS\] |
+| 17    | 43043000 | 43043000 | T   | \[C\] | 30.0 | \[PASS\] |
 
-```shell
-make test_debug
-```
+### Structural variants are first-class
 
-or for the *release* build:
-```shell
-make test_release
-```
+Symbolic (`<DEL>`, `<CNV>`), breakend, and multiallelic alleles survive
+as list elements, and `end_pos` makes interval filters work:
 
-### Version switching
-Testing with different DuckDB versions is really simple:
-
-First, run
-```
-make clean_all
-```
-to ensure the previous `make configure` step is deleted.
-
-Then, run
-```
-DUCKDB_TEST_VERSION=v1.3.2 make configure
-```
-to select a different duckdb version to test with
-
-Finally, build and test with
-```
-make debug
-make test_debug
+``` duckdb
+SELECT pos, end_pos, ref, alt, end_pos - pos AS span
+FROM read_vcf('test/data/sv.vcf')
+WHERE end_pos - pos > 100
+ORDER BY pos;
 ```
 
-### Known issues
-This is a bit of a footgun, but the extensions produced by this template may (or may not) be broken on windows on python3.11
-with the following error on extension load:
-```shell
-IO Error: Extension '<name>.duckdb_extension' could not be loaded: The specified module could not be found
+|   pos | end_pos | ref | alt       | span |
+|------:|--------:|-----|-----------|-----:|
+|  5000 |    8000 | N   | \[<DEL>\] | 3000 |
+| 12000 |   20000 | A   | \[<CNV>\] | 8000 |
+
+### Multi-sample, phased genotypes
+
+`gt` is the positional per-sample genotype list (phasing preserved as
+`0|1`):
+
+``` duckdb
+SELECT pos, ref, alt, gt
+FROM read_vcf('test/data/ms.vcf');
 ```
-This was resolved by using python 3.12
+
+|  pos | ref | alt      | gt                  |
+|-----:|-----|----------|---------------------|
+| 1000 | A   | \[G\]    | \[0\|1, 1/1, 0\|0\] |
+| 2000 | C   | \[T, A\] | \[1\|2, 0/1, ./.\]  |
+
+`vcf_samples()` gives the header sample order, so genotypes explode to
+tidy per-sample rows on demand — no re-annotation, because annotation is
+site-wise:
+
+``` duckdb
+SELECT v.pos, s.sample, g.gt
+FROM read_vcf('test/data/ms.vcf') v,
+     UNNEST(v.gt) WITH ORDINALITY AS g(gt, idx)
+     JOIN vcf_samples('test/data/ms.vcf') s USING (idx)
+ORDER BY v.pos, s.idx;
+```
+
+|  pos | sample | gt   |
+|-----:|--------|------|
+| 1000 | NA1    | 0\|1 |
+| 1000 | NA2    | 1/1  |
+| 1000 | NA3    | 0\|0 |
+| 2000 | NA1    | 1\|2 |
+| 2000 | NA2    | 0/1  |
+| 2000 | NA3    | ./.  |
+
+### Region filter
+
+``` duckdb
+SELECT count(*) AS n
+FROM read_vcf('test/data/sv.vcf', region := 'chr1:4000-13000');
+```
+
+|   n |
+|----:|
+|   3 |
+
+## Variants from any source
+
+Because the variant table is just columns, anything DuckDB can read is a
+valid variant provider — `read_vcf`, `read_parquet`, `read_csv`, an
+attached DB, or a literal relation. The downstream UDFs consume the
+columns, not the format:
+
+``` duckdb
+SELECT chrom, pos, ref, alt
+FROM (VALUES ('chr1', 100, 'A', ['G']),
+             ('chr2', 200, 'C', ['T', 'TA'])) AS t(chrom, pos, ref, alt);
+```
+
+| chrom | pos | ref | alt       |
+|-------|----:|-----|-----------|
+| chr1  | 100 | A   | \[G\]     |
+| chr2  | 200 | C   | \[T, TA\] |
+
+## License
+
+Apache-2.0.

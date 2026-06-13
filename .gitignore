@@ -8,3 +8,4 @@ venv
 .tools/
 /data/giab
 *.duckdb_extension
+README.html

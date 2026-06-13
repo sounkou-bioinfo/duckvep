@@ -1,4 +1,4 @@
-.PHONY: clean clean_all
+.PHONY: clean clean_all readme
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -28,3 +28,7 @@ test_release: test_extension_release
 
 clean: clean_build clean_rust
 clean_all: clean_configure clean
+
+# Render README.md from README.Rmd with live SQL via duckknit (needs `make debug`).
+readme:
+	Rscript scripts/render-readme.R

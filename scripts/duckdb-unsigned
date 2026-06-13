@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# duckknit launches the DuckDB CLI without -unsigned; this wrapper injects it so
+# the locally-built (unsigned) duckvep extension can be LOADed during rendering.
+# Override the CLI path with DUCKVEP_DUCKDB if needed.
+exec "${DUCKVEP_DUCKDB:-$(cd "$(dirname "$0")/.." && pwd)/.tools/duckdb}" -unsigned "$@"
