@@ -205,16 +205,19 @@ Headline — duckvep vs offline Ensembl VEP, `discordant / pairs`, **generated f
 `correctness/data/concordance_by_impact.csv`** (not hand-written): SNVs are
 near-perfect at every impact tier; the open frontier is high-impact indels/MNVs.
 
-```{r correctness-headline, engine="r", echo=FALSE, message=FALSE, results="asis"}
+```{r correctness-headline, echo=FALSE, message=FALSE, results="asis"}
 d <- read.csv("correctness/data/concordance_by_impact.csv")
-d <- d[d$engine == "duckvep" & (d$class != "ins"), ]   # ins mirrors del; keep compact
-d$`discordant / pairs` <- sprintf("%d / %d", d$pairs - d$agree, d$pairs)
-h <- reshape(d[, c("impact", "class", "discordant / pairs")],
+d <- d[d$engine == "duckvep", ]
+d$rate <- sprintf("%d/100K", round((d$pairs - d$agree) / d$pairs * 1e5))  # error per 100K pairs
+h <- reshape(d[, c("impact", "class", "rate")],
              idvar = "impact", timevar = "class", direction = "wide")
-names(h) <- sub("^discordant / pairs\\.", "", names(h))
+names(h) <- sub("^rate\\.", "", names(h))
 h <- h[order(factor(h$impact, c("HIGH", "MODERATE", "LOW", "MODIFIER"))), ]
-print(knitr::kable(h, row.names = FALSE))
+cat(knitr::kable(h, row.names = FALSE), sep = "\n")
 ```
+
+duckvep error rate **per 100,000 (variant, transcript) pairs** vs Ensembl VEP
+(version-matched), by impact × class — generated from the recorded CSV.
 
 duckvep's accuracy patches over the vendored engine are in [`PATCHES.md`](PATCHES.md).
 

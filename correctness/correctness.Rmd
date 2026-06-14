@@ -38,32 +38,42 @@ fastVEP plus our accuracy patches, so the head-to-head is fair.
 ```{r}
 d <- csv("correctness/data/concordance_by_impact.csv")
 d$disc <- d$pairs - d$agree
-d$cell <- sprintf("%d / %d", d$disc, d$pairs)
-# Accessor so every figure in the prose is generated from the CSV, never typed.
+d$per100k <- round(d$disc / d$pairs * 1e5)          # error rate per 100,000 pairs
+d$cell <- sprintf("%d (%d/100K)", d$disc, d$per100k)  # raw count + normalized rate
+# Accessors so every figure in the prose is generated from the CSV, never typed.
 gv <- function(eng, imp, cls) {
   r <- d[d$engine == eng & d$impact == imp & d$class == cls, ]
   if (nrow(r) == 0) "n/a" else sprintf("%d/%d", r$disc, r$pairs)
 }
-w <- reshape(d[, c("impact", "class", "engine", "cell")],
-             idvar = c("impact", "class"), timevar = "engine", direction = "wide")
+gr <- function(eng, imp, cls) {  # per-100K error rate
+  r <- d[d$engine == eng & d$impact == imp & d$class == cls, ]
+  if (nrow(r) == 0) "n/a" else sprintf("%d/100K", r$per100k)
+}
+# pairs now match across engines (valid join), so show it once.
+w <- reshape(d[, c("impact", "class", "pairs", "engine", "cell")],
+             idvar = c("impact", "class", "pairs"), timevar = "engine", direction = "wide")
 names(w) <- sub("^cell\\.", "", names(w))
 w <- w[order(factor(w$impact, c("HIGH", "MODERATE", "LOW", "MODIFIER")), w$class), ]
-knitr::kable(w, col.names = c("impact", "class", "duckvep (disc/pairs)", "fastvep (disc/pairs)"),
+knitr::kable(w, col.names = c("impact", "class", "pairs", "duckvep err (rate)", "fastvep err (rate)"),
              row.names = FALSE)
 ```
 
+Error rate is **per 100,000 (variant, transcript) pairs** — comparable across
+classes despite very different pair counts.
+
 **Reading it** (all figures inline-generated from the CSV above):
 
-- **SNVs are near-perfect at every impact tier** — duckvep `discordant/pairs`
-  HIGH `r gv("duckvep","HIGH","snv")`, MODERATE `r gv("duckvep","MODERATE","snv")`,
-  LOW `r gv("duckvep","LOW","snv")`, MODIFIER `r gv("duckvep","MODIFIER","snv")` —
-  and ahead of fastVEP (MODERATE `r gv("fastvep","MODERATE","snv")`, LOW
-  `r gv("fastvep","LOW","snv")`, MODIFIER `r gv("fastvep","MODIFIER","snv")`),
-  thanks to the incomplete-CDS / non-ATG-start patches (see `../PATCHES.md`).
+- **SNVs are near-perfect at every impact tier** — duckvep error rate HIGH
+  `r gr("duckvep","HIGH","snv")`, MODERATE `r gr("duckvep","MODERATE","snv")`,
+  LOW `r gr("duckvep","LOW","snv")`, MODIFIER `r gr("duckvep","MODIFIER","snv")` —
+  and ahead of fastVEP (MODERATE `r gr("fastvep","MODERATE","snv")` vs duckvep
+  `r gr("duckvep","MODERATE","snv")`), thanks to the incomplete-CDS / non-ATG-start
+  patches (see `../PATCHES.md`).
 - **Indels and MNVs are the residual frontier**, concentrated at HIGH impact —
-  duckvep HIGH del `r gv("duckvep","HIGH","del")`, HIGH ins `r gv("duckvep","HIGH","ins")`,
-  HIGH mnv `r gv("duckvep","HIGH","mnv")`. These are the clinically actionable
-  sites an aggregate % would bury.
+  duckvep error rate HIGH del `r gr("duckvep","HIGH","del")`, HIGH ins
+  `r gr("duckvep","HIGH","ins")`, HIGH mnv `r gr("duckvep","HIGH","mnv")` (vs SNV
+  `r gr("duckvep","HIGH","snv")`). These are the clinically actionable sites an
+  aggregate % would bury.
 - **duckvep and fastVEP are now validly comparable on indels** — normalizing both
   sides makes the indel `pairs` match across engines (HIGH del fastVEP
   `r gv("fastvep","HIGH","del")` vs duckvep `r gv("duckvep","HIGH","del")`; before
@@ -85,6 +95,9 @@ in-codon MNVs — to stress-test those classes directly.
 ## Reproduce
 
 ```sh
+# 0. fetch all inputs with pinned provenance (Ensembl 116, ClinVar 2026-06-06,
+#    VEP cache 116, GIAB) -> data/ ; see scripts/fetch-data.sh for exact sources
+scripts/fetch-data.sh
 # 1. build the Ensembl-sourced cache (server-free, from MySQL dumps)
 correctness/cache-build/build-cache.sh homo_sapiens 116 38
 # 2. impact-stratified concordance vs offline Ensembl VEP

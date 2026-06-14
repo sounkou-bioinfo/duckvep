@@ -280,6 +280,17 @@ Headline — duckvep vs offline Ensembl VEP, `discordant / pairs`,
 hand-written): SNVs are near-perfect at every impact tier; the open
 frontier is high-impact indels/MNVs.
 
+| impact   | del        | ins        | mnv        | snv    |
+|:---------|:-----------|:-----------|:-----------|:-------|
+| HIGH     | 9354/100K  | 7104/100K  | 48711/100K | 2/100K |
+| MODERATE | 1240/100K  | 1767/100K  | 28334/100K | 0/100K |
+| LOW      | 16837/100K | 30960/100K | 4975/100K  | 2/100K |
+| MODIFIER | 656/100K   | 587/100K   | 200/100K   | 1/100K |
+
+duckvep error rate **per 100,000 (variant, transcript) pairs** vs
+Ensembl VEP (version-matched), by impact × class — generated from the
+recorded CSV.
+
 duckvep’s accuracy patches over the vendored engine are in
 [`PATCHES.md`](PATCHES.md).
 

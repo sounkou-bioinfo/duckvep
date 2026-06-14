@@ -19,13 +19,13 @@ this — and is required for correct annotation joins anyway.
 
 End-to-end throughput, duckvep vs fastVEP (hyperfine if installed, else `time`).
 
-## Full-size GIAB — `scripts/fetch-giab.sh`
+## Full-size GIAB — `scripts/fetch-data.sh`
 
 Downloads HG002 GRCh38 benchmark VCF + Ensembl GRCh38 GFF3 + reference into
 `data/giab/` (gitignored, ~GB). Then:
 
 ```sh
-scripts/fetch-giab.sh
+scripts/fetch-data.sh
 scripts/bench.sh       data/giab/HG002.vcf.gz data/giab/GRCh38.116.gff3.gz --fasta data/giab/GRCh38.fa
 correctness/concordance.sh data/giab/HG002.vcf.gz data/giab/GRCh38.116.gff3.gz --fasta data/giab/GRCh38.fa
 ```

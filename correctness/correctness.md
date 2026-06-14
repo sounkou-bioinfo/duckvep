@@ -30,36 +30,38 @@ concentrated in HIGH-impact sites. So every figure is split by **IMPACT
 engine as fastVEP plus our accuracy patches, so the head-to-head is
 fair.
 
-| impact   | class | duckvep (disc/pairs) | fastvep (disc/pairs) |
-|:---------|:------|:---------------------|:---------------------|
-| HIGH     | del   | 2122 / 22685         | 2187 / 22685         |
-| HIGH     | ins   | 679 / 9558           | 584 / 9558           |
-| HIGH     | mnv   | 699 / 1435           | 699 / 1435           |
-| HIGH     | snv   | 1 / 43294            | 0 / 43294            |
-| MODERATE | del   | 61 / 4921            | 75 / 4921            |
-| MODERATE | ins   | 31 / 1754            | 31 / 1754            |
-| MODERATE | mnv   | 478 / 1687           | 483 / 1687           |
-| MODERATE | snv   | 1 / 403438           | 19 / 403438          |
-| LOW      | del   | 1249 / 7418          | 1225 / 7418          |
-| LOW      | ins   | 1109 / 3582          | 821 / 3582           |
-| LOW      | mnv   | 20 / 402             | 92 / 402             |
-| LOW      | snv   | 5 / 214055           | 33 / 214055          |
-| MODIFIER | del   | 230 / 35081          | 15 / 35081           |
-| MODIFIER | ins   | 104 / 17711          | 39 / 17711           |
-| MODIFIER | mnv   | 6 / 2995             | 6 / 2995             |
-| MODIFIER | snv   | 6 / 654709           | 20 / 654709          |
+| impact   | class |  pairs | duckvep err (rate) | fastvep err (rate) |
+|:---------|:------|-------:|:-------------------|:-------------------|
+| HIGH     | del   |  22685 | 2122 (9354/100K)   | 2187 (9641/100K)   |
+| HIGH     | ins   |   9558 | 679 (7104/100K)    | 584 (6110/100K)    |
+| HIGH     | mnv   |   1435 | 699 (48711/100K)   | 699 (48711/100K)   |
+| HIGH     | snv   |  43294 | 1 (2/100K)         | 0 (0/100K)         |
+| MODERATE | del   |   4921 | 61 (1240/100K)     | 75 (1524/100K)     |
+| MODERATE | ins   |   1754 | 31 (1767/100K)     | 31 (1767/100K)     |
+| MODERATE | mnv   |   1687 | 478 (28334/100K)   | 483 (28631/100K)   |
+| MODERATE | snv   | 403438 | 1 (0/100K)         | 19 (5/100K)        |
+| LOW      | del   |   7418 | 1249 (16837/100K)  | 1225 (16514/100K)  |
+| LOW      | ins   |   3582 | 1109 (30960/100K)  | 821 (22920/100K)   |
+| LOW      | mnv   |    402 | 20 (4975/100K)     | 92 (22886/100K)    |
+| LOW      | snv   | 214055 | 5 (2/100K)         | 33 (15/100K)       |
+| MODIFIER | del   |  35081 | 230 (656/100K)     | 15 (43/100K)       |
+| MODIFIER | ins   |  17711 | 104 (587/100K)     | 39 (220/100K)      |
+| MODIFIER | mnv   |   2995 | 6 (200/100K)       | 6 (200/100K)       |
+| MODIFIER | snv   | 654709 | 6 (1/100K)         | 20 (3/100K)        |
+
+Error rate is **per 100,000 (variant, transcript) pairs** — comparable
+across classes despite very different pair counts.
 
 **Reading it** (all figures inline-generated from the CSV above):
 
-- **SNVs are near-perfect at every impact tier** — duckvep
-  `discordant/pairs` HIGH 1/43294, MODERATE 1/403438, LOW 5/214055,
-  MODIFIER 6/654709 — and ahead of fastVEP (MODERATE 19/403438, LOW
-  33/214055, MODIFIER 20/654709), thanks to the incomplete-CDS /
-  non-ATG-start patches (see `../PATCHES.md`).
+- **SNVs are near-perfect at every impact tier** — duckvep error rate
+  HIGH 2/100K, MODERATE 0/100K, LOW 2/100K, MODIFIER 1/100K — and ahead
+  of fastVEP (MODERATE 5/100K vs duckvep 0/100K), thanks to the
+  incomplete-CDS / non-ATG-start patches (see `../PATCHES.md`).
 - **Indels and MNVs are the residual frontier**, concentrated at HIGH
-  impact — duckvep HIGH del 2122/22685, HIGH ins 679/9558, HIGH mnv
-  699/1435. These are the clinically actionable sites an aggregate %
-  would bury.
+  impact — duckvep error rate HIGH del 9354/100K, HIGH ins 7104/100K,
+  HIGH mnv 48711/100K (vs SNV 2/100K). These are the clinically
+  actionable sites an aggregate % would bury.
 - **duckvep and fastVEP are now validly comparable on indels** —
   normalizing both sides makes the indel `pairs` match across engines
   (HIGH del fastVEP 2187/22685 vs duckvep 2122/22685; before
@@ -83,6 +85,9 @@ classes directly.
 ## Reproduce
 
 ``` sh
+# 0. fetch all inputs with pinned provenance (Ensembl 116, ClinVar 2026-06-06,
+#    VEP cache 116, GIAB) -> data/ ; see scripts/fetch-data.sh for exact sources
+scripts/fetch-data.sh
 # 1. build the Ensembl-sourced cache (server-free, from MySQL dumps)
 correctness/cache-build/build-cache.sh homo_sapiens 116 38
 # 2. impact-stratified concordance vs offline Ensembl VEP
