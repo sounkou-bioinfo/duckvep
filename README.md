@@ -183,6 +183,27 @@ ORDER BY pos LIMIT 5;
 | 43124090 | A   | G   | BRCA1       | ENST00000357654 | \[missense_variant\]   | MODERATE |
 | 43124090 | AA  | A   | BRCA1       | ENST00000357654 | \[frameshift_variant\] | HIGH     |
 
+### Structural variants
+
+Symbolic SVs (`<DEL>`, `<DUP>`, `<CNV>`, `<INV>`) and breakends are
+dispatched to the SV consequence predictor over their full `INFO/END`
+span — `vep_annotate` reads `END` from the VCF, and the scalar takes an
+END-aware 5-argument form `vep_consequence(chrom, pos, end, ref, alt)`
+(drive it with `read_vcf`’s `end_pos`). A `<DEL>` covering a transcript
+yields `transcript_ablation`, a partial one `feature_truncation` +
+`splice_*` + `copy_number_decrease`, and a `<DUP>`
+`transcript_amplification` — the Ensembl SV vocabulary:
+
+``` sql
+SELECT c.consequence, c.impact
+FROM UNNEST(vep_consequence('17', 43044295, 43125483, 'N', '<DEL>')) AS u(c)
+WHERE c.transcript_id = 'ENST00000357654';
+```
+
+| consequence             | impact |
+|-------------------------|--------|
+| \[transcript_ablation\] | HIGH   |
+
 ## Variants from any source
 
 Because the variant table is just columns, anything DuckDB can read is a

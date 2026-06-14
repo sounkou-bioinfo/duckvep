@@ -110,10 +110,14 @@ impl VScalar for VepConsequence {
         output: &mut dyn WritableVector,
     ) -> Result<(), Box<dyn Error>> {
         let batch = data_chunk_to_arrow(input)?;
+        // Two arities: (chrom,pos,ref,alt) and the END-aware (chrom,pos,end,ref,alt)
+        // used to span structural variants (symbolic <DEL>/<CNV>/… and breakends).
+        let spanned = batch.num_columns() == 5;
         let chrom = batch.column(0).as_string::<i32>();
         let pos = batch.column(1).as_primitive::<Int64Type>();
-        let refa = batch.column(2).as_string::<i32>();
-        let alta = batch.column(3).as_string::<i32>();
+        let end = spanned.then(|| batch.column(2).as_primitive::<Int64Type>());
+        let refa = batch.column(if spanned { 3 } else { 2 }).as_string::<i32>();
+        let alta = batch.column(if spanned { 4 } else { 3 }).as_string::<i32>();
         let nrows = input.len();
 
         // Compute all rows, holding the cache only for the compute; results are
@@ -127,9 +131,12 @@ impl VScalar for VepConsequence {
                 .load_full()
                 .ok_or("vep_consequence: call vep_load_cache(gff3, fasta) first")?;
             for i in 0..nrows {
-                flat.extend(ctx.annotate_variant(
+                let p = pos.value(i) as u64;
+                let e = end.map(|c| c.value(i) as u64).unwrap_or(p);
+                flat.extend(ctx.annotate_variant_spanned(
                     chrom.value(i),
-                    pos.value(i) as u64,
+                    p,
+                    e,
                     refa.value(i),
                     alta.value(i),
                 ));
@@ -226,14 +233,16 @@ impl VScalar for VepConsequence {
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
-        vec![ScalarFunctionSignature::exact(
-            vec![
-                varchar(),
-                LogicalTypeHandle::from(LogicalTypeId::Bigint),
-                varchar(),
-                varchar(),
-            ],
-            LogicalTypeHandle::list(&consequence_struct()),
-        )]
+        let bigint = || LogicalTypeHandle::from(LogicalTypeId::Bigint);
+        let ret = || LogicalTypeHandle::list(&consequence_struct());
+        vec![
+            // (chrom, pos, ref, alt)
+            ScalarFunctionSignature::exact(vec![varchar(), bigint(), varchar(), varchar()], ret()),
+            // (chrom, pos, end, ref, alt) — END spans structural variants.
+            ScalarFunctionSignature::exact(
+                vec![varchar(), bigint(), bigint(), varchar(), varchar()],
+                ret(),
+            ),
+        ]
     }
 }

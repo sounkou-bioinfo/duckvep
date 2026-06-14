@@ -40,3 +40,20 @@ query I
 SELECT len(vep_consequence('99', 1, 'A', 'G'));
 ----
 0
+
+# Structural variants: the END-aware 5-arg form spans the SV. A <DEL> covering the
+# whole canonical BRCA1 transcript -> transcript_ablation (HIGH), like Ensembl VEP.
+query TT
+SELECT c.consequence, c.impact
+FROM UNNEST(vep_consequence('17', 43044295, 43125483, 'N', '<DEL>')) AS u(c)
+WHERE c.transcript_id = 'ENST00000357654';
+----
+[transcript_ablation]	HIGH
+
+# A <DUP> over the same span -> transcript_amplification (HIGH).
+query T
+SELECT c.consequence
+FROM UNNEST(vep_consequence('17', 43044295, 43125483, 'N', '<DUP>')) AS u(c)
+WHERE c.transcript_id = 'ENST00000357654';
+----
+[transcript_amplification]

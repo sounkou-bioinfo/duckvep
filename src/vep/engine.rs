@@ -13,9 +13,10 @@ use fastvep_cache::providers::{
     FastaSequenceProvider, IndexedTranscriptProvider, MmapFastaSequenceProvider, SequenceProvider,
     TranscriptProvider,
 };
+use fastvep_consequence::sv_predictor::predict_sv_consequences;
 use fastvep_consequence::AlleleConsequenceResult;
-use fastvep_consequence::ConsequencePredictor;
-use fastvep_core::{Allele, Consequence, GenomicPosition, Strand};
+use fastvep_consequence::{ConsequencePredictor, TranscriptConsequence};
+use fastvep_core::{Allele, Consequence, GenomicPosition, Strand, VariantType};
 use fastvep_genome::Transcript;
 use noodles::vcf;
 use std::error::Error;
@@ -135,13 +136,36 @@ impl EngineContext {
         ref_str: &str,
         alt_raw: &str,
     ) -> Vec<AnnotatedRow> {
+        // Default end = ref span (SNV/indel). SV callers use the END-aware form.
+        let end = pos + (ref_str.len() as u64).saturating_sub(1);
+        self.annotate_variant_spanned(chrom, pos, end, ref_str, alt_raw)
+    }
+
+    /// END-aware kernel. `end` is the variant interval end (`INFO/END` for SVs);
+    /// for SNVs/indels it is `pos + len(ref) - 1`. Structural alt alleles
+    /// (symbolic `<DEL>`/`<DUP>`/`<CNV>`/`<INV>`, breakends) are dispatched to the
+    /// SV consequence predictor over the spanned interval; sequence alleles go
+    /// through the regular predictor. A mixed multiallelic site does both.
+    pub(crate) fn annotate_variant_spanned(
+        &self,
+        chrom: &str,
+        pos: u64,
+        end: u64,
+        ref_str: &str,
+        alt_raw: &str,
+    ) -> Vec<AnnotatedRow> {
         let mut rows = Vec::new();
         if alt_raw.is_empty() || alt_raw == "." {
             return rows;
         }
-        let end = pos + (ref_str.len() as u64).saturating_sub(1);
+        let end = end.max(pos + (ref_str.len() as u64).saturating_sub(1));
         let ref_allele = Allele::from_str(ref_str);
         let alt_alleles: Vec<Allele> = alt_raw.split(',').map(Allele::from_str).collect();
+        // Partition alts: structural (symbolic/breakend) vs ordinary sequence.
+        let (sv_alleles, seq_alleles): (Vec<Allele>, Vec<Allele>) = alt_alleles
+            .iter()
+            .cloned()
+            .partition(|a| classify_sv_type(a).is_structural());
 
         let position = GenomicPosition::new(chrom.to_string(), pos, end, Strand::Forward);
         let query_start = pos.saturating_sub(self.distance).max(1);
@@ -158,13 +182,34 @@ impl EngineContext {
             .as_ref()
             .and_then(|sp| sp.fetch_sequence(chrom, query_start, query_end).ok());
 
-        let result = self.predictor.predict(
-            &position,
-            &ref_allele,
-            &alt_alleles,
-            &overlapping,
-            ref_seq.as_deref(),
-        );
+        let mut transcript_consequences: Vec<TranscriptConsequence> = Vec::new();
+        if !seq_alleles.is_empty() {
+            transcript_consequences.extend(
+                self.predictor
+                    .predict(
+                        &position,
+                        &ref_allele,
+                        &seq_alleles,
+                        &overlapping,
+                        ref_seq.as_deref(),
+                    )
+                    .transcript_consequences,
+            );
+        }
+        // Each SV allele may carry its own type (e.g. <DEL> vs <DUP>), so call the
+        // SV predictor per allele with that allele's classified type.
+        for sv in &sv_alleles {
+            transcript_consequences.extend(predict_sv_consequences(
+                chrom,
+                pos,
+                end,
+                classify_sv_type(sv),
+                std::slice::from_ref(sv),
+                &overlapping,
+                self.distance,
+                self.distance,
+            ));
+        }
 
         // Index the overlapping transcripts by stable id so HGVS can reach the
         // full transcript model (coding bounds, spliced sequence, protein id).
@@ -173,12 +218,16 @@ impl EngineContext {
 
         let chrom_arc: Arc<str> = Arc::from(chrom);
         let empty: Arc<str> = Arc::from("");
-        for tc in &result.transcript_consequences {
+        for tc in &transcript_consequences {
             let tr = tmap.get(&*tc.transcript_id).copied();
             for ac in &tc.allele_consequences {
                 let (hgvsg, hgvsc, hgvsp) = match tr {
-                    Some(t) => build_hgvs(t, chrom, pos, end, &ref_allele, ac),
-                    None => (String::new(), String::new(), String::new()),
+                    // SV/breakend HGVS (del/dup/ins ranges) is its own spec and not
+                    // yet validated, so we leave it empty rather than emit guesses.
+                    Some(t) if !ac.allele.is_symbolic() => {
+                        build_hgvs(t, chrom, pos, end, &ref_allele, ac)
+                    }
+                    _ => (String::new(), String::new(), String::new()),
                 };
                 rows.push(AnnotatedRow {
                     chrom: chrom_arc.clone(),
@@ -251,6 +300,36 @@ fn pair_to_string(p: &Option<(String, String)>) -> String {
     match p {
         Some((a, b)) => format!("{a}/{b}"),
         None => String::new(),
+    }
+}
+
+/// Classify an alt allele's structural type from its symbolic tag or breakend
+/// syntax, mirroring fastVEP's `classify_sv_type`. Non-structural alleles (plain
+/// sequence, `<INS>`) return a non-structural type so they route to the regular
+/// predictor. `<DEL>` is a copy-number loss (a structural type), not a small del.
+fn classify_sv_type(alt: &Allele) -> VariantType {
+    let s = match alt {
+        Allele::Symbolic(s) => s.trim_matches(|c| c == '<' || c == '>').to_uppercase(),
+        // Breakend ALTs carry mate brackets, e.g. `G]chr2:200]` or `[chr2:200[G`.
+        Allele::Sequence(b) if b.contains(&b'[') || b.contains(&b']') => {
+            return VariantType::TranslocationBreakend
+        }
+        _ => return VariantType::Unknown,
+    };
+    match s.as_str() {
+        "DEL" => VariantType::CopyNumberLoss,
+        "DUP" | "DUP:TANDEM" => VariantType::TandemDuplication,
+        "INV" => VariantType::Inversion,
+        "BND" => VariantType::TranslocationBreakend,
+        "INS" => VariantType::Insertion,
+        "CNV" => VariantType::CopyNumberVariation,
+        "STR" => VariantType::ShortTandemRepeatVariation,
+        s if s.starts_with("CN") => match s.trim_start_matches("CN").parse::<u32>() {
+            Ok(cn) if cn < 2 => VariantType::CopyNumberLoss,
+            Ok(cn) if cn > 2 => VariantType::CopyNumberGain,
+            _ => VariantType::CopyNumberVariation,
+        },
+        _ => VariantType::Unknown,
     }
 }
 
@@ -432,7 +511,18 @@ fn annotate_all(
             .unwrap_or(0) as u64;
         let ref_str = record.reference_bases().to_string();
         let alt_raw = record.alternate_bases().as_ref().to_string();
-        rows.extend(ctx.annotate_variant(&chrom, pos, &ref_str, &alt_raw));
+        // INFO/END spans symbolic SVs (<DEL>/<CNV>/…) past their 1 bp ref anchor.
+        let info = record.info();
+        let end = info_end(info.as_ref()).unwrap_or(pos + (ref_str.len() as u64).saturating_sub(1));
+        rows.extend(ctx.annotate_variant_spanned(&chrom, pos, end, &ref_str, &alt_raw));
     }
     Ok(rows)
+}
+
+/// `INFO/END` (the SV/CNV interval end), if present and parseable.
+fn info_end(info_raw: &str) -> Option<u64> {
+    info_raw
+        .split(';')
+        .find_map(|f| f.strip_prefix("END="))
+        .and_then(|v| v.parse::<u64>().ok())
 }
