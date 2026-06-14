@@ -316,6 +316,19 @@ impl ConsequencePredictor {
         // the donor/acceptor and mis-classifies — match VEP by trimming it.
         let (var_start, var_end) =
             normalized_interval(position.start, position.end, ref_allele, alt_allele);
+        // Splice/intron predicates use the genomic interval Ensembl's
+        // `_get_differing_regions` produces: a delins whose ALT is longer than its REF
+        // spans the alt length (the inserted bases extend the affected region toward a
+        // splice site), so `r_end = var_start + alt_len - 1`. SNVs/MNVs/deletions and
+        // pure insertions are unchanged (alt not longer, or the anchor-trimmed form).
+        let splice_end = {
+            let (mref, malt) = minimal_alleles(ref_allele, alt_allele);
+            if !mref.is_empty() && malt.len() > mref.len() {
+                var_start + malt.len() as u64 - 1
+            } else {
+                var_end
+            }
+        };
         let tr_start = transcript.start;
         let tr_end = transcript.end;
 
@@ -398,10 +411,10 @@ impl ConsequencePredictor {
         let in_intron = intron_info.is_some();
 
         // 4. Check splice sites (always check regardless of coding status)
-        if splice::is_splice_donor(transcript, var_start, var_end) {
+        if splice::is_splice_donor(transcript, var_start, splice_end) {
             consequences.push(Consequence::SpliceDonorVariant);
         }
-        if splice::is_splice_acceptor(transcript, var_start, var_end) {
+        if splice::is_splice_acceptor(transcript, var_start, splice_end) {
             consequences.push(Consequence::SpliceAcceptorVariant);
         }
 
@@ -414,9 +427,16 @@ impl ConsequencePredictor {
         let is_donor = consequences.contains(&Consequence::SpliceDonorVariant);
         let is_acceptor = consequences.contains(&Consequence::SpliceAcceptorVariant);
         let is_essential_splice = is_donor || is_acceptor;
-        let is_donor_5th = splice::is_splice_donor_5th_base(transcript, var_start, var_end);
+        // Whether the REFERENCE interval (not the alt-extended splice interval) reaches an
+        // essential splice site. Only then does the variant straddle the exon/intron
+        // boundary so the peptide is undeterminable (-> coding_sequence_variant). A delins
+        // whose alt merely extends to the donor still has a determinable coding effect
+        // (the ref is in-exon -> keep frameshift/missense).
+        let ref_reaches_essential = splice::is_splice_donor(transcript, var_start, var_end)
+            || splice::is_splice_acceptor(transcript, var_start, var_end);
+        let is_donor_5th = splice::is_splice_donor_5th_base(transcript, var_start, splice_end);
         let is_donor_region =
-            !is_donor_5th && splice::is_splice_donor_region(transcript, var_start, var_end);
+            !is_donor_5th && splice::is_splice_donor_region(transcript, var_start, splice_end);
         if is_donor_5th {
             consequences.push(Consequence::SpliceDonorFifthBaseVariant);
         }
@@ -425,13 +445,13 @@ impl ConsequencePredictor {
         }
         // polypyrimidine is a candidate from the positional predicate; its `exon=0,
         // intron=1` include gate is applied declaratively below (`include_satisfied`).
-        if splice::is_splice_polypyrimidine_tract(transcript, var_start, var_end) {
+        if splice::is_splice_polypyrimidine_tract(transcript, var_start, splice_end) {
             consequences.push(Consequence::SplicePolypyrimidineTractVariant);
         }
         if !is_essential_splice
             && !is_donor_region
             && !is_donor_5th
-            && splice::is_splice_region(transcript, var_start, var_end)
+            && splice::is_splice_region(transcript, var_start, splice_end)
         {
             consequences.push(Consequence::SpliceRegionVariant);
         }
@@ -474,7 +494,7 @@ impl ConsequencePredictor {
                 consequences.push(Consequence::ThreePrimeUtrVariant);
             }
 
-            if in_coding_region && in_exon && is_essential_splice {
+            if in_coding_region && in_exon && ref_reaches_essential {
                 // The variant reaches an essential splice site (donor/acceptor), so it
                 // straddles the exon/intron boundary and is not fully within the CDS —
                 // Ensembl cannot determine the peptide and uses the generic
@@ -552,7 +572,7 @@ impl ConsequencePredictor {
         // intron_variant (a union, not an exclusive branch). The essential-splice
         // dinucleotides are excluded by `is_intronic`, so a variant only at the
         // donor/acceptor is not called intron_variant.
-        if splice::is_intronic(transcript, var_start, var_end)
+        if splice::is_intronic(transcript, var_start, splice_end)
             && !consequences.contains(&Consequence::IntronVariant)
         {
             consequences.push(Consequence::IntronVariant);
@@ -563,8 +583,8 @@ impl ConsequencePredictor {
         // the scattered hand-wired guards with Ensembl's actual model.
         let flags = FeatureOverlap {
             exon: in_exon,
-            intron: splice::overlaps_intron(transcript, var_start, var_end),
-            intron_boundary: splice::overlaps_intron_boundary(transcript, var_start, var_end),
+            intron: splice::overlaps_intron(transcript, var_start, splice_end),
+            intron_boundary: splice::overlaps_intron_boundary(transcript, var_start, splice_end),
         };
         consequences.retain(|c| include_satisfied(*c, &flags));
 
