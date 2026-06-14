@@ -112,3 +112,14 @@ FROM UNNEST(vep_consequence('17', 43045805, 43045807, 'NNN', 'N')) u(c)
 WHERE c.transcript_id = 'ENST00000357654';
 ----
 intron_variant&splice_polypyrimidine_tract_variant&splice_region_variant
+
+# POLYPYRIMIDINE EXON GATE: splice_polypyrimidine_tract_variant is the only splice term
+# Ensembl gates on `exon => 0` — a deletion spanning the exon into the PPT interior gets
+# splice_acceptor + intron (+ coding) but NOT polypyrimidine, even though the positional
+# window matches. (Verified by instrumenting Ensembl VEP.)
+query T
+SELECT list_aggregate(list_sort(c.consequence),'string_agg','&')
+FROM UNNEST(vep_consequence('17', 43045801, 43045810, 'NNNNNNNNNN', 'N')) u(c)
+WHERE c.transcript_id = 'ENST00000357654';
+----
+coding_sequence_variant&intron_variant&splice_acceptor_variant

@@ -390,7 +390,12 @@ impl ConsequencePredictor {
         if is_donor_region {
             consequences.push(Consequence::SpliceDonorRegionVariant);
         }
-        if splice::is_splice_polypyrimidine_tract(transcript, var_start, var_end) {
+        // splice_polypyrimidine_tract_variant is the ONLY splice term Ensembl gates on
+        // `exon => 0` (Constants.pm OverlapConsequence `include`): it is emitted only
+        // when the variant does NOT overlap an exon. A deletion spanning an exon into the
+        // intron sets the polypyrimidine flag but VEP suppresses the term (verified by
+        // instrumenting VEP). Match that — gate on `!in_exon`.
+        if !in_exon && splice::is_splice_polypyrimidine_tract(transcript, var_start, var_end) {
             consequences.push(Consequence::SplicePolypyrimidineTractVariant);
         }
         if !is_essential_splice
