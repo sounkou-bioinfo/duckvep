@@ -568,30 +568,42 @@ impl ConsequencePredictor {
         let incomplete_terminal = codon_start < seq.len() && codon_start + codon_len > seq.len();
         let ref_codons = seq[codon_start..(codon_start + codon_len).min(seq.len())].to_vec();
 
-        // Reconstruct the alternate sequence from codon_start, applying every edit.
-        let mut alt: Vec<u8> = Vec::new();
-        alt.extend_from_slice(&seq[codon_start..first_idx.min(seq.len())]);
+        // VEP bounds the alt peptide to the affected window: the ref codon span plus the
+        // net length change — NOT the whole downstream frame. Sum the edit lengths up
+        // front so the reconstruction below can STOP at `window_len` instead of copying
+        // the entire downstream CDS per variant (the per-row allocation hotspot — an SNV
+        // only needs ~3 bytes, not the whole gene).
+        let (total_ref, total_alt) = edits.iter().fold((0usize, 0usize), |(r, a), e| {
+            (r + e.ref_bases.len(), a + e.alt_bases.len())
+        });
+        let window_len =
+            (codon_len as i64 + total_alt as i64 - total_ref as i64).max(0) as usize;
+
+        // Reconstruct only the first `window_len` bases of the alternate sequence from
+        // codon_start, applying every edit; `push` truncates each slice to what is still
+        // needed so the downstream tail is never fully copied.
+        let mut alt: Vec<u8> = Vec::with_capacity(window_len);
+        let push = |alt: &mut Vec<u8>, s: &[u8]| {
+            if alt.len() < window_len {
+                let take = (window_len - alt.len()).min(s.len());
+                alt.extend_from_slice(&s[..take]);
+            }
+        };
+        push(&mut alt, &seq[codon_start..first_idx.min(seq.len())]);
         let mut cursor = first_idx;
-        let (mut total_ref, mut total_alt) = (0usize, 0usize);
         for e in &edits {
             if e.cds_idx > cursor {
                 let lo = cursor.min(seq.len());
                 let hi = e.cds_idx.min(seq.len());
-                alt.extend_from_slice(&seq[lo..hi]);
+                push(&mut alt, &seq[lo..hi]);
             }
-            alt.extend_from_slice(&e.alt_bases);
+            push(&mut alt, &e.alt_bases);
             cursor = e.cds_idx + e.ref_bases.len();
-            total_ref += e.ref_bases.len();
-            total_alt += e.alt_bases.len();
         }
         if cursor < seq.len() {
-            alt.extend_from_slice(&seq[cursor..]);
+            push(&mut alt, &seq[cursor..]);
         }
-        // VEP bounds the alt peptide to the affected window: the ref codon span plus
-        // the net length change — NOT the whole downstream frame.
-        let window_len =
-            (codon_len as i64 + total_alt as i64 - total_ref as i64).max(0) as usize;
-        let alt_codons: Vec<u8> = alt.into_iter().take(window_len).collect();
+        let alt_codons = alt;
 
         let ct = self.ct(transcript);
         let translate = |s: &[u8]| -> Vec<u8> {

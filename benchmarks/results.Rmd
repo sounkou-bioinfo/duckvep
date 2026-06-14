@@ -64,8 +64,30 @@ kbl(csv("benchmarks/data/footprint.csv"))
   warm load ~1.1 s vs ~5.7 s GFF3 parse.
 - **`Arc<str>`** shares the repeated categorical fields across output rows.
 - **Parallel scan:** the consequence scalar is thread-safe (lock-free `ArcSwap`
-  cache), so over `read_parquet` DuckDB runs it on multiple cores
-  (**100% → 199% CPU**); `read_vcf` itself streams single-threaded.
+  cache), so DuckDB's morsel-driven engine runs it across worker threads —
+  parallelism is a property of the query engine (whole pipeline: scan → kernel →
+  joins → aggregation), not a hand-rolled loop. See the scaling table below.
+
+## Thread scaling & CPU utilization
+
+How the `vep_consequence` kernel scales with DuckDB worker threads, each run
+**pinned to N cores with `taskset`** and `SET threads=N`
+([`scripts/bench-threads.sh`](../scripts/bench-threads.sh); the one-off serial GFF3
+load is subtracted so this is the parallel kernel). `CPU %` ≈ N×100% means N cores
+saturated; `efficiency` = speedup / N.
+
+```{r}
+ts <- csv("benchmarks/data/thread_scaling.csv")
+k <- ts[ts$phase == "kernel", c("threads", "wall_s", "throughput_per_s", "cpu_pct", "speedup", "efficiency")]
+kbl(k, row.names = FALSE,
+    col.names = c("threads", "kernel wall (s)", "variants/s", "CPU %", "speedup", "efficiency"),
+    format.args = list(big.mark = ","))
+```
+
+The kernel is a thread-safe scalar over a lock-free cache, so it scales; the
+efficiency falloff at high thread counts is **per-row allocation pressure** (the
+peptide/codon `CodingContext` is rebuilt per variant), which is the lever for
+fuller core utilization — measured here rather than assumed.
 
 ## Ensembl-VEP concordance
 

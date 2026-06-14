@@ -84,9 +84,15 @@ def vep_offline(sample):
     # anchor-stripped representation ('-' for empty). duckvep emits the identical
     # key via normalize_variant(), and fastVEP via its start+allele_string, so all
     # three join correctly for EVERY class incl. indels (no representation skew).
+    # Parallelize offline VEP: --fork N runs N worker processes (near-linear speedup,
+    # VEP is the harness bottleneck), --buffer_size sets the variants-per-chunk vector.
+    # Both env-overridable; default fork to most cores (leave headroom), buffer 10k.
+    fork = os.environ.get("VEP_FORK") or str(max(1, (os.cpu_count() or 4) - 4))
+    buffer_size = os.environ.get("VEP_BUFFER", "10000")
     subprocess.run(VEP_RUN + ["-i", SAMPLE_VCF, "--offline", "--cache",
         "--dir_cache", VEP_CACHE, "--cache_version", VEP_REL, "--species", "homo_sapiens",
         "--assembly", "GRCh38", "--fasta", FASTA, "--symbol", "--json", "-o", "/tmp/vep_off.json",
+        "--fork", fork, "--buffer_size", buffer_size,
         "--force_overwrite", "--no_stats"], check=True, capture_output=True, text=True)
     rows = []
     for line in open("/tmp/vep_off.json"):

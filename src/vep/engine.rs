@@ -59,7 +59,6 @@ type SeqProvider = Box<dyn SequenceProvider + Send + Sync>;
 /// across DuckDB worker threads (`super::consequence`).
 pub(crate) struct EngineContext {
     transcripts: IndexedTranscriptProvider,
-    seq: Option<SeqProvider>,
     predictor: ConsequencePredictor,
     distance: u64,
 }
@@ -107,7 +106,9 @@ pub(crate) fn build_context(
     };
 
     // Build spliced cDNA / protein sequences so coding consequences (missense,
-    // synonymous, amino acids) are exact. Requires a reference.
+    // synonymous, amino acids) are exact. Requires a reference. The provider is used
+    // ONLY here (sequences are baked into each transcript's `translateable_seq`); it is
+    // not retained on the context, since nothing reads the reference per variant.
     if let Some(sp) = &seq {
         for t in &mut transcripts {
             let _ = t.build_sequences(|chrom, start, end| {
@@ -116,31 +117,16 @@ pub(crate) fn build_context(
             });
         }
     }
+    drop(seq);
 
     Ok(EngineContext {
         transcripts: IndexedTranscriptProvider::new(transcripts),
-        seq,
         predictor: ConsequencePredictor::new(distance, distance),
         distance,
     })
 }
 
 impl EngineContext {
-    /// Annotate a single variant against overlapping transcripts — the pure
-    /// per-variant kernel. No IO of variants; DuckDB feeds the rows. Used by
-    /// both the streaming `annotate_all` and the scalar `vep_consequence`.
-    pub(crate) fn annotate_variant(
-        &self,
-        chrom: &str,
-        pos: u64,
-        ref_str: &str,
-        alt_raw: &str,
-    ) -> Vec<AnnotatedRow> {
-        // Default end = ref span (SNV/indel). SV callers use the END-aware form.
-        let end = pos + (ref_str.len() as u64).saturating_sub(1);
-        self.annotate_variant_spanned(chrom, pos, end, ref_str, alt_raw)
-    }
-
     /// END-aware kernel. `end` is the variant interval end (`INFO/END` for SVs);
     /// for SNVs/indels it is `pos + len(ref) - 1`. Structural alt alleles
     /// (symbolic `<DEL>`/`<DUP>`/`<CNV>`/`<INV>`, breakends) are dispatched to the
@@ -177,22 +163,17 @@ impl EngineContext {
         if overlapping.is_empty() {
             return rows;
         }
-        let ref_seq = self
-            .seq
-            .as_ref()
-            .and_then(|sp| sp.fetch_sequence(chrom, query_start, query_end).ok());
-
+        // NOTE: we deliberately do NOT fetch the reference region here. Coding
+        // consequences read each transcript's cached `translateable_seq` (built once at
+        // cache load), and `predict_allele` ignores the `ref_seq` argument. Fetching
+        // `pos ± distance` (~10 KB) per variant was a pure allocation hotspot that
+        // capped thread scaling (allocator contention across DuckDB workers) for zero
+        // benefit. If a future reference-validating path needs it, fetch conditionally.
         let mut transcript_consequences: Vec<TranscriptConsequence> = Vec::new();
         if !seq_alleles.is_empty() {
             transcript_consequences.extend(
                 self.predictor
-                    .predict(
-                        &position,
-                        &ref_allele,
-                        &seq_alleles,
-                        &overlapping,
-                        ref_seq.as_deref(),
-                    )
+                    .predict(&position, &ref_allele, &seq_alleles, &overlapping, None)
                     .transcript_consequences,
             );
         }

@@ -9,7 +9,7 @@
 //! normalized to this — needed for the concordance harness AND every future
 //! supplementary-annotation join (ClinVar/gnomAD/dbSNP).
 
-use duckdb::arrow::array::{Array, AsArray};
+use duckdb::arrow::array::AsArray;
 use duckdb::arrow::datatypes::Int64Type;
 use duckdb::core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId};
 use duckdb::vscalar::{ScalarFunctionSignature, VScalar};
