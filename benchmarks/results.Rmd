@@ -84,10 +84,17 @@ kbl(k, row.names = FALSE,
     format.args = list(big.mark = ","))
 ```
 
-The kernel is a thread-safe scalar over a lock-free cache, so it scales; the
-efficiency falloff at high thread counts is **per-row allocation pressure** (the
-peptide/codon `CodingContext` is rebuilt per variant), which is the lever for
-fuller core utilization — measured here rather than assumed.
+The kernel is a thread-safe scalar over a lock-free cache, so it scales. The
+efficiency falloff is **mostly a hardware artifact, not software slop** — `perf
+stat` on the kernel (1 vs 8 threads) shows the *same* instruction count, a healthy
+IPC (2.78 → 2.09) and a stable cache-miss rate (12.1% → 13.1%), i.e. it is neither
+allocation-thrashing nor memory-thrashing. The dominant factors are **turbo
+frequency scaling** (single-core 4.58 GHz vs all-core 4.02 GHz — the 1-thread
+baseline is turbo-boosted, which inflates its apparent efficiency) and shared
+memory bandwidth across cores. The scan source is *not* the limiter: the same
+kernel over a parallel `read_parquet` plateaus identically to `read_vcf`. (We did
+remove the genuine per-row allocation slop — a dead ~10 KB `ref_seq` fetch and a
+whole-CDS copy — for a real but modest gain.)
 
 ## Ensembl-VEP concordance
 
