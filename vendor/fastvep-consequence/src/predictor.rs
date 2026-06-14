@@ -811,22 +811,28 @@ impl ConsequencePredictor {
             // inframe_deletion for a CLEAN insertion/deletion — the reference
             // sequence is preserved at one end (a prefix/suffix/internal match).
             // A delins that rearranges the sequence is protein_altering_variant.
-            // Ensembl excludes protein_altering_variant when a stop term applies — the
-            // peptide starts with `*` (`protein_altering_variant: return 0 if
-            // $ref_pep =~ /^\*/ || $alt_pep =~ /^\*/`). So an inframe insertion that
-            // introduces a stop is just stop_gained, not protein_altering.
+            // Ensembl's protein_altering_variant exclusions (VariationEffect.pm):
+            //   return 0 if $ref_pep =~ /^\*/ || $alt_pep =~ /^\*/          (a stop term)
+            //   return 0 if $alt_pep =~ /^\Q$ref_pep\E | \Q$ref_pep\E$/     (inframe-like)
+            // The inframe-like check uses the UNTRIMMED alt peptide (everything past the
+            // stop included) — e.g. alt "LITF*IQ...SDNH" ends with ref "H" -> NOT
+            // protein_altering, just stop_gained. inframe_insertion, in contrast, trims at
+            // the first stop before its prefix/suffix check.
             let stop_starts =
                 ctx.alt_pep.first() == Some(&b'*') || ctx.ref_pep.first() == Some(&b'*');
+            let pa_excluded = stop_starts
+                || ctx.alt_pep.starts_with(&ctx.ref_pep)
+                || ctx.alt_pep.ends_with(&ctx.ref_pep);
             let term: Option<Consequence> = if net > 0 {
-                // inframe_insertion iff the alt peptide keeps the ref peptide at one end
-                // (VEP trims everything past a stop first).
+                // inframe_insertion iff the alt peptide (trimmed at the first stop) keeps
+                // the ref peptide at one end.
                 let mut altp = ctx.alt_pep.as_slice();
                 if let Some(i) = altp.iter().position(|&b| b == b'*') {
                     altp = &altp[..=i];
                 }
                 if altp.starts_with(&ctx.ref_pep) || altp.ends_with(&ctx.ref_pep) {
                     Some(Consequence::InframeInsertion)
-                } else if !stop_starts {
+                } else if !pa_excluded {
                     Some(Consequence::ProteinAlteringVariant)
                 } else {
                     None
@@ -841,7 +847,7 @@ impl ConsequencePredictor {
                 };
                 if clean {
                     Some(Consequence::InframeDeletion)
-                } else if !stop_starts {
+                } else if !pa_excluded {
                     Some(Consequence::ProteinAlteringVariant)
                 } else {
                     None
