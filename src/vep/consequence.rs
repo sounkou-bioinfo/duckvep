@@ -53,7 +53,16 @@ impl VScalar for VepLoadCache {
         } else {
             Some(fasta.value(0))
         };
-        let ctx = build_context(gff3.value(0), fastav, DEFAULT_DISTANCE)?;
+        // up/downstream window is an EXPLICIT parameter (VEP's --distance), defaulting
+        // to the VEP-compatible 5000 — not a buried constant. The 3-arg overload
+        // `vep_load_cache(gff3, fasta, distance)` sets it.
+        let distance = if input.num_columns() >= 3 {
+            let d = batch.column(2).as_primitive::<Int64Type>();
+            if d.is_null(0) { DEFAULT_DISTANCE } else { d.value(0).max(0) as u64 }
+        } else {
+            DEFAULT_DISTANCE
+        };
+        let ctx = build_context(gff3.value(0), fastav, distance)?;
         cache().store(Some(Arc::new(ctx)));
 
         let v = output.flat_vector();
@@ -64,10 +73,13 @@ impl VScalar for VepLoadCache {
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
-        vec![ScalarFunctionSignature::exact(
-            vec![varchar(), varchar()],
-            varchar(),
-        )]
+        let bigint = || LogicalTypeHandle::from(LogicalTypeId::Bigint);
+        vec![
+            // vep_load_cache(gff3, fasta)            -> distance defaults to 5000 (VEP)
+            ScalarFunctionSignature::exact(vec![varchar(), varchar()], varchar()),
+            // vep_load_cache(gff3, fasta, distance)  -> explicit up/downstream window
+            ScalarFunctionSignature::exact(vec![varchar(), varchar(), bigint()], varchar()),
+        ]
     }
 }
 
