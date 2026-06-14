@@ -1,0 +1,16 @@
+[package]
+name = "duckvep-tools"
+version = "0.3.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+description = "duckvep developer tools (Rust binaries, no bash/perl/R/Python)"
+
+[[bin]]
+name = "gen-hard-variants"
+path = "src/gen_hard_variants.rs"
+
+[dependencies]
+fastvep-cache = { path = "../vendor/fastvep-cache" }
+arrow = "58"
+parquet = { version = "58", default-features = false, features = ["arrow", "zstd", "snap"] }
+anyhow = "1"

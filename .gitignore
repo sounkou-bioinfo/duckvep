@@ -23,3 +23,6 @@ test/data/*.transcripts.parquet
 
 # Generated Ensembl cache (raw dumps, mirror db, parquet)
 data/cache/
+
+# regenerable synthetic corpus
+correctness/data/*.vcf

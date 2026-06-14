@@ -46,6 +46,7 @@ parquet = { version = "58", default-features = false, features = ["arrow", "zstd
 # Workspace so the vendored crates resolve their `workspace = true` keys here.
 [workspace]
 members = [
+    "tools",
     "vendor/fastvep-core",
     "vendor/fastvep-genome",
     "vendor/fastvep-cache",
