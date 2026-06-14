@@ -79,6 +79,10 @@ fn consequence_struct() -> LogicalTypeHandle {
         ("gene_symbol", varchar()),
         ("biotype", varchar()),
         ("canonical", LogicalTypeHandle::from(LogicalTypeId::Boolean)),
+        // SO terms as a proper LIST<VARCHAR> (one variant can hit several, e.g.
+        // splice_region_variant & intron_variant). This is a 3-level nesting
+        // (LIST<STRUCT<…LIST<VARCHAR>…>>); see `invoke` for how the inner list's
+        // entry array is written past duckdb-rs's per-vector wrapper bound.
         ("consequence", LogicalTypeHandle::list(&varchar())),
         ("impact", varchar()),
         ("amino_acids", varchar()),
@@ -131,14 +135,13 @@ impl VScalar for VepConsequence {
         }
         let total = flat.len();
 
-        // Flatten the nested consequence (LIST<VARCHAR>) child.
+        // Flatten the nested consequence (LIST<VARCHAR>) child: one inner list per
+        // struct row, `so_offsets[j]..so_offsets[j+1]` slicing the shared values.
         let mut so_flat: Vec<&str> = Vec::new();
         let mut so_offsets: Vec<usize> = Vec::with_capacity(total + 1);
         so_offsets.push(0);
         for r in &flat {
-            for c in &r.consequence {
-                so_flat.push(c.as_str());
-            }
+            so_flat.extend(r.consequence.iter().map(String::as_str));
             so_offsets.push(so_flat.len());
         }
 
@@ -165,18 +168,30 @@ impl VScalar for VepConsequence {
                 }
             }
             {
-                // consequence: a LIST<VARCHAR> child of the struct
-                let mut lc = sv.list_vector_child(5);
+                // consequence: a LIST<VARCHAR> child of the struct. Write the
+                // inner VARCHAR values (reserves the inner child to so_flat.len),
+                // set its size, then fill the per-row entry array. We must NOT use
+                // `ListVector::set_entry` here: its slice is bounded by the wrapper's
+                // hardcoded vector size (2048), but `total` can exceed that. Instead
+                // we view the inner list vector's own data — the contiguous
+                // `duckdb_list_entry` (offset,length) array — as a FlatVector sized
+                // to `total` (the struct's reserved capacity) and write it directly.
                 {
-                    let cc = lc.child(so_flat.len().max(1));
-                    for (k, s) in so_flat.iter().enumerate() {
-                        cc.insert(k, *s);
+                    let inner = sv.list_vector_child(5);
+                    {
+                        let cc = inner.child(so_flat.len().max(1));
+                        for (k, s) in so_flat.iter().enumerate() {
+                            cc.insert(k, *s);
+                        }
                     }
+                    inner.set_len(so_flat.len());
                 }
+                let mut entry_vec = sv.child(5, total);
+                let entries = entry_vec.as_mut_slice::<duckdb::ffi::duckdb_list_entry>();
                 for j in 0..total {
-                    lc.set_entry(j, so_offsets[j], so_offsets[j + 1] - so_offsets[j]);
+                    entries[j].offset = so_offsets[j] as u64;
+                    entries[j].length = (so_offsets[j + 1] - so_offsets[j]) as u64;
                 }
-                lc.set_len(so_flat.len());
             }
             vcol!(6, impact);
             vcol!(7, amino_acids);

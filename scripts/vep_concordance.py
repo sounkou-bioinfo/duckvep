@@ -14,7 +14,8 @@ Dumps: data/vep_dumps/<YYYY-MM-DD>/annotations.parquet  (+ concordance_log.csv)
 import json, subprocess, sys, time, urllib.request, urllib.error, random, datetime, os
 
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
-VCF, GFF3, FASTA = args[0], args[1], args[2]
+VCF = args[0]
+GFF3, FASTA = os.path.abspath(args[1]), os.path.abspath(args[2])  # VEP/duckvep want absolute
 N = int(args[3]) if len(args) > 3 else 100
 ROOT = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
 DUCKDB, EXT = f"{ROOT}/.tools/duckdb", f"{ROOT}/build/release/duckvep.duckdb_extension"
@@ -35,6 +36,13 @@ random.seed(42)
 sample = random.sample(snvs, min(N, len(snvs)))
 print(f"sampled {len(sample)} SNVs", file=sys.stderr)
 
+# Shared sorted sample VCF (read by duckvep, offline VEP, and fastVEP).
+SAMPLE_VCF = "/tmp/sample.vcf"
+with open(SAMPLE_VCF, "w") as fh:
+    fh.write("##fileformat=VCFv4.2\n##contig=<ID=17>\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+    for (c, p, r, a) in sorted(sample, key=lambda x: (x[0], x[1])):
+        fh.write(f"{c}\t{p}\t.\t{r}\t{a}\t.\t.\t.\n")
+
 # 2. Ensembl VEP REST, PACED (batch 100, sleep between, backoff on 429).
 def vep_rest(batch, tries=4):
     body = json.dumps({"variants": [f"{c} {p} . {r} {a} . . ." for (c, p, r, a) in batch]}).encode()
@@ -49,32 +57,62 @@ def vep_rest(batch, tries=4):
             raise
     raise RuntimeError("rate-limited")
 
-vep_rows = []
-for i in range(0, len(sample), 100):
-    try:
-        recs = vep_rest(sample[i:i+100])
-    except Exception as e:
-        print(f"  batch {i}: skipped ({e})", file=sys.stderr); continue
-    for rec in recs:
-        inp = rec["input"].split()
-        for tc in rec.get("transcript_consequences", []):
-            vep_rows.append(dict(source="vep", date=DATE, pos=int(inp[1]), ref=inp[3], alt=inp[4],
-                transcript_id=tc["transcript_id"], gene_symbol=tc.get("gene_symbol", ""),
-                consequence="&".join(sorted(tc["consequence_terms"])), impact=tc.get("impact", "")))
-    time.sleep(0.5)  # pace
-print(f"VEP REST: {len(vep_rows)} (variant,transcript) rows", file=sys.stderr)
+# 2b. OFFLINE Ensembl VEP (preferred): no REST rate limit -> high throughput.
+VEP_CACHE = os.environ.get("VEP_CACHE", f"{ROOT}/data/vep_cache")
+VEP_REL = os.environ.get("VEP_CACHE_VERSION", "112")
+VEP_RUN = os.environ.get("VEP_CMD", "conda run -n vep vep").split()
+
+def vep_offline(sample):
+    subprocess.run(VEP_RUN + ["-i", SAMPLE_VCF, "--offline", "--cache",
+        "--dir_cache", VEP_CACHE, "--cache_version", VEP_REL, "--species", "homo_sapiens",
+        "--assembly", "GRCh38", "--fasta", FASTA, "--symbol", "--tab", "-o", "/tmp/vep_off.tab",
+        "--force_overwrite", "--no_stats"], check=True, capture_output=True, text=True)
+    rows, cols = [], None
+    for line in open("/tmp/vep_off.tab"):
+        if line.startswith("##"):
+            continue
+        f = line.rstrip("\n").split("\t")
+        if line.startswith("#"):
+            cols = {n: i for i, n in enumerate(f)}; continue
+        get = lambda k: f[cols[k]] if k in cols and f[cols[k]] != "-" else ""
+        pos = int(get("Location").split(":")[1].split("-")[0])
+        rows.append(dict(source="vep", date=DATE, pos=pos, ref="", alt=get("Allele"),
+            transcript_id=get("Feature"), gene_symbol=get("SYMBOL"),
+            consequence="&".join(sorted(get("Consequence").split(","))), impact=get("IMPACT")))
+    return rows
+
+USE_OFFLINE = os.path.isdir(f"{VEP_CACHE}/homo_sapiens/{VEP_REL}_GRCh38")
+if USE_OFFLINE:
+    vep_rows = vep_offline(sample)
+    print(f"VEP offline ({VEP_REL} GRCh38): {len(vep_rows)} (variant,transcript) rows", file=sys.stderr)
+else:
+    vep_rows = []
+    for i in range(0, len(sample), 100):
+        try:
+            recs = vep_rest(sample[i:i+100])
+        except Exception as e:
+            print(f"  batch {i}: skipped ({e})", file=sys.stderr); continue
+        for rec in recs:
+            inp = rec["input"].split()
+            for tc in rec.get("transcript_consequences", []):
+                vep_rows.append(dict(source="vep", date=DATE, pos=int(inp[1]), ref=inp[3], alt=inp[4],
+                    transcript_id=tc["transcript_id"], gene_symbol=tc.get("gene_symbol", ""),
+                    consequence="&".join(sorted(tc["consequence_terms"])), impact=tc.get("impact", "")))
+        time.sleep(0.5)  # pace
+    print(f"VEP REST: {len(vep_rows)} (variant,transcript) rows", file=sys.stderr)
 with open("/tmp/vep_raw.json", "w") as fh:
     for r in vep_rows:
         fh.write(json.dumps(r) + "\n")
 
 # 3. duckvep (one session).
-values = ",".join(f"('{c}',{p}::BIGINT,'{r}','{a}')" for (c, p, r, a) in sample)
+# duckvep reads the sample VCF (chunked streaming path), not a giant VALUES.
 sql = f"""LOAD '{EXT}';
 SELECT vep_load_cache('{GFF3}', '{FASTA}');
 COPY (
-  SELECT 'duckvep' AS source, '{DATE}' AS date, t.pos, t.ref, t.alt, c.transcript_id,
+  SELECT 'duckvep' AS source, '{DATE}' AS date, v.pos, v.ref, a.alt, c.transcript_id,
          c.gene_symbol, list_aggregate(list_sort(c.consequence),'string_agg','&') AS consequence, c.impact
-  FROM (VALUES {values}) AS t(chrom,pos,ref,alt), UNNEST(vep_consequence(t.chrom,t.pos,t.ref,t.alt)) AS u(c)
+  FROM read_vcf('{SAMPLE_VCF}') v, UNNEST(v.alt) AS a(alt),
+       UNNEST(vep_consequence(v.chrom, v.pos, v.ref, a.alt)) AS u(c)
 ) TO '/tmp/dv.json' (FORMAT json);"""
 subprocess.run([DUCKDB, "-unsigned", "-c", sql], check=True)
 
@@ -82,11 +120,7 @@ subprocess.run([DUCKDB, "-unsigned", "-c", sql], check=True)
 FASTVEP = os.environ.get("FASTVEP", f"{ROOT}/../DuckfastVEP/target/release/fastvep")
 fv_rows = []
 if os.path.exists(FASTVEP):
-    with open("/tmp/sample.vcf", "w") as fh:
-        fh.write("##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
-        for (c, p, r, a) in sample:
-            fh.write(f"{c}\t{p}\t.\t{r}\t{a}\t.\t.\t.\n")
-    fv = subprocess.run([FASTVEP, "annotate", "-i", "/tmp/sample.vcf", "--gff3", GFF3,
+    fv = subprocess.run([FASTVEP, "annotate", "-i", SAMPLE_VCF, "--gff3", GFF3,
                          "--fasta", FASTA, "--output-format", "tab"], capture_output=True, text=True)
     cols = None
     for line in fv.stdout.splitlines():

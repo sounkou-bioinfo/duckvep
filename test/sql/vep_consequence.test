@@ -11,11 +11,11 @@ SELECT vep_load_cache('test/data/test.gff3', '');
 # Native typed LIST<STRUCT>: consequence VARCHAR[], canonical BOOLEAN,
 # protein_pos BIGINT. Canonical BRCA1 transcript -> missense (parity).
 query TTTI
-SELECT c.consequence[1], c.impact, c.canonical, c.protein_pos
+SELECT c.consequence, c.impact, c.canonical, c.protein_pos
 FROM UNNEST(vep_consequence('17', 43124090, 'A', 'G')) AS u(c)
 WHERE c.transcript_id = 'ENST00000357654';
 ----
-missense_variant	MODERATE	true	3
+[missense_variant]	MODERATE	true	3
 
 # Driven by DuckDB's own scan of read_vcf — any source works.
 query I
