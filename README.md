@@ -201,6 +201,40 @@ FROM (VALUES ('chr1', 100, 'A', ['G']),
 | chr1  | 100 | A   | \[G\]     |
 | chr2  | 200 | C   | \[T, TA\] |
 
+## Composing with duckhts
+
+duckvep is a DuckDB-native extension, so it composes with
+**[duckhts](https://github.com/sounkou-bioinfo/duckhts)** (htslib-backed
+format readers) by just loading both and writing a `JOIN` — no glue
+code, no shared format. duckhts brings `read_gff` (a queryable attribute
+`MAP`, tabix region scans), `read_vcf`/`read_bcf`, etc.; duckvep brings
+the VEP engine. They share nothing but the DuckDB v1.5.3 ABI and SQL:
+
+``` sql
+LOAD 'build/release/duckvep.duckdb_extension';
+LOAD 'duckhts.duckdb_extension';
+SELECT vep_load_cache('GRCh38.112.gff3.gz', 'chr17.fa');
+
+-- gene metadata from duckhts read_gff, consequence + HGVS from duckvep:
+WITH csq AS (
+  SELECT c.gene_id, c.consequence, c.impact, c.hgvsc, c.hgvsp
+  FROM UNNEST(vep_consequence('17', 43124090, 'A', 'G')) AS u(c)
+  WHERE c.canonical
+), genes AS (
+  SELECT attributes_map['gene_id'] AS gene_id,
+         attributes_map['Name']    AS gene_name
+  FROM read_gff('chr17.gff3.gz', region := '17:43044295-43125483',
+                attributes_map := true)
+  WHERE feature = 'gene'
+)
+SELECT g.gene_name, csq.consequence, csq.hgvsc, csq.hgvsp
+FROM csq JOIN genes g USING (gene_id);
+-- BRCA1 | [synonymous_variant] | ENST00000357654.9:c.7T>C | ENSP00000350283.1:p.Leu3=
+```
+
+A runnable version is in
+[`scripts/duckhts_integration_demo.sh`](scripts/duckhts_integration_demo.sh).
+
 ## License
 
 Apache-2.0.

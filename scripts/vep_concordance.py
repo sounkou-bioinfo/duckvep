@@ -24,22 +24,31 @@ DATE = datetime.date.today().isoformat()
 OUTDIR = f"{ROOT}/data/vep_dumps/{DATE}"
 os.makedirs(OUTDIR, exist_ok=True)
 
-# 1. Sample biallelic SNVs.
+# 1. Sample biallelic SNVs (transparently handles bgzip/gzip input).
+import gzip
+opener = gzip.open if VCF.endswith(".gz") else open
 snvs = []
-for line in open(VCF):
-    if line.startswith("#"):
-        continue
-    f = line.split("\t")
-    if len(f[3]) == 1 and len(f[4]) == 1 and f[3] in "ACGT" and f[4] in "ACGT":
-        snvs.append((f[0], int(f[1]), f[3], f[4]))
+with opener(VCF, "rt") as fh:
+    for line in fh:
+        if line.startswith("#"):
+            continue
+        f = line.split("\t")
+        if len(f[3]) == 1 and len(f[4]) == 1 and f[3] in "ACGT" and f[4] in "ACGT":
+            snvs.append((f[0], int(f[1]), f[3], f[4]))
 random.seed(42)
 sample = random.sample(snvs, min(N, len(snvs)))
 print(f"sampled {len(sample)} SNVs", file=sys.stderr)
 
-# Shared sorted sample VCF (read by duckvep, offline VEP, and fastVEP).
+# Shared sorted sample VCF (read by duckvep, offline VEP, and fastVEP). Declare
+# every contig present so genome-wide samples parse, and sort grouped-by-contig
+# then by position (VEP requires sorted input).
 SAMPLE_VCF = "/tmp/sample.vcf"
+contigs = sorted({c for (c, _, _, _) in sample})
 with open(SAMPLE_VCF, "w") as fh:
-    fh.write("##fileformat=VCFv4.2\n##contig=<ID=17>\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+    fh.write("##fileformat=VCFv4.2\n")
+    for c in contigs:
+        fh.write(f"##contig=<ID={c}>\n")
+    fh.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
     for (c, p, r, a) in sorted(sample, key=lambda x: (x[0], x[1])):
         fh.write(f"{c}\t{p}\t.\t{r}\t{a}\t.\t.\t.\n")
 
