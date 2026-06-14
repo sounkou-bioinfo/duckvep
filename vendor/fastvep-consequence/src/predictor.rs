@@ -762,7 +762,13 @@ impl ConsequencePredictor {
             // inframe_deletion for a CLEAN insertion/deletion — the reference
             // sequence is preserved at one end (a prefix/suffix/internal match).
             // A delins that rearranges the sequence is protein_altering_variant.
-            let term = if net > 0 {
+            // Ensembl excludes protein_altering_variant when a stop term applies — the
+            // peptide starts with `*` (`protein_altering_variant: return 0 if
+            // $ref_pep =~ /^\*/ || $alt_pep =~ /^\*/`). So an inframe insertion that
+            // introduces a stop is just stop_gained, not protein_altering.
+            let stop_starts =
+                ctx.alt_pep.first() == Some(&b'*') || ctx.ref_pep.first() == Some(&b'*');
+            let term: Option<Consequence> = if net > 0 {
                 // inframe_insertion iff the alt peptide keeps the ref peptide at one end
                 // (VEP trims everything past a stop first).
                 let mut altp = ctx.alt_pep.as_slice();
@@ -770,9 +776,11 @@ impl ConsequencePredictor {
                     altp = &altp[..=i];
                 }
                 if altp.starts_with(&ctx.ref_pep) || altp.ends_with(&ctx.ref_pep) {
-                    Consequence::InframeInsertion
+                    Some(Consequence::InframeInsertion)
+                } else if !stop_starts {
+                    Some(Consequence::ProteinAlteringVariant)
                 } else {
-                    Consequence::ProteinAlteringVariant
+                    None
                 }
             } else {
                 // inframe_deletion iff the alt codon is a prefix/suffix of the ref codon,
@@ -783,12 +791,16 @@ impl ConsequencePredictor {
                     at.is_empty() && rt.len() % 3 == 0
                 };
                 if clean {
-                    Consequence::InframeDeletion
+                    Some(Consequence::InframeDeletion)
+                } else if !stop_starts {
+                    Some(Consequence::ProteinAlteringVariant)
                 } else {
-                    Consequence::ProteinAlteringVariant
+                    None
                 }
             };
-            out.push(term);
+            if let Some(t) = term {
+                out.push(t);
+            }
         } else if !alt_stop && !ref_stop {
             // Same-length substitution (SNV / MNV / in-codon haplotype).
             if ctx.ref_pep == ctx.alt_pep {
