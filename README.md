@@ -314,7 +314,31 @@ Error rate **per 100,000 (variant, transcript) pairs** vs Ensembl VEP
 (version-matched), by impact × class, duckvep vs fastVEP — generated
 from `correctness/data/concordance_by_impact.csv`.
 
-duckvep’s accuracy patches over the vendored engine are in
+Impact × class is too coarse, though: it hides *which* SO categories
+fail and *where duckvep regresses vs fastVEP*. Splitting the
+discordances by what VEP calls → what duckvep calls, flagged by whether
+fastVEP matches VEP (`regression` = duckvep worse than upstream;
+`shared` = inherited engine gap) — top by pair count, generated from
+`correctness/data/error_transitions.csv`:
+
+| type       | impact   | VEP calls                                                                                       | duckvep calls                                                            |   n |
+|:-----------|:---------|:------------------------------------------------------------------------------------------------|:-------------------------------------------------------------------------|----:|
+| shared     | HIGH     | frameshift_variant&stop_gained                                                                  | frameshift_variant                                                       | 473 |
+| regression | LOW      | intron_variant&splice_polypyrimidine_tract_variant&splice_region_variant                        | splice_acceptor_variant                                                  | 362 |
+| shared     | MODERATE | missense_variant                                                                                | synonymous_variant                                                       | 325 |
+| regression | LOW      | intron_variant&splice_donor_region_variant                                                      | intron_variant&splice_donor_5th_base_variant                             | 269 |
+| regression | LOW      | NMD_transcript_variant&intron_variant&splice_polypyrimidine_tract_variant&splice_region_variant | NMD_transcript_variant&splice_acceptor_variant                           | 202 |
+| shared     | LOW      | intron_variant&splice_region_variant                                                            | intron_variant&splice_donor_region_variant                               | 169 |
+| shared     | HIGH     | coding_sequence_variant&intron_variant&splice_acceptor_variant                                  | coding_sequence_variant&splice_acceptor_variant                          | 169 |
+| regression | LOW      | intron_variant&splice_polypyrimidine_tract_variant                                              | intron_variant&splice_polypyrimidine_tract_variant&splice_region_variant | 168 |
+
+So the open work splits cleanly: **regressions** (the splice sub-term
+precedence our interval rewrite broke — being fixed to match Ensembl
+`VariationEffect.pm`) and **shared engine gaps**
+(`frameshift&stop_gained`, `missense`→`synonymous`). Full per-SO-term
+and transition tables:
+[`correctness/correctness.md`](correctness/correctness.md). duckvep’s
+accuracy patches over the vendored engine are in
 [`docs/PATCHES.md`](docs/PATCHES.md).
 
 ## Benchmarks

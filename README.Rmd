@@ -229,6 +229,24 @@ Error rate **per 100,000 (variant, transcript) pairs** vs Ensembl VEP
 (version-matched), by impact × class, duckvep vs fastVEP — generated from
 `correctness/data/concordance_by_impact.csv`.
 
+Impact × class is too coarse, though: it hides *which* SO categories fail and
+*where duckvep regresses vs fastVEP*. Splitting the discordances by what VEP calls →
+what duckvep calls, flagged by whether fastVEP matches VEP (`regression` = duckvep
+worse than upstream; `shared` = inherited engine gap) — top by pair count,
+generated from `correctness/data/error_transitions.csv`:
+
+```{r correctness-regressions, echo=FALSE, message=FALSE, results="asis"}
+et <- read.csv("correctness/data/error_transitions.csv", check.names = FALSE, stringsAsFactors = FALSE)
+et$type <- ifelse(as.logical(et$duckvep_specific_regression), "regression", "shared")
+et <- et[order(-et$n), c("type", "impact", "vep_calls", "duckvep_calls", "n")]
+cat(knitr::kable(head(et, 8), col.names = c("type", "impact", "VEP calls", "duckvep calls", "n"),
+                 row.names = FALSE, format.args = list(big.mark = ",")), sep = "\n")
+```
+
+So the open work splits cleanly: **regressions** (the splice sub-term precedence our
+interval rewrite broke — being fixed to match Ensembl `VariationEffect.pm`) and
+**shared engine gaps** (`frameshift&stop_gained`, `missense`→`synonymous`). Full
+per-SO-term and transition tables: [`correctness/correctness.md`](correctness/correctness.md).
 duckvep's accuracy patches over the vendored engine are in [`docs/PATCHES.md`](docs/PATCHES.md).
 
 ## Benchmarks
