@@ -293,13 +293,13 @@ indels/MNVs (shared with fastVEP — an engine gap, not a duckvep bug).
 
 | impact   | class | duckvep /100K | fastVEP /100K |
 |:---------|:------|:--------------|:--------------|
-| HIGH     | del   | 8874/100K     | 9641/100K     |
+| HIGH     | del   | 7617/100K     | 9641/100K     |
 | HIGH     | ins   | 5911/100K     | 6110/100K     |
-| HIGH     | mnv   | 48711/100K    | 48711/100K    |
+| HIGH     | mnv   | 39303/100K    | 48711/100K    |
 | HIGH     | snv   | 0/100K        | 0/100K        |
 | MODERATE | del   | 0/100K        | 1535/100K     |
 | MODERATE | ins   | 1767/100K     | 1767/100K     |
-| MODERATE | mnv   | 28334/100K    | 28631/100K    |
+| MODERATE | mnv   | 5987/100K     | 28631/100K    |
 | MODERATE | snv   | 0/100K        | 5/100K        |
 | LOW      | del   | 352/100K      | 16454/100K    |
 | LOW      | ins   | 335/100K      | 22920/100K    |
@@ -308,7 +308,7 @@ indels/MNVs (shared with fastVEP — an engine gap, not a duckvep bug).
 | MODIFIER | del   | 43/100K       | 43/100K       |
 | MODIFIER | ins   | 0/100K        | 220/100K      |
 | MODIFIER | mnv   | 200/100K      | 200/100K      |
-| MODIFIER | snv   | 1/100K        | 3/100K        |
+| MODIFIER | snv   | 3/100K        | 3/100K        |
 
 Error rate **per 100,000 (variant, transcript) pairs** vs Ensembl VEP
 (version-matched), by impact × class, duckvep vs fastVEP — generated
@@ -321,16 +321,16 @@ fastVEP matches VEP (`regression` = duckvep worse than upstream;
 `shared` = inherited engine gap) — top by pair count, generated from
 `correctness/data/error_transitions.csv`:
 
-| type   | impact   | VEP calls                                                                                                    | duckvep calls                                                                                 |   n |
-|:-------|:---------|:-------------------------------------------------------------------------------------------------------------|:----------------------------------------------------------------------------------------------|----:|
-| shared | HIGH     | frameshift_variant&stop_gained                                                                               | frameshift_variant                                                                            | 473 |
-| shared | MODERATE | missense_variant                                                                                             | synonymous_variant                                                                            | 325 |
-| shared | HIGH     | coding_sequence_variant&intron_variant&splice_acceptor_variant                                               | coding_sequence_variant&splice_acceptor_variant&splice_polypyrimidine_tract_variant           | 169 |
-| shared | HIGH     | coding_sequence_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant                    | inframe_deletion&splice_donor_5th_base_variant&splice_donor_variant                           | 156 |
-| shared | HIGH     | coding_sequence_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant                    | coding_sequence_variant&splice_donor_5th_base_variant&splice_donor_variant                    | 155 |
-| shared | HIGH     | intron_variant&splice_donor_region_variant&splice_donor_variant                                              | splice_donor_region_variant&splice_donor_variant                                              | 141 |
-| shared | HIGH     | 3_prime_UTR_variant&NMD_transcript_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant | 3_prime_UTR_variant&NMD_transcript_variant&splice_donor_5th_base_variant&splice_donor_variant |  99 |
-| shared | HIGH     | intron_variant&splice_donor_5th_base_variant&splice_donor_variant                                            | splice_donor_5th_base_variant&splice_donor_variant                                            |  82 |
+| type   | impact | VEP calls                                                                                                    | duckvep calls                                                                                 |   n |
+|:-------|:-------|:-------------------------------------------------------------------------------------------------------------|:----------------------------------------------------------------------------------------------|----:|
+| shared | HIGH   | frameshift_variant&stop_gained                                                                               | frameshift_variant                                                                            | 427 |
+| shared | HIGH   | coding_sequence_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant                    | coding_sequence_variant&splice_donor_5th_base_variant&splice_donor_variant                    | 385 |
+| shared | HIGH   | coding_sequence_variant&intron_variant&splice_acceptor_variant                                               | coding_sequence_variant&splice_acceptor_variant&splice_polypyrimidine_tract_variant           | 238 |
+| shared | HIGH   | intron_variant&splice_donor_region_variant&splice_donor_variant                                              | splice_donor_region_variant&splice_donor_variant                                              | 141 |
+| shared | HIGH   | coding_sequence_variant&intron_variant&splice_donor_region_variant&splice_donor_variant                      | coding_sequence_variant&splice_donor_region_variant&splice_donor_variant                      | 108 |
+| shared | HIGH   | 3_prime_UTR_variant&NMD_transcript_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant | 3_prime_UTR_variant&NMD_transcript_variant&splice_donor_5th_base_variant&splice_donor_variant |  99 |
+| shared | HIGH   | intron_variant&splice_donor_5th_base_variant&splice_donor_variant                                            | splice_donor_5th_base_variant&splice_donor_variant                                            |  82 |
+| shared | HIGH   | protein_altering_variant&stop_gained                                                                         | inframe_insertion                                                                             |  81 |
 
 So the open work splits cleanly: **regressions** (the splice sub-term
 precedence our interval rewrite broke — being fixed to match Ensembl
