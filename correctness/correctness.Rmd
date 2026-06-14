@@ -88,28 +88,40 @@ Impact × class is still too coarse: it buckets every "HIGH del" together while 
 real culprits are **specific consequence categories** (splice acceptor/donor,
 polypyrimidine tract, frameshift). This table explodes VEP's `&`-joined call and
 attributes each discordant pair to the SO terms VEP assigned — the finest
-"where is it actually failing" view (duckvep, top by discordant count, generated
-from `correctness/data/discordance_by_consequence.csv`):
+"where is it actually failing" view. **Both engines are shown** (top HIGH terms by
+duckvep discordant count) so it is clear these are *shared* gaps vs Ensembl, not
+duckvep-specific; generated from `correctness/data/discordance_by_consequence.csv`:
 
 ```{r echo=FALSE, message=FALSE}
 b <- csv("correctness/data/discordance_by_consequence.csv")
-b <- b[b$engine == "duckvep" & b$discordant > 0, ]
-b <- b[order(-b$discordant), c("so_term", "impact", "pairs", "discordant", "per100k")]
-b$per100k <- sprintf("%d/100K", b$per100k)
-knitr::kable(head(b, 18),
-             col.names = c("SO term (VEP)", "impact", "pairs", "discordant", "rate"),
+dv <- b[b$engine == "duckvep", c("so_term", "impact", "pairs", "discordant", "per100k")]
+fv <- b[b$engine == "fastvep", c("so_term", "impact", "discordant", "per100k")]
+names(dv)[4:5] <- c("dv_disc", "dv_rate"); names(fv)[3:4] <- c("fv_disc", "fv_rate")
+m <- merge(dv, fv, by = c("so_term", "impact"), all.x = TRUE)
+m <- m[m$dv_disc > 0 & m$impact == "HIGH", ]
+m <- m[order(-m$dv_disc), ]
+m$duckvep <- sprintf("%d (%d/100K)", m$dv_disc, m$dv_rate)
+m$fastvep <- ifelse(is.na(m$fv_disc), "n/a", sprintf("%d (%d/100K)", m$fv_disc, m$fv_rate))
+# count terms where duckvep is strictly better / never worse than fastVEP (inline prose).
+cmp <- m[!is.na(m$fv_disc), ]
+n_better <- sum(cmp$dv_disc < cmp$fv_disc); n_worse <- sum(cmp$dv_disc > cmp$fv_disc)
+knitr::kable(head(m[, c("so_term", "impact", "pairs", "duckvep", "fastvep")], 18),
+             col.names = c("SO term (VEP)", "impact", "pairs", "duckvep disc (rate)", "fastvep disc (rate)"),
              row.names = FALSE, format.args = list(big.mark = ","))
 ```
 
 A pair is discordant when its **whole** `&`-joined SO set differs; this table
 credits that to each term VEP called, so a 100% rate means *every* variant whose
-VEP call includes that term has a different full set in duckvep. The
-splice-region sub-terms (`splice_donor_5th_base`, `splice_donor_region`,
-`splice_polypyrimidine_tract`, co-occurring `intron_variant`) and
-`coding_sequence_variant`/`stop_retained_variant` dominate — i.e. the boundaries
-are right (interval predicates) but the splice-region term *combinations* and the
-incomplete-CDS / stop edges still diverge from VEP. **An impact-only view hid
-exactly which categories to fix** — this is the precise frontier.
+VEP call includes that term has a different full set. Reading the two engine
+columns: duckvep is **better than fastVEP on `r n_better` of these terms and worse
+on `r n_worse`** — i.e. duckvep is never worse than the upstream engine and ahead
+on the frameshift / NMD / splice-donor fronts, while both still trail Ensembl. The
+remaining frontier is **shared engine behaviour**: coding indels at exon/intron
+boundaries where VEP co-calls `intron_variant` and the generic
+`coding_sequence_variant`, frameshifts that introduce a premature stop
+(`stop_gained`), and MNV codon edges (`missense`↔`synonymous`). **An impact-only
+view hid exactly which categories to fix** — this is the precise frontier, and it
+is the same for duckvep and fastVEP.
 
 ## Error transitions — what VEP calls vs what duckvep calls
 
