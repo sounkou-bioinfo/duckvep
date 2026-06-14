@@ -12,7 +12,7 @@ On the bundled test set (`DuckfastVEP/tests/test.vcf`): **every joined
 (variant, transcript) pair agrees** (duckvep wraps the same engine). The only
 non-joins are indels, because Ensembl VEP / fastVEP **left-align and minimize**
 them (e.g. `AA>A` → Location `+1`, Allele `-`) while duckvep currently emits the
-raw VCF allele. Normalizing both sides before the join (DESIGN.md §3.4) closes
+raw VCF allele. Normalizing both sides before the join (../docs/../docs/DESIGN.md §3.4) closes
 this — and is required for correct annotation joins anyway.
 
 ## Benchmark — `scripts/bench.sh <vcf> <gff3> [--fasta ref.fa]`

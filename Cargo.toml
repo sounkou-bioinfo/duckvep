@@ -5,7 +5,7 @@ edition = "2021"
 description = "DuckDB-native VEP: SQL genomics readers, VEP UDFs, Parquet sources"
 # duckvep itself is GPL-2.0-or-later. The vendored fastVEP crates under vendor/
 # remain Apache-2.0 (their workspace.package license, below) — Apache-2.0 is
-# compatible with GPL >= 2 via the "or later" (GPLv3) option. See PATCHES.md.
+# compatible with GPL >= 2 via the "or later" (GPLv3) option. See docs/PATCHES.md.
 license = "GPL-2.0-or-later"
 
 [lib]
@@ -32,7 +32,7 @@ flate2 = "1"
 # Vendored fastVEP compute engine (Apache-2.0, from Huang-lab/fastVEP @ 785922e).
 # Hard-copied (not a dep) so we can adapt suboptimal-for-us decisions: we depend
 # only on the lean consequence closure and route around `fastvep-annotate`/`-sa`.
-# See DESIGN.md §6 (wrap-then-delete) and vendor/NOTICE.
+# See docs/DESIGN.md §6 (wrap-then-delete) and vendor/NOTICE.
 fastvep-core = { path = "vendor/fastvep-core" }
 fastvep-genome = { path = "vendor/fastvep-genome" }
 fastvep-cache = { path = "vendor/fastvep-cache" }

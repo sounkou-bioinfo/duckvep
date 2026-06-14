@@ -78,12 +78,6 @@ so they never drift). Headline: SNVs near-perfect at every impact tier and ahead
 fastVEP; the open frontier is high-impact indels/MNVs (shared with fastVEP — a real
 engine gap vs Ensembl VEP, not a measurement artifact).
 
-<!-- superseded stale snippet kept for context only:
-| class | duckvep | fastVEP |
-|-------|---------|---------|
-| del | (pre-normalization, unrepresentative join) | |
--->
-
 The remaining engine frontier (tracked, paper-relevant): a frameshift that
 introduces a premature stop should add `stop_gained` (duckvep emits only
 `frameshift_variant`); MNV codon handling; and the non-ATG mitochondrial start
@@ -94,7 +88,8 @@ measured per-100K in the generated report.
 
 - **HGVS g./c./p.** assembled in the DuckDB-free engine (`engine.rs::build_hgvs`)
   directly from `fastvep-hgvs`, bypassing the `fastvep-annotate` god-object.
-  100% concordant with fastVEP's own HGVS.
+  Exact match with fastVEP's own HGVS on chr17 (HGVSc 19,828/19,828, HGVSp
+  9,449/9,449 — agree==total).
 - **Structural-variant consequences** wired via `sv_predictor::predict_sv_consequences`
   over the full `INFO/END` span (`engine.rs::annotate_variant_spanned`), with an
   END-aware `vep_consequence(chrom, pos, end, ref, alt)` scalar.

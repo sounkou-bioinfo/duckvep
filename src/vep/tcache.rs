@@ -3,7 +3,7 @@
 //! One row per transcript: queryable scalar columns (chrom/start/gene/biotype/…)
 //! plus a `model` JSON column for faithful `Transcript` reconstruction. Portable,
 //! inspectable, `read_parquet`-able from DuckDB — and DuckDB-free here (uses the
-//! `arrow`/`parquet` crates, not libduckdb). See DESIGN.md §5.
+//! `arrow`/`parquet` crates, not libduckdb). See docs/DESIGN.md §5.
 
 use arrow::array::{Array, BooleanArray, Int64Array, Int8Array, RecordBatch, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};

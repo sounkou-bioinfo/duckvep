@@ -1,4 +1,4 @@
-//! Scan-driven scalar UDFs — the idiomatic, performant path (DESIGN.md §3.2).
+//! Scan-driven scalar UDFs — the idiomatic, performant path (docs/DESIGN.md §3.2).
 //!
 //! `vep_load_cache(gff3, fasta)` builds the engine once into a global (set once,
 //! read by all worker threads). `vep_consequence(chrom,pos,ref,alt)` is a pure

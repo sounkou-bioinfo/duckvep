@@ -75,7 +75,7 @@ pub(crate) fn build_context(
     //    next to it (`<gff3>.transcripts.parquet`) so later loads take the fast
     //    path. Parsing ~280k transcripts dominates load (~5.7 s); the cache load
     //    is ~1 s. `build_sequences` is cheap (~0.3 s) and FASTA-specific, so we
-    //    rebuild it fresh below rather than caching it. (DESIGN.md §5.)
+    //    rebuild it fresh below rather than caching it. (docs/DESIGN.md §5.)
     let mut transcripts = match detect_model_format(gff3)? {
         ModelFormat::ParquetCache => tcache::load(Path::new(gff3))?,
         format => {

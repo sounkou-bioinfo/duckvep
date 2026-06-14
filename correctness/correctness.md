@@ -57,7 +57,7 @@ across classes despite very different pair counts.
 - **SNVs are near-perfect at every impact tier** — duckvep error rate
   HIGH 2/100K, MODERATE 0/100K, LOW 2/100K, MODIFIER 1/100K — and ahead
   of fastVEP (MODERATE 5/100K vs duckvep 0/100K), thanks to the
-  incomplete-CDS / non-ATG-start patches (see `../PATCHES.md`).
+  incomplete-CDS / non-ATG-start patches (see `../docs/PATCHES.md`).
 - **Indels and MNVs are the residual frontier**, concentrated at HIGH
   impact — duckvep error rate HIGH del 9354/100K, HIGH ins 7104/100K,
   HIGH mnv 48711/100K (vs SNV 2/100K). These are the clinically
@@ -103,5 +103,6 @@ cargo build -p duckvep-tools --release
 make correctness
 ```
 
-See [`../PATCHES.md`](../PATCHES.md) for the accuracy patches and
-[`cache-build/README.md`](cache-build/README.md) for the cache builder.
+See [`../docs/PATCHES.md`](../docs/PATCHES.md) for the accuracy patches
+and [`cache-build/README.md`](cache-build/README.md) for the cache
+builder.

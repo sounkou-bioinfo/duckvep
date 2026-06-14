@@ -10,8 +10,9 @@ formats via [noodles](https://github.com/zaeleus/noodles), exposes the
 VEP consequence / HGVS / ACMG engine as SQL functions, and treats
 annotation databases as plain Parquet/DuckDB tables joined by the
 optimizer — instead of hand-rolled file formats. See
-[DESIGN.md](DESIGN.md) for the design, [NEWS.md](NEWS.md) for the
-changelog, and [PATCHES.md](PATCHES.md) for our accuracy patches.
+[docs/DESIGN.md](docs/DESIGN.md) for the design, [NEWS.md](NEWS.md) for
+the changelog, and [docs/PATCHES.md](docs/PATCHES.md) for our accuracy
+patches.
 
 > **Status (v0.3.0).** Implemented: `read_vcf`/`vcf_samples`;
 > `vep_consequence` (scan-driven scalar, incl. an END-aware form for
@@ -21,8 +22,8 @@ changelog, and [PATCHES.md](PATCHES.md) for our accuracy patches.
 > Ensembl MySQL dumps** (inheriting MANE / `cds_start_NF` /
 > selenocysteine / regulatory flags). Accuracy patches make duckvep
 > *more* Ensembl-VEP-concordant than fastVEP (see
-> [PATCHES.md](PATCHES.md)); concordance is reported version-matched and
-> **split by impact × class** (see
+> [docs/PATCHES.md](docs/PATCHES.md)); concordance is reported
+> version-matched and **split by impact × class** (see
 > [correctness/](correctness/correctness.md)). Next: close the
 > high-impact indel/MNV engine gap; supplementary-annotation joins;
 > chrM/PAR/sex-chromosome correctness. Composes with the **duckhts**
@@ -156,8 +157,8 @@ returning a native `LIST<STRUCT>` — `UNNEST` it. Driven by DuckDB’s
 scan, so variants come from `read_vcf`, `read_parquet`, or any relation.
 
 Each struct also carries HGVS notation — `hgvsg` (genomic), `hgvsc`
-(coding) and `hgvsp` (protein, when a FASTA is loaded) — at 100%
-concordance with fastVEP:
+(coding) and `hgvsp` (protein, when a FASTA is loaded) — exact-matching
+fastVEP’s HGVS on chr17 (HGVSc 19,828/19,828, HGVSp 9,449/9,449):
 
 ``` sql
 SELECT c.transcript_id, c.consequence, c.impact, c.hgvsg, c.hgvsc
@@ -284,24 +285,37 @@ actionable sites). The full report, rendered directly from recorded
 CSVs, is **[`correctness/correctness.md`](correctness/correctness.md)**
 (`make correctness`).
 
-Headline — duckvep vs offline Ensembl VEP, `discordant / pairs`,
-**generated from `correctness/data/concordance_by_impact.csv`** (not
-hand-written): SNVs are near-perfect at every impact tier; the open
-frontier is high-impact indels/MNVs.
+Headline — error rate **per 100K pairs** vs offline Ensembl VEP, duckvep
+and fastVEP side by side, **generated from
+`correctness/data/concordance_by_impact.csv`** (not hand-written): SNVs
+are near-perfect at every impact tier; the open frontier is high-impact
+indels/MNVs (shared with fastVEP — an engine gap, not a duckvep bug).
 
-| impact   | del        | ins        | mnv        | snv    |
-|:---------|:-----------|:-----------|:-----------|:-------|
-| HIGH     | 9354/100K  | 7104/100K  | 48711/100K | 2/100K |
-| MODERATE | 1240/100K  | 1767/100K  | 28334/100K | 0/100K |
-| LOW      | 16837/100K | 30960/100K | 4975/100K  | 2/100K |
-| MODIFIER | 656/100K   | 587/100K   | 200/100K   | 1/100K |
+| impact   | class | duckvep /100K | fastVEP /100K |
+|:---------|:------|:--------------|:--------------|
+| HIGH     | del   | 9354/100K     | 9641/100K     |
+| HIGH     | ins   | 7104/100K     | 6110/100K     |
+| HIGH     | mnv   | 48711/100K    | 48711/100K    |
+| HIGH     | snv   | 2/100K        | 0/100K        |
+| MODERATE | del   | 1240/100K     | 1524/100K     |
+| MODERATE | ins   | 1767/100K     | 1767/100K     |
+| MODERATE | mnv   | 28334/100K    | 28631/100K    |
+| MODERATE | snv   | 0/100K        | 5/100K        |
+| LOW      | del   | 16837/100K    | 16514/100K    |
+| LOW      | ins   | 30960/100K    | 22920/100K    |
+| LOW      | mnv   | 4975/100K     | 22886/100K    |
+| LOW      | snv   | 2/100K        | 15/100K       |
+| MODIFIER | del   | 656/100K      | 43/100K       |
+| MODIFIER | ins   | 587/100K      | 220/100K      |
+| MODIFIER | mnv   | 200/100K      | 200/100K      |
+| MODIFIER | snv   | 1/100K        | 3/100K        |
 
-duckvep error rate **per 100,000 (variant, transcript) pairs** vs
-Ensembl VEP (version-matched), by impact × class — generated from the
-recorded CSV.
+Error rate **per 100,000 (variant, transcript) pairs** vs Ensembl VEP
+(version-matched), by impact × class, duckvep vs fastVEP — generated
+from `correctness/data/concordance_by_impact.csv`.
 
 duckvep’s accuracy patches over the vendored engine are in
-[`PATCHES.md`](PATCHES.md).
+[`docs/PATCHES.md`](docs/PATCHES.md).
 
 ## Benchmarks
 
@@ -327,4 +341,5 @@ methodology, are in **[`benchmarks/results.md`](benchmarks/results.md)**
 GPL-2.0-or-later. duckvep vendors parts of
 [fastVEP](https://github.com/Huang-lab/fastVEP) (Apache-2.0, compatible
 with GPL ≥ 2) — see [`vendor/NOTICE.md`](vendor/NOTICE.md) and
-[`PATCHES.md`](PATCHES.md) for the vendored crates and our divergences.
+[`docs/PATCHES.md`](docs/PATCHES.md) for the vendored crates and our
+divergences.

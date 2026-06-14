@@ -4,7 +4,7 @@
 //! **Streams**: the reader is opened lazily and `func` reads one ~2048-row chunk
 //! per call, so memory is bounded to a chunk regardless of file size (full GIAB
 //! 4M variants: ~2 GB vs ~7 GB eager). Region filtering is applied per record.
-//! Indexed (tabix/csi) seeking and `VARIANT` INFO are follow-ups (DESIGN.md §3.1).
+//! Indexed (tabix/csi) seeking and `VARIANT` INFO are follow-ups (docs/DESIGN.md §3.1).
 //!
 //! `alt` and `filter` are `LIST<VARCHAR>` so multiallelic (`A,AT`), symbolic
 //! (`<DEL>`, `<CNV>`), and breakend alleles are first-class.
@@ -221,7 +221,7 @@ impl VTab for ReadVcf {
 ///
 /// `idx` is 1-based so it lines up with DuckDB's `UNNEST(... WITH ORDINALITY)`,
 /// letting the positional `gt` list from [`ReadVcf`] be exploded into tidy
-/// per-sample genotypes (annotation stays site-wise; see DESIGN.md §3.0).
+/// per-sample genotypes (annotation stays site-wise; see docs/DESIGN.md §3.0).
 pub struct VcfSamples;
 
 pub struct VcfSamplesBind {

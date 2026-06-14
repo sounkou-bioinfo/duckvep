@@ -19,8 +19,8 @@ A loadable DuckDB extension (Rust,
 via [noodles](https://github.com/zaeleus/noodles), exposes the VEP consequence /
 HGVS / ACMG engine as SQL functions, and treats annotation databases as plain
 Parquet/DuckDB tables joined by the optimizer — instead of hand-rolled file
-formats. See [DESIGN.md](DESIGN.md) for the design, [NEWS.md](NEWS.md) for the
-changelog, and [PATCHES.md](PATCHES.md) for our accuracy patches.
+formats. See [docs/DESIGN.md](docs/DESIGN.md) for the design, [NEWS.md](NEWS.md) for the
+changelog, and [docs/PATCHES.md](docs/PATCHES.md) for our accuracy patches.
 
 > **Status (v0.3.0).** Implemented: `read_vcf`/`vcf_samples`; `vep_consequence`
 > (scan-driven scalar, incl. an END-aware form for structural variants) and
@@ -28,7 +28,7 @@ changelog, and [PATCHES.md](PATCHES.md) for our accuracy patches.
 > valid cross-annotator joins); a columnar Parquet transcript cache **built
 > directly from Ensembl MySQL dumps** (inheriting MANE / `cds_start_NF` /
 > selenocysteine / regulatory flags). Accuracy patches make duckvep *more*
-> Ensembl-VEP-concordant than fastVEP (see [PATCHES.md](PATCHES.md)); concordance is
+> Ensembl-VEP-concordant than fastVEP (see [docs/PATCHES.md](docs/PATCHES.md)); concordance is
 > reported version-matched and **split by impact × class** (see
 > [correctness/](correctness/correctness.md)). Next: close the high-impact
 > indel/MNV engine gap; supplementary-annotation joins; chrM/PAR/sex-chromosome
@@ -120,7 +120,8 @@ native `LIST<STRUCT>` — `UNNEST` it. Driven by DuckDB's scan, so variants come
 from `read_vcf`, `read_parquet`, or any relation.
 
 Each struct also carries HGVS notation — `hgvsg` (genomic), `hgvsc` (coding) and
-`hgvsp` (protein, when a FASTA is loaded) — at 100% concordance with fastVEP:
+`hgvsp` (protein, when a FASTA is loaded) — exact-matching fastVEP's HGVS on chr17
+(HGVSc 19,828/19,828, HGVSp 9,449/9,449):
 
 ```{sql}
 SELECT c.transcript_id, c.consequence, c.impact, c.hgvsg, c.hgvsc
@@ -208,25 +209,27 @@ misses are (high-impact, clinically actionable sites). The full report, rendered
 directly from recorded CSVs, is **[`correctness/correctness.md`](correctness/correctness.md)**
 (`make correctness`).
 
-Headline — duckvep vs offline Ensembl VEP, `discordant / pairs`, **generated from
-`correctness/data/concordance_by_impact.csv`** (not hand-written): SNVs are
-near-perfect at every impact tier; the open frontier is high-impact indels/MNVs.
+Headline — error rate **per 100K pairs** vs offline Ensembl VEP, duckvep and
+fastVEP side by side, **generated from `correctness/data/concordance_by_impact.csv`**
+(not hand-written): SNVs are near-perfect at every impact tier; the open frontier
+is high-impact indels/MNVs (shared with fastVEP — an engine gap, not a duckvep bug).
 
 ```{r correctness-headline, echo=FALSE, message=FALSE, results="asis"}
 d <- read.csv("correctness/data/concordance_by_impact.csv")
-d <- d[d$engine == "duckvep", ]
 d$rate <- sprintf("%d/100K", round((d$pairs - d$agree) / d$pairs * 1e5))  # error per 100K pairs
-h <- reshape(d[, c("impact", "class", "rate")],
-             idvar = "impact", timevar = "class", direction = "wide")
-names(h) <- sub("^rate\\.", "", names(h))
-h <- h[order(factor(h$impact, c("HIGH", "MODERATE", "LOW", "MODIFIER"))), ]
-cat(knitr::kable(h, row.names = FALSE), sep = "\n")
+w <- reshape(d[, c("impact", "class", "engine", "rate")],
+             idvar = c("impact", "class"), timevar = "engine", direction = "wide")
+names(w) <- sub("^rate\\.", "", names(w))
+w <- w[order(factor(w$impact, c("HIGH", "MODERATE", "LOW", "MODIFIER")), w$class), ]
+cat(knitr::kable(w, col.names = c("impact", "class", "duckvep /100K", "fastVEP /100K"),
+                 row.names = FALSE), sep = "\n")
 ```
 
-duckvep error rate **per 100,000 (variant, transcript) pairs** vs Ensembl VEP
-(version-matched), by impact × class — generated from the recorded CSV.
+Error rate **per 100,000 (variant, transcript) pairs** vs Ensembl VEP
+(version-matched), by impact × class, duckvep vs fastVEP — generated from
+`correctness/data/concordance_by_impact.csv`.
 
-duckvep's accuracy patches over the vendored engine are in [`PATCHES.md`](PATCHES.md).
+duckvep's accuracy patches over the vendored engine are in [`docs/PATCHES.md`](docs/PATCHES.md).
 
 ## Benchmarks
 
@@ -249,4 +252,4 @@ inputs: [`scripts/fetch-data.sh`](scripts/fetch-data.sh) (pinned versions).
 
 GPL-2.0-or-later. duckvep vendors parts of [fastVEP](https://github.com/Huang-lab/fastVEP)
 (Apache-2.0, compatible with GPL ≥ 2) — see [`vendor/NOTICE.md`](vendor/NOTICE.md)
-and [`PATCHES.md`](PATCHES.md) for the vendored crates and our divergences.
+and [`docs/PATCHES.md`](docs/PATCHES.md) for the vendored crates and our divergences.

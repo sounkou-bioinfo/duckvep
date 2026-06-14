@@ -4,7 +4,7 @@
 //! a native DuckDB table:
 //!   `CREATE TABLE transcripts AS SELECT * FROM read_gff_transcripts('x.gff3');`
 //! The cache is a `.duckdb` file read with DuckDB core only at runtime — no
-//! Parquet, no MySQL, no extensions (DESIGN.md §1c, §5).
+//! Parquet, no MySQL, no extensions (docs/DESIGN.md §1c, §5).
 //!
 //! Relational, not nested: exons come from a companion `read_gff_exons` so the
 //! cache mirrors Ensembl's schema and the importer stays flat.

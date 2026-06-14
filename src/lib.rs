@@ -1,6 +1,6 @@
 //! duckvep — DuckDB-native variant effect prediction.
 //!
-//! See DESIGN.md. This crate registers genomics IO table functions (noodles)
+//! See docs/DESIGN.md. This crate registers genomics IO table functions (noodles)
 //! and, in later phases, the VEP consequence / HGVS / ACMG UDFs.
 
 mod io;

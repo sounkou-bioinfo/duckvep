@@ -20,7 +20,7 @@ Changelog, most recent first. (R-package style.)
     bands, Ensembl's `overlap()`), so indels/MNVs/haplotypes spanning a boundary
     are classified correctly.
   * Version-matched SNV concordance: 13 discordant in 1,315,496 (99.999%); the open
-    frontier is high-impact indels and MNVs. See `PATCHES.md`.
+    frontier is high-impact indels and MNVs. See `docs/PATCHES.md`.
 
 ### New SQL functions
 
