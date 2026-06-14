@@ -1,0 +1,64 @@
+# name: test/sql/vep_splice.test
+# description: splice precedence + normalized-interval regression cases (match Ensembl VEP).
+#   These guard the fixes for the duckvep-specific regressions the error-transition
+#   analysis surfaced (see correctness/correctness.md). BRCA1 ENST00000357654 is on
+#   the - strand; the intron between exons 43044295-43045802 and 43047643-43047703 is
+#   [43045803, 43047642]. Splice is positional, so no FASTA is needed.
+# group: [duckvep]
+
+require duckvep
+
+statement ok
+SELECT vep_load_cache('test/data/test.gff3', '');
+
+# Deep intron -> just intron_variant.
+query T
+SELECT list_aggregate(list_sort(c.consequence),'string_agg','&')
+FROM UNNEST(vep_consequence('17', 43046700, 43046700, 'A', 'G')) u(c)
+WHERE c.transcript_id = 'ENST00000357654';
+----
+intron_variant
+
+# Essential acceptor (last 2 intronic bases at the - strand 3' end = low genomic end).
+query T
+SELECT list_aggregate(list_sort(c.consequence),'string_agg','&')
+FROM UNNEST(vep_consequence('17', 43045803, 43045803, 'A', 'G')) u(c)
+WHERE c.transcript_id = 'ENST00000357654';
+----
+splice_acceptor_variant
+
+# PRECEDENCE: polypyrimidine tract and splice_region CO-OCCUR (VEP does not suppress
+# splice_region with polypyrimidine). The old blanket essential-splice suppression
+# wrongly dropped these.
+query T
+SELECT list_aggregate(list_sort(c.consequence),'string_agg','&')
+FROM UNNEST(vep_consequence('17', 43045806, 43045806, 'A', 'G')) u(c)
+WHERE c.transcript_id = 'ENST00000357654';
+----
+intron_variant&splice_polypyrimidine_tract_variant&splice_region_variant
+
+# Essential donor (first 2 intronic bases at the - strand 5' end = high genomic end).
+query T
+SELECT list_aggregate(list_sort(c.consequence),'string_agg','&')
+FROM UNNEST(vep_consequence('17', 43047642, 43047642, 'A', 'G')) u(c)
+WHERE c.transcript_id = 'ENST00000357654';
+----
+splice_donor_variant
+
+# Donor region (3-6 into intron), distinct from the 5th base; co-occurs with intron_variant.
+query T
+SELECT list_aggregate(list_sort(c.consequence),'string_agg','&')
+FROM UNNEST(vep_consequence('17', 43047639, 43047639, 'A', 'G')) u(c)
+WHERE c.transcript_id = 'ENST00000357654';
+----
+intron_variant&splice_donor_region_variant
+
+# NORMALIZED INTERVAL: a deletion's unchanged anchor base must not inflate the
+# interval. The 3 bp deletion's trimmed bases sit in the donor -> splice_donor_variant
+# (the old anchor-inclusive interval over-reached / mis-classified).
+query T
+SELECT list_aggregate(list_sort(c.consequence),'string_agg','&')
+FROM UNNEST(vep_consequence('17', 43047640, 43047642, 'NNN', 'N')) u(c)
+WHERE c.transcript_id = 'ENST00000357654';
+----
+splice_donor_variant
