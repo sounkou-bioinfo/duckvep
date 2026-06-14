@@ -4,20 +4,33 @@
 -- queryable columns — the flags we kept rediscovering (cds_start_NF, MANE, …) are
 -- inherited from the source of truth, not re-derived (lossily) from GFF3.
 
--- Per-transcript attrib codes collapsed to a list (incomplete-CDS flags, MANE, …).
+-- Per-transcript attrib codes collapsed to a list (incomplete-CDS flags, MANE,
+-- CCDS, gencode_primary, readthrough, upstream ATG, …).
 CREATE OR REPLACE TEMP VIEW tx_flags AS
   SELECT ta.transcript_id, list(aty.code) AS codes
   FROM transcript_attrib ta JOIN attrib_type aty ON ta.attrib_type_id = aty.attrib_type_id
   GROUP BY ta.transcript_id;
 
--- Selenocysteine is a TRANSLATION attrib (per-protein), so it comes from
--- translation_attrib (via translation -> transcript), not transcript_attrib.
-CREATE OR REPLACE TEMP VIEW seleno AS
-  SELECT DISTINCT tl.transcript_id
+-- TSL / APPRIS carry a VALUE (e.g. 'tsl1', 'principal1'); keep the leading token
+-- of TSL ('tsl1 (assigned to previous version 7)' -> 'tsl1').
+CREATE OR REPLACE TEMP VIEW tx_vals AS
+  SELECT ta.transcript_id,
+         max(CASE WHEN aty.code = 'TSL'    THEN split_part(ta.value, ' ', 1) END) AS tsl,
+         max(CASE WHEN aty.code = 'appris' THEN ta.value END)                     AS appris
+  FROM transcript_attrib ta JOIN attrib_type aty ON ta.attrib_type_id = aty.attrib_type_id
+  WHERE aty.code IN ('TSL', 'appris')
+  GROUP BY ta.transcript_id;
+
+-- TRANSLATION attribs (per-protein, reached via translation -> transcript). The
+-- correctness-critical ones: where the translated sequence diverges from naive
+-- genomic translation — selenocysteine (UGA->Sec), stop-codon readthrough, RNA
+-- edits, amino-acid substitutions. A naive engine mis-calls these.
+CREATE OR REPLACE TEMP VIEW tl_flags AS
+  SELECT tl.transcript_id, list(aty.code) AS codes
   FROM translation_attrib tla
   JOIN translation tl ON tla.translation_id = tl.translation_id
   JOIN attrib_type aty ON tla.attrib_type_id = aty.attrib_type_id
-  WHERE aty.code = '_selenocysteine';
+  GROUP BY tl.transcript_id;
 
 -- One row per transcript on a chromosome: coords, gene, symbol, canonical, MANE,
 -- and the incomplete-CDS / selenocysteine flags as booleans.
@@ -34,14 +47,23 @@ COPY (
          coalesce(list_contains(f.codes, 'cds_end_NF'), false)          AS cds_end_nf,
          coalesce(list_contains(f.codes, 'mRNA_start_NF'), false)       AS mrna_start_nf,
          coalesce(list_contains(f.codes, 'mRNA_end_NF'), false)         AS mrna_end_nf,
-         (sel.transcript_id IS NOT NULL)                                AS selenocysteine
+         coalesce(list_contains(f.codes, 'ccds_transcript'), false)     AS ccds,
+         coalesce(list_contains(f.codes, 'gencode_primary'), false)     AS gencode_primary,
+         coalesce(list_contains(f.codes, 'readthrough_tra'), false)     AS readthrough,
+         coalesce(list_contains(f.codes, 'upstream_ATG'), false)        AS upstream_atg,
+         v.tsl, v.appris,
+         coalesce(list_contains(tlf.codes, '_selenocysteine'), false)   AS selenocysteine,
+         coalesce(list_contains(tlf.codes, '_stop_codon_rt'), false)    AS stop_codon_readthrough,
+         coalesce(list_contains(tlf.codes, '_rna_edit'), false)         AS rna_edit,
+         coalesce(list_contains(tlf.codes, 'amino_acid_sub'), false)    AS amino_acid_sub
   FROM transcript t
   JOIN gene g ON t.gene_id = g.gene_id
   JOIN seq_region sr ON t.seq_region_id = sr.seq_region_id
   JOIN coord_system cs ON sr.coord_system_id = cs.coord_system_id AND cs.name = 'chromosome'
   LEFT JOIN xref x ON g.display_xref_id = x.xref_id
   LEFT JOIN tx_flags f ON f.transcript_id = t.transcript_id
-  LEFT JOIN seleno sel ON sel.transcript_id = t.transcript_id
+  LEFT JOIN tx_vals v ON v.transcript_id = t.transcript_id
+  LEFT JOIN tl_flags tlf ON tlf.transcript_id = t.transcript_id
   WHERE 1=1 @CHROMFILTER@
   ORDER BY chrom, start
 ) TO '@OUT@/transcripts.parquet' (FORMAT parquet);

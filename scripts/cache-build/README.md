@@ -48,12 +48,23 @@ Output (gitignored) lands in `data/cache/<species>.<release>.<build>/`:
 
 ## What you get for free
 
-`transcripts.parquet` carries, per transcript: coordinates, gene id/biotype/symbol,
-`canonical`, `mane_select`, `mane_plus_clinical`, `gencode_basic`, and the
-incomplete-CDS flags `cds_start_nf`/`cds_end_nf`/`mrna_start_nf`/`mrna_end_nf`
-(e.g. 19,299 MANE Select + 13,156 `cds_start_NF` transcripts on GRCh38 r116).
-`regulatory.parquet` carries the regulatory build (promoter/enhancer/CTCF/open
-chromatin/TFBS) with SO terms.
+`transcripts.parquet` carries, per transcript, Ensembl's curated knowledge as
+columns:
+
+- **Selection / reporting:** `canonical`, `mane_select`, `mane_plus_clinical`,
+  `gencode_basic`, `gencode_primary`, `ccds`, `tsl` (transcript support level),
+  `appris` (principal-isoform tier).
+- **Incomplete CDS:** `cds_start_nf`, `cds_end_nf`, `mrna_start_nf`, `mrna_end_nf`,
+  `upstream_atg`, `readthrough` (the flags the consequence engine should consult
+  instead of inferring from phase).
+- **Correctness-critical (translated sequence diverges from naive genomic
+  translation — a naive engine mis-calls these):** `selenocysteine` (UGA→Sec),
+  `stop_codon_readthrough`, `rna_edit`, `amino_acid_sub`.
+
+(GRCh38 r116: 19,299 MANE Select, 14,507 `cds_start_NF`, 115k CCDS, 104
+selenocysteine, 14 stop-codon-readthrough, 5 RNA-edited.) `regulatory.parquet`
+carries the regulatory build (promoter/enhancer/CTCF/open chromatin/TFBS) with SO
+terms.
 
 ## Known refinements (TODO)
 
