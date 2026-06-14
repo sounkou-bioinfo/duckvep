@@ -48,20 +48,36 @@ Met — i.e. the canonical start must actually be ATG. Patch: gate on
 annotated CDS begins with a non-ATG codon (e.g. CGC→CGG is Arg→Arg, *synonymous*,
 not `start_lost`).
 
-**Impact (genome-wide ClinVar, 50k SNVs, vs offline Ensembl VEP):**
+**Impact — version-MATCHED (VEP code 116 + cache 116 + GFF3 116), 50k ClinVar
+variants incl. indels, vs offline Ensembl VEP, per variant class:**
 
-| engine | agree / pairs | concordance |
-|--------|---------------|-------------|
-| **duckvep (patched)** | 601267 / 601279 | **100.0 %** (99.998) |
-| fastVEP (upstream)    | 601212 / 601279 | 99.99 % |
+| class | duckvep | fastVEP |
+|-------|---------|---------|
+| **SNV** | **100.0 %** (1,315,483 / 1,315,496 — 13 discordant in 1.3M) | 99.99 % |
+| del | 91.03 % | 72.37 % |
+| ins | 93.59 % | 72.49 % |
+| mnv | 84.66 % | 84.66 % |
 
-The three patches resolve **55 of the 67** transcript pairs fastVEP gets wrong —
-every incomplete-CDS and non-ATG-start case. The remaining 12: 6 splice
-polypyrimidine-tract (duckvep's range `[intron_end-16, intron_end-2]` is
-*byte-identical* to Ensembl's `BaseTranscriptVariationAllele.pm` — these trace to
-VEP **code 116 vs cache 112** version skew, not a duckvep bug), 5
+With matched versions the SNV residual collapses to **13 pairs in 1.3M** — which
+*confirms* the earlier polypyrimidine residual was VEP code-116-vs-cache-112 skew,
+not a duckvep bug (duckvep's range is byte-identical to Ensembl's source). The
+three incomplete-CDS / non-ATG patches keep duckvep ahead of fastVEP on SNVs.
+
+**Indels are the open correctness frontier** (duckvep already ~91-94% vs fastVEP's
+~72%). The discordances are dominated by **one structural bug**: splice-region
+consequences for indels. Ensembl tests the *variant interval* `[r_start, r_end]`
+against the splice intervals (`overlap(...)` in `BaseTranscriptVariationAllele.pm`);
+duckvep's `splice.rs` tests a single `genomic_pos`, so any indel spanning a splice
+boundary is mis-binned (`splice_polypyrimidine_tract` / `splice_donor_region` /
+`splice_donor_5th_base` / `splice_acceptor`). Second cluster: a frameshift that
+introduces a premature stop should add `stop_gained` (duckvep emits only
+`frameshift_variant`). Both are tracked fixes.
+
+(Earlier single-version run, code 116 vs cache 112, 50k SNVs: duckvep 601267/601279
+= 100.0%, fastVEP 601212/601279 = 99.99% — 55 of 67 fastVEP-wrong pairs resolved;
+residual 6 splice polypyrimidine were the version skew now eliminated, plus 5
 `mature_miRNA_variant` (needs miRBase mature-product coordinates — a join duckvep
-can add and fastVEP's fixed pipeline cannot), and 1 stop-codon edge.
+can add and fastVEP's fixed pipeline cannot), and 1 stop-codon edge.)
 
 ## Feature patches (parity with `fastvep annotate`, kept lean)
 
