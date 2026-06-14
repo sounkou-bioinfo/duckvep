@@ -6,21 +6,36 @@ Changelog, most recent first. (R-package style.)
 
 ### Accuracy (oracle = Ensembl VEP, not fastVEP)
 
-* **Concordance is always split by IMPACT × variant class** — never a single
-  aggregate. An average hides high-impact discordances (the clinically actionable
-  sites); the harness and the rendered report surface them. Percentages use enough
-  precision that a non-zero discordance never reads as 100%.
-* **Accuracy patches over the vendored engine** make duckvep *more* concordant
-  with Ensembl VEP than fastVEP (which carries the same bugs):
-  * `start_lost` requires a real ATG start codon (was firing on non-ATG / `cds_start_NF`
-    annotated starts).
-  * incomplete 5′ CDS (`cds_start_NF`) → `coding_sequence_variant`, not `start_lost`.
-  * incomplete terminal codon (`cds_end_NF`) → `incomplete_terminal_codon_variant`.
-  * splice predicates are **interval-aware** (variant `[start,end]` vs the splice
-    bands, Ensembl's `overlap()`), so indels/MNVs/haplotypes spanning a boundary
-    are classified correctly.
-  * Version-matched SNV concordance: 13 discordant in 1,315,496 (99.999%); the open
-    frontier is high-impact indels and MNVs. See `docs/PATCHES.md`.
+* **Concordance is always split by IMPACT × variant class** and per SO term, with
+  fastVEP shown alongside — never a single aggregate. duckvep beats fastVEP on
+  **every HIGH-impact SO term**. Percentages use enough precision that a non-zero
+  discordance never reads as 100%.
+* **The consequence engine was rebuilt to mirror Ensembl's own structure**, taking
+  N=50000 ClinVar discordance vs offline Ensembl VEP 116 from **~3,876 → 222 (a 94%
+  reduction) with ZERO duckvep-specific regressions** at every step (every remaining
+  discordance is a *shared* gap fastVEP has too). Two VEP-faithful abstractions:
+  * **`CodingContext` (haplotype-ready):** coding consequences are a predicate SET
+    over a peptide/codon context built from `CdsEdit`s applied to the reference CDS.
+    One variant = one edit; a phased haplotype = many edits on the same CDS before
+    translation (the haplosaurus / `bcftools csq` model — a capability fastVEP lacks).
+    New terms are new predicates, not new branches.
+  * **Declarative `OverlapConsequence` includes:** term gates are data (a
+    `FeatureOverlap{exon,intron,intron_boundary}` flag set + an `include_satisfied`
+    table from Ensembl `Constants.pm`), not scattered `if` guards — e.g.
+    `splice_polypyrimidine` needs `exon=0,intron=1`.
+* **Root-caused fixes** (each verified against VEP — several by *instrumenting* VEP),
+  all locked by a generated regression corpus: mitochondrial codon table + non-ATG
+  `start_lost`; splice precedence and insertion handling (`(min,max)` swap, exact
+  `codons` window); `intron_variant` / 5′ & 3′ UTR / `stop_lost` co-occurrence as
+  unions; `protein_altering_variant` vs clean inframe ins/del; the
+  `splice_polypyrimidine` exon gate; CDS-boundary straddle suppression.
+* **Regression corpus is mandatory:** every fixed divergence is captured — unit
+  tests + `test/sql/vep_splice.test` + `test/data/regression_cases.tsv` (generated
+  from the concordance dump by `correctness/gen-regression-cases.sh`, run by
+  `test/run-regression-cases.sh`). See `docs/PATCHES.md`.
+* **Open frontier (tracked):** `_get_differing_regions` decomposition (delins →
+  minimal del+ins sub-regions, the genomic analog of `CdsEdit`) for MNV/delins
+  splice calls; and 3′-shifting.
 
 ### New SQL functions
 
