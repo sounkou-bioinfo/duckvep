@@ -1,0 +1,158 @@
+diff -ruN a/fastvep-genome/src/codon.rs b/fastvep-genome/src/codon.rs
+--- a/fastvep-genome/src/codon.rs	2026-06-13 21:22:56.606706541 +0200
++++ b/fastvep-genome/src/codon.rs	2026-06-13 22:59:40.247170800 +0200
+@@ -10,50 +10,90 @@
+     pub fn standard() -> Self {
+         let codons = [
+             // Phe
+-            (b"TTT", b'F'), (b"TTC", b'F'),
++            (b"TTT", b'F'),
++            (b"TTC", b'F'),
+             // Leu
+-            (b"TTA", b'L'), (b"TTG", b'L'), (b"CTT", b'L'), (b"CTC", b'L'),
+-            (b"CTA", b'L'), (b"CTG", b'L'),
++            (b"TTA", b'L'),
++            (b"TTG", b'L'),
++            (b"CTT", b'L'),
++            (b"CTC", b'L'),
++            (b"CTA", b'L'),
++            (b"CTG", b'L'),
+             // Ile
+-            (b"ATT", b'I'), (b"ATC", b'I'), (b"ATA", b'I'),
++            (b"ATT", b'I'),
++            (b"ATC", b'I'),
++            (b"ATA", b'I'),
+             // Met (start)
+             (b"ATG", b'M'),
+             // Val
+-            (b"GTT", b'V'), (b"GTC", b'V'), (b"GTA", b'V'), (b"GTG", b'V'),
++            (b"GTT", b'V'),
++            (b"GTC", b'V'),
++            (b"GTA", b'V'),
++            (b"GTG", b'V'),
+             // Ser
+-            (b"TCT", b'S'), (b"TCC", b'S'), (b"TCA", b'S'), (b"TCG", b'S'),
+-            (b"AGT", b'S'), (b"AGC", b'S'),
++            (b"TCT", b'S'),
++            (b"TCC", b'S'),
++            (b"TCA", b'S'),
++            (b"TCG", b'S'),
++            (b"AGT", b'S'),
++            (b"AGC", b'S'),
+             // Pro
+-            (b"CCT", b'P'), (b"CCC", b'P'), (b"CCA", b'P'), (b"CCG", b'P'),
++            (b"CCT", b'P'),
++            (b"CCC", b'P'),
++            (b"CCA", b'P'),
++            (b"CCG", b'P'),
+             // Thr
+-            (b"ACT", b'T'), (b"ACC", b'T'), (b"ACA", b'T'), (b"ACG", b'T'),
++            (b"ACT", b'T'),
++            (b"ACC", b'T'),
++            (b"ACA", b'T'),
++            (b"ACG", b'T'),
+             // Ala
+-            (b"GCT", b'A'), (b"GCC", b'A'), (b"GCA", b'A'), (b"GCG", b'A'),
++            (b"GCT", b'A'),
++            (b"GCC", b'A'),
++            (b"GCA", b'A'),
++            (b"GCG", b'A'),
+             // Tyr
+-            (b"TAT", b'Y'), (b"TAC", b'Y'),
++            (b"TAT", b'Y'),
++            (b"TAC", b'Y'),
+             // Stop
+-            (b"TAA", b'*'), (b"TAG", b'*'), (b"TGA", b'*'),
++            (b"TAA", b'*'),
++            (b"TAG", b'*'),
++            (b"TGA", b'*'),
+             // His
+-            (b"CAT", b'H'), (b"CAC", b'H'),
++            (b"CAT", b'H'),
++            (b"CAC", b'H'),
+             // Gln
+-            (b"CAA", b'Q'), (b"CAG", b'Q'),
++            (b"CAA", b'Q'),
++            (b"CAG", b'Q'),
+             // Asn
+-            (b"AAT", b'N'), (b"AAC", b'N'),
++            (b"AAT", b'N'),
++            (b"AAC", b'N'),
+             // Lys
+-            (b"AAA", b'K'), (b"AAG", b'K'),
++            (b"AAA", b'K'),
++            (b"AAG", b'K'),
+             // Asp
+-            (b"GAT", b'D'), (b"GAC", b'D'),
++            (b"GAT", b'D'),
++            (b"GAC", b'D'),
+             // Glu
+-            (b"GAA", b'E'), (b"GAG", b'E'),
++            (b"GAA", b'E'),
++            (b"GAG", b'E'),
+             // Cys
+-            (b"TGT", b'C'), (b"TGC", b'C'),
++            (b"TGT", b'C'),
++            (b"TGC", b'C'),
+             // Trp
+             (b"TGG", b'W'),
+             // Arg
+-            (b"CGT", b'R'), (b"CGC", b'R'), (b"CGA", b'R'), (b"CGG", b'R'),
+-            (b"AGA", b'R'), (b"AGG", b'R'),
++            (b"CGT", b'R'),
++            (b"CGC", b'R'),
++            (b"CGA", b'R'),
++            (b"CGG", b'R'),
++            (b"AGA", b'R'),
++            (b"AGG", b'R'),
+             // Gly
+-            (b"GGT", b'G'), (b"GGC", b'G'), (b"GGA", b'G'), (b"GGG", b'G'),
++            (b"GGT", b'G'),
++            (b"GGC", b'G'),
++            (b"GGA", b'G'),
++            (b"GGG", b'G'),
+         ];
+ 
+         let mut table = HashMap::with_capacity(64);
+diff -ruN a/fastvep-genome/src/transcript.rs b/fastvep-genome/src/transcript.rs
+--- a/fastvep-genome/src/transcript.rs	2026-06-13 21:22:56.606706541 +0200
++++ b/fastvep-genome/src/transcript.rs	2026-06-13 22:59:40.249170797 +0200
+@@ -499,7 +499,9 @@
+                     // UTR: first 50 bases, CDS starts at offset 50
+                     let mut seq = vec![b'N'; len];
+                     // Put ATG at offset 50 (genomic 1050)
+-                    seq[50] = b'A'; seq[51] = b'T'; seq[52] = b'G';
++                    seq[50] = b'A';
++                    seq[51] = b'T';
++                    seq[52] = b'G';
+                     // Fill rest of CDS with GCT (Ala)
+                     for i in 53..len {
+                         seq[i] = b"GCT"[(i - 53) % 3];
+@@ -534,15 +536,24 @@
+ 
+         let ts = tr.translateable_seq.as_ref().unwrap();
+         // translateable_seq should start with ATG
+-        assert!(ts.starts_with("ATG"), "translateable_seq starts with: {}", &ts[..6]);
++        assert!(
++            ts.starts_with("ATG"),
++            "translateable_seq starts with: {}",
++            &ts[..6]
++        );
+         // Length should be cdna_coding_end - cdna_coding_start + 1 = 952 - 51 + 1 = 902
+         // Actually: cdna_coding_end = 952 in the test fixture
+-        let expected_len = (tr.cdna_coding_end.unwrap() - tr.cdna_coding_start.unwrap() + 1) as usize;
++        let expected_len =
++            (tr.cdna_coding_end.unwrap() - tr.cdna_coding_start.unwrap() + 1) as usize;
+         // Wait, the slice is [cs-1..ce] which is ce - (cs-1) = ce - cs + 1 items
+         assert_eq!(ts.len(), expected_len);
+ 
+         let peptide = tr.peptide.as_ref().unwrap();
+         // Peptide should start with M (Met)
+-        assert!(peptide.starts_with('M'), "peptide starts with: {}", &peptide[..1]);
++        assert!(
++            peptide.starts_with('M'),
++            "peptide starts with: {}",
++            &peptide[..1]
++        );
+     }
+ }

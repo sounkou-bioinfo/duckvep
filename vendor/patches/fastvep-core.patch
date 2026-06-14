@@ -1,0 +1,51 @@
+diff -ruN a/fastvep-core/src/consequence.rs b/fastvep-core/src/consequence.rs
+--- a/fastvep-core/src/consequence.rs	2026-06-13 21:22:56.605706543 +0200
++++ b/fastvep-core/src/consequence.rs	2026-06-13 22:59:40.244170805 +0200
+@@ -275,9 +275,7 @@
+             "splice_region_variant" => Some(Self::SpliceRegionVariant),
+             "splice_donor_5th_base_variant" => Some(Self::SpliceDonorFifthBaseVariant),
+             "splice_donor_region_variant" => Some(Self::SpliceDonorRegionVariant),
+-            "splice_polypyrimidine_tract_variant" => {
+-                Some(Self::SplicePolypyrimidineTractVariant)
+-            }
++            "splice_polypyrimidine_tract_variant" => Some(Self::SplicePolypyrimidineTractVariant),
+             "incomplete_terminal_codon_variant" => Some(Self::IncompleteTerminalCodonVariant),
+             "start_retained_variant" => Some(Self::StartRetainedVariant),
+             "stop_retained_variant" => Some(Self::StopRetainedVariant),
+@@ -394,6 +392,9 @@
+             Consequence::MissenseVariant,
+             Consequence::SynonymousVariant,
+         ];
+-        assert_eq!(Consequence::most_severe(&cs), Some(Consequence::MissenseVariant));
++        assert_eq!(
++            Consequence::most_severe(&cs),
++            Some(Consequence::MissenseVariant)
++        );
+     }
+ }
+diff -ruN a/fastvep-core/src/position.rs b/fastvep-core/src/position.rs
+--- a/fastvep-core/src/position.rs	2026-06-13 21:22:56.605706543 +0200
++++ b/fastvep-core/src/position.rs	2026-06-13 22:59:40.245170804 +0200
+@@ -131,9 +131,7 @@
+         match s {
+             "-" => Allele::Deletion,
+             "*" => Allele::Missing,
+-            _ if s.starts_with('<') && s.ends_with('>') => {
+-                Allele::Symbolic(s.to_string())
+-            }
++            _ if s.starts_with('<') && s.ends_with('>') => Allele::Symbolic(s.to_string()),
+             _ => Allele::Sequence(s.as_bytes().to_vec()),
+         }
+     }
+@@ -198,10 +196,7 @@
+     fn test_allele_from_str() {
+         assert_eq!(Allele::from_str("-"), Allele::Deletion);
+         assert_eq!(Allele::from_str("*"), Allele::Missing);
+-        assert_eq!(
+-            Allele::from_str("ACGT"),
+-            Allele::Sequence(b"ACGT".to_vec())
+-        );
++        assert_eq!(Allele::from_str("ACGT"), Allele::Sequence(b"ACGT".to_vec()));
+     }
+ 
+     #[test]

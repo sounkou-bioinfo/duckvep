@@ -1,5 +1,11 @@
 # Divergences from upstream fastVEP
 
+> **The patches as files (reproducible):** the complete divergence is captured as
+> per-crate diffs against the pristine base **Huang-lab/fastVEP@785922e** in
+> [`vendor/patches/`](vendor/patches/) (`*.patch`, `git apply -p1` from the repo
+> root). Regenerate with [`vendor/patches/regen-patches.sh`](vendor/patches/regen-patches.sh).
+> This prose is the *rationale*; the patch files are the *source of truth*.
+
 duckvep vendors the lean compute closure of [fastVEP](https://github.com/Huang-lab/fastVEP)
 (`fastvep-core`, `-genome`, `-cache`, `-consequence`, `-hgvs`; see
 [`vendor/NOTICE.md`](vendor/NOTICE.md)) and **patches it**. Two principles drive
@@ -48,36 +54,41 @@ Met — i.e. the canonical start must actually be ATG. Patch: gate on
 annotated CDS begins with a non-ATG codon (e.g. CGC→CGG is Arg→Arg, *synonymous*,
 not `start_lost`).
 
-**Impact — version-MATCHED (VEP code 116 + cache 116 + GFF3 116), 50k ClinVar
-variants incl. indels, vs offline Ensembl VEP, per variant class:**
+### Interval-aware splice predicates (indels/MNVs/haplotypes)
+`splice.rs`. Upstream tested a single `genomic_pos` against each splice band;
+Ensembl tests the *variant interval* `[r_start, r_end]` (`overlap(...)` in
+`BaseTranscriptVariationAllele.pm`). Patch: every splice predicate
+(`is_splice_donor`/`acceptor`/`donor_region`/`5th_base`/`polypyrimidine_tract`/
+`region`) takes `(start, end)` and uses interval overlap, so an indel spanning a
+boundary is classified correctly. (SNVs unchanged: `start == end`.)
 
+### Mitochondrial codon table (chrM / NCBI table 2)
+`predictor.rs`. Upstream translates everything with `CodonTable::standard()`, so
+**every chrM coding variant was mis-called** (TGA→stop instead of Trp, ATA→Ile
+instead of Met, AGA/AGG not recognised as stop). Patch: a per-transcript codon
+table — `ct(transcript)` returns the vertebrate-mitochondrial table
+(`from_ncbi_table(2)`) for chrM/MT transcripts, the standard table otherwise.
+Validated on ClinVar chrM vs offline Ensembl VEP (HIGH SNVs 44/49 concordant; the
+residual is the non-ATG mitochondrial *start* codons, a tracked refinement).
+
+**Impact — current, valid, version-matched figures are in the generated report
+[`correctness/correctness.md`](correctness/correctness.md)** (split by impact ×
+class, per-100K error rates, all read from `correctness/data/concordance_by_impact.csv`
+so they never drift). Headline: SNVs near-perfect at every impact tier and ahead of
+fastVEP; the open frontier is high-impact indels/MNVs (shared with fastVEP — a real
+engine gap vs Ensembl VEP, not a measurement artifact).
+
+<!-- superseded stale snippet kept for context only:
 | class | duckvep | fastVEP |
 |-------|---------|---------|
-| **SNV** | **100.0 %** (1,315,483 / 1,315,496 — 13 discordant in 1.3M) | 99.99 % |
-| del | 91.03 % | 72.37 % |
-| ins | 93.59 % | 72.49 % |
-| mnv | 84.66 % | 84.66 % |
+| del | (pre-normalization, unrepresentative join) | |
+-->
 
-With matched versions the SNV residual collapses to **13 pairs in 1.3M** — which
-*confirms* the earlier polypyrimidine residual was VEP code-116-vs-cache-112 skew,
-not a duckvep bug (duckvep's range is byte-identical to Ensembl's source). The
-three incomplete-CDS / non-ATG patches keep duckvep ahead of fastVEP on SNVs.
-
-**Indels are the open correctness frontier** (duckvep already ~91-94% vs fastVEP's
-~72%). The discordances are dominated by **one structural bug**: splice-region
-consequences for indels. Ensembl tests the *variant interval* `[r_start, r_end]`
-against the splice intervals (`overlap(...)` in `BaseTranscriptVariationAllele.pm`);
-duckvep's `splice.rs` tests a single `genomic_pos`, so any indel spanning a splice
-boundary is mis-binned (`splice_polypyrimidine_tract` / `splice_donor_region` /
-`splice_donor_5th_base` / `splice_acceptor`). Second cluster: a frameshift that
+The remaining engine frontier (tracked, paper-relevant): a frameshift that
 introduces a premature stop should add `stop_gained` (duckvep emits only
-`frameshift_variant`). Both are tracked fixes.
-
-(Earlier single-version run, code 116 vs cache 112, 50k SNVs: duckvep 601267/601279
-= 100.0%, fastVEP 601212/601279 = 99.99% — 55 of 67 fastVEP-wrong pairs resolved;
-residual 6 splice polypyrimidine were the version skew now eliminated, plus 5
-`mature_miRNA_variant` (needs miRBase mature-product coordinates — a join duckvep
-can add and fastVEP's fixed pipeline cannot), and 1 stop-codon edge.)
+`frameshift_variant`); MNV codon handling; and the non-ATG mitochondrial start
+codons. These are **shared with fastVEP** vs Ensembl VEP — engine accuracy work,
+measured per-100K in the generated report.
 
 ## Feature patches (parity with `fastvep annotate`, kept lean)
 

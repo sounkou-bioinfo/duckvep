@@ -1,0 +1,596 @@
+diff -ruN a/fastvep-hgvs/src/coding.rs b/fastvep-hgvs/src/coding.rs
+--- a/fastvep-hgvs/src/coding.rs	2026-06-13 21:22:56.606706541 +0200
++++ b/fastvep-hgvs/src/coding.rs	2026-06-14 02:22:19.925918165 +0200
+@@ -13,7 +13,17 @@
+     coding_start: u64,
+     coding_end: Option<u64>,
+ ) -> Option<String> {
+-    hgvsc_with_seq(transcript_id, cdna_start, cdna_end, ref_allele, alt_allele, coding_start, coding_end, None, 0)
++    hgvsc_with_seq(
++        transcript_id,
++        cdna_start,
++        cdna_end,
++        ref_allele,
++        alt_allele,
++        coding_start,
++        coding_end,
++        None,
++        0,
++    )
+ }
+ 
+ /// Generate HGVSc with optional 3' shifting for deletions/insertions.
+@@ -38,9 +48,9 @@
+     // For coding region: position = cdna - coding_start + 1 + start_phase (1-based)
+     // start_phase accounts for incomplete start codons (Ensembl convention)
+     let cds_pos_start = if (cdna_start as i64) < (coding_start as i64) {
+-        cdna_start as i64 - coding_start as i64  // 5'UTR: no phase
++        cdna_start as i64 - coding_start as i64 // 5'UTR: no phase
+     } else {
+-        cdna_start as i64 - coding_start as i64 + 1 + start_phase as i64  // CDS: with phase
++        cdna_start as i64 - coding_start as i64 + 1 + start_phase as i64 // CDS: with phase
+     };
+     let cds_pos_end = if (cdna_end as i64) < (coding_start as i64) {
+         cdna_end as i64 - coding_start as i64
+@@ -73,10 +83,7 @@
+         {
+             format!(
+                 "{}{}{}>{}",
+-                prefix,
+-                pos_str,
+-                ref_bases[0] as char,
+-                alt_bases[0] as char
++                prefix, pos_str, ref_bases[0] as char, alt_bases[0] as char
+             )
+         }
+         // Deletion — apply HGVS 3' shifting in repetitive regions
+@@ -86,11 +93,10 @@
+             let (shifted_start, shifted_end) = if let Some(seq) = spliced_seq {
+                 let seq_bytes = seq.as_bytes();
+                 let mut s = (cdna_start - 1) as usize; // 0-based start
+-                let mut e = (cdna_end - 1) as usize;   // 0-based end (inclusive)
+-                // Shift right while the base at position end+1 matches base at start
++                let mut e = (cdna_end - 1) as usize; // 0-based end (inclusive)
++                                                     // Shift right while the base at position end+1 matches base at start
+                 while e + 1 < seq_bytes.len()
+-                    && seq_bytes[e + 1].to_ascii_uppercase()
+-                        == seq_bytes[s].to_ascii_uppercase()
++                    && seq_bytes[e + 1].to_ascii_uppercase() == seq_bytes[s].to_ascii_uppercase()
+                 {
+                     s += 1;
+                     e += 1;
+@@ -144,7 +150,7 @@
+         // Insertion — normalize coordinates: ensure ins_before < ins_after
+         (Allele::Deletion, Allele::Sequence(alt_bases)) => {
+             let ins_before_cdna = cdna_start.min(cdna_end); // base before insertion
+-            let ins_after_cdna = cdna_start.max(cdna_end);   // base after insertion
++            let ins_after_cdna = cdna_start.max(cdna_end); // base after insertion
+             let ins_before_cds = cds_pos_start.min(cds_pos_end);
+             let ins_after_cds = cds_pos_start.max(cds_pos_end);
+ 
+@@ -156,7 +162,9 @@
+                 // Check preceding sequence
+                 let dup_before = if before_pos + 1 >= ins_len && before_pos < seq_bytes.len() {
+                     let preceding = &seq_bytes[before_pos + 1 - ins_len..before_pos + 1];
+-                    preceding.iter().zip(alt_bases.iter())
++                    preceding
++                        .iter()
++                        .zip(alt_bases.iter())
+                         .all(|(a, b)| a.to_ascii_uppercase() == b.to_ascii_uppercase())
+                 } else {
+                     false
+@@ -166,7 +174,9 @@
+                     let after_pos = ins_after_cdna as usize; // 0-based index of base after insertion
+                     if after_pos + ins_len <= seq_bytes.len() {
+                         let following = &seq_bytes[after_pos..after_pos + ins_len];
+-                        following.iter().zip(alt_bases.iter())
++                        following
++                            .iter()
++                            .zip(alt_bases.iter())
+                             .all(|(a, b)| a.to_ascii_uppercase() == b.to_ascii_uppercase())
+                     } else {
+                         false
+@@ -258,10 +268,15 @@
+     coding_end: Option<u64>,
+ ) -> Option<String> {
+     hgvsc_intronic_range(
+-        transcript_id, nearest_exon_cdna_pos, intron_offset,
++        transcript_id,
++        nearest_exon_cdna_pos,
++        intron_offset,
+         None, // end_cdna_pos
+         None, // end_offset
+-        ref_allele, alt_allele, coding_start, coding_end,
++        ref_allele,
++        alt_allele,
++        coding_start,
++        coding_end,
+     )
+ }
+ 
+@@ -284,7 +299,11 @@
+     // For 5'UTR positions: cds_pos = cdna - coding_start (no +1, since there's no position 0;
+     //   position -1 = last 5'UTR base at cdna = coding_start - 1)
+     let raw_cds_pos = nearest_exon_cdna_pos as i64 - coding_start as i64 + 1;
+-    let cds_pos = if raw_cds_pos <= 0 { raw_cds_pos - 1 } else { raw_cds_pos };
++    let cds_pos = if raw_cds_pos <= 0 {
++        raw_cds_pos - 1
++    } else {
++        raw_cds_pos
++    };
+ 
+     // Build the position string with offset
+     let pos_str = if cds_pos < 0 {
+@@ -313,8 +332,10 @@
+         (Allele::Sequence(ref_bases), Allele::Sequence(alt_bases))
+             if ref_bases.len() == 1 && alt_bases.len() == 1 =>
+         {
+-            format!("{}{}{}>{}",
+-                prefix, pos_str, ref_bases[0] as char, alt_bases[0] as char)
++            format!(
++                "{}{}{}>{}",
++                prefix, pos_str, ref_bases[0] as char, alt_bases[0] as char
++            )
+         }
+         (Allele::Sequence(ref_bases), Allele::Deletion) => {
+             if ref_bases.len() == 1 || end_intron_offset.is_none() {
+@@ -326,12 +347,18 @@
+                 let e_raw = e_cdna as i64 - coding_start as i64 + 1;
+                 let e_cds = if e_raw <= 0 { e_raw - 1 } else { e_raw };
+                 let end_pos_str = if e_cds < 0 {
+-                    if e_offset > 0 { format!("{}+{}", e_cds, e_offset) }
+-                    else { format!("{}{}", e_cds, e_offset) }
++                    if e_offset > 0 {
++                        format!("{}+{}", e_cds, e_offset)
++                    } else {
++                        format!("{}{}", e_cds, e_offset)
++                    }
+                 } else if coding_end.is_some() && e_cdna > coding_end.unwrap() {
+                     let utr = e_cdna - coding_end.unwrap();
+-                    if e_offset > 0 { format!("*{}+{}", utr, e_offset) }
+-                    else { format!("*{}{}", utr, e_offset) }
++                    if e_offset > 0 {
++                        format!("*{}+{}", utr, e_offset)
++                    } else {
++                        format!("*{}{}", utr, e_offset)
++                    }
+                 } else if e_offset > 0 {
+                     format!("{}+{}", e_cds, e_offset)
+                 } else {
+@@ -342,11 +369,17 @@
+                 // For positive: +4035 before +4038
+                 // For negative: -2625 before -2616
+                 let (start_str, end_str) = if intron_offset > 0 && e_offset > 0 {
+-                    if intron_offset < e_offset { (pos_str.clone(), end_pos_str) }
+-                    else { (end_pos_str, pos_str.clone()) }
++                    if intron_offset < e_offset {
++                        (pos_str.clone(), end_pos_str)
++                    } else {
++                        (end_pos_str, pos_str.clone())
++                    }
+                 } else if intron_offset < 0 && e_offset < 0 {
+-                    if intron_offset < e_offset { (pos_str.clone(), end_pos_str) }
+-                    else { (end_pos_str, pos_str.clone()) }
++                    if intron_offset < e_offset {
++                        (pos_str.clone(), end_pos_str)
++                    } else {
++                        (end_pos_str, pos_str.clone())
++                    }
+                 } else {
+                     (pos_str.clone(), end_pos_str)
+                 };
+@@ -356,15 +389,27 @@
+         // Insertion in intron — show range: c.X+N_X+N+1insB
+         (Allele::Deletion, Allele::Sequence(alt_bases)) => {
+             let ins_str = std::str::from_utf8(alt_bases).unwrap_or("?");
+-            let next_offset = if intron_offset < 0 { intron_offset + 1 } else { intron_offset + 1 };
++            let next_offset = if intron_offset < 0 {
++                intron_offset + 1
++            } else {
++                intron_offset + 1
++            };
+             let build_pos = |cdna: u64, off: i64| -> String {
+                 let raw = cdna as i64 - coding_start as i64 + 1;
+                 let cp = if raw <= 0 { raw - 1 } else { raw }; // skip position 0 for 5'UTR
+                 if cp < 0 {
+-                    if off > 0 { format!("{}+{}", cp, off) } else { format!("{}{}", cp, off) }
++                    if off > 0 {
++                        format!("{}+{}", cp, off)
++                    } else {
++                        format!("{}{}", cp, off)
++                    }
+                 } else if coding_end.is_some() && cdna > coding_end.unwrap() {
+                     let u = cdna - coding_end.unwrap();
+-                    if off > 0 { format!("*{}+{}", u, off) } else { format!("*{}{}", u, off) }
++                    if off > 0 {
++                        format!("*{}+{}", u, off)
++                    } else {
++                        format!("*{}{}", u, off)
++                    }
+                 } else if off > 0 {
+                     format!("{}+{}", cp, off)
+                 } else {
+@@ -392,7 +437,11 @@
+     alt_allele: &Allele,
+ ) -> Option<String> {
+     let prefix = format!("{}:n.", transcript_id);
+-    let (pos_min, pos_max) = if cdna_start <= cdna_end { (cdna_start, cdna_end) } else { (cdna_end, cdna_start) };
++    let (pos_min, pos_max) = if cdna_start <= cdna_end {
++        (cdna_start, cdna_end)
++    } else {
++        (cdna_end, cdna_start)
++    };
+     let pos_str = if pos_min == pos_max {
+         format!("{}", pos_min)
+     } else {
+@@ -403,20 +452,30 @@
+         (Allele::Sequence(ref_bases), Allele::Sequence(alt_bases))
+             if ref_bases.len() == 1 && alt_bases.len() == 1 =>
+         {
+-            format!("{}{}{}>{}",
+-                prefix, pos_str, ref_bases[0] as char, alt_bases[0] as char)
++            format!(
++                "{}{}{}>{}",
++                prefix, pos_str, ref_bases[0] as char, alt_bases[0] as char
++            )
+         }
+         (Allele::Sequence(_), Allele::Deletion) => {
+             format!("{}{}del", prefix, pos_str)
+         }
+         (Allele::Deletion, Allele::Sequence(alt_bases)) => {
+             let ins_pos = format!("{}_{}", pos_max, pos_max + 1);
+-            format!("{}{}ins{}",
+-                prefix, ins_pos, std::str::from_utf8(alt_bases).unwrap_or("?"))
++            format!(
++                "{}{}ins{}",
++                prefix,
++                ins_pos,
++                std::str::from_utf8(alt_bases).unwrap_or("?")
++            )
+         }
+         (Allele::Sequence(_), Allele::Sequence(alt_bases)) => {
+-            format!("{}{}delins{}",
+-                prefix, pos_str, std::str::from_utf8(alt_bases).unwrap_or("?"))
++            format!(
++                "{}{}delins{}",
++                prefix,
++                pos_str,
++                std::str::from_utf8(alt_bases).unwrap_or("?")
++            )
+         }
+         _ => return None,
+     };
+@@ -432,8 +491,13 @@
+     alt_allele: &Allele,
+ ) -> Option<String> {
+     hgvsc_noncoding_intronic_range(
+-        transcript_id, nearest_exon_cdna_pos, intron_offset,
+-        None, None, ref_allele, alt_allele,
++        transcript_id,
++        nearest_exon_cdna_pos,
++        intron_offset,
++        None,
++        None,
++        ref_allele,
++        alt_allele,
+     )
+ }
+ 
+@@ -458,8 +522,10 @@
+         (Allele::Sequence(ref_bases), Allele::Sequence(alt_bases))
+             if ref_bases.len() == 1 && alt_bases.len() == 1 =>
+         {
+-            format!("{}{}{}>{}",
+-                prefix, pos_str, ref_bases[0] as char, alt_bases[0] as char)
++            format!(
++                "{}{}{}>{}",
++                prefix, pos_str, ref_bases[0] as char, alt_bases[0] as char
++            )
+         }
+         (Allele::Sequence(ref_bases), Allele::Deletion) => {
+             if ref_bases.len() == 1 || end_intron_offset.is_none() {
+@@ -505,10 +571,12 @@
+     fn test_hgvsc_snv() {
+         let result = hgvsc(
+             "ENST00000001",
+-            151, 151,
++            151,
++            151,
+             &Allele::Sequence(b"A".to_vec()),
+             &Allele::Sequence(b"G".to_vec()),
+-            51, None,
++            51,
++            None,
+         );
+         assert_eq!(result, Some("ENST00000001:c.101A>G".to_string()));
+     }
+@@ -517,10 +585,12 @@
+     fn test_hgvsc_deletion() {
+         let result = hgvsc(
+             "ENST00000001",
+-            54, 56,
++            54,
++            56,
+             &Allele::Sequence(b"ACG".to_vec()),
+             &Allele::Deletion,
+-            51, None,
++            51,
++            None,
+         );
+         assert_eq!(result, Some("ENST00000001:c.4_6del".to_string()));
+     }
+@@ -529,10 +599,12 @@
+     fn test_hgvsc_insertion() {
+         let result = hgvsc(
+             "ENST00000001",
+-            54, 53,
++            54,
++            53,
+             &Allele::Deletion,
+             &Allele::Sequence(b"TTT".to_vec()),
+-            51, None,
++            51,
++            None,
+         );
+         assert_eq!(result, Some("ENST00000001:c.3_4insTTT".to_string()));
+     }
+@@ -541,10 +613,12 @@
+     fn test_hgvsc_5_utr() {
+         let result = hgvsc(
+             "ENST00000001",
+-            10, 10,
++            10,
++            10,
+             &Allele::Sequence(b"A".to_vec()),
+             &Allele::Sequence(b"G".to_vec()),
+-            51, None,
++            51,
++            None,
+         );
+         // 5'UTR: position = cdna - coding_start = 10 - 51 = -41
+         assert_eq!(result, Some("ENST00000001:c.-41A>G".to_string()));
+@@ -555,10 +629,12 @@
+         // coding_end = 1003 in cDNA, variant at cDNA 1021
+         let result = hgvsc(
+             "ENST00000001",
+-            1021, 1021,
++            1021,
++            1021,
+             &Allele::Sequence(b"G".to_vec()),
+             &Allele::Sequence(b"A".to_vec()),
+-            51, Some(1003),
++            51,
++            Some(1003),
+         );
+         // utr_offset = 1021 - 1003 = 18
+         assert_eq!(result, Some("ENST00000001:c.*18G>A".to_string()));
+@@ -571,10 +647,12 @@
+         // CDS pos = 201 - 51 + 1 = 151
+         let result = hgvsc_intronic(
+             "ENST00000001",
+-            201, 5,
++            201,
++            5,
+             &Allele::Sequence(b"G".to_vec()),
+             &Allele::Sequence(b"A".to_vec()),
+-            51, None,
++            51,
++            None,
+         );
+         assert_eq!(result, Some("ENST00000001:c.151+5G>A".to_string()));
+     }
+@@ -586,10 +664,12 @@
+         // CDS pos = 202 - 51 + 1 = 152
+         let result = hgvsc_intronic(
+             "ENST00000001",
+-            202, -3,
++            202,
++            -3,
+             &Allele::Sequence(b"A".to_vec()),
+             &Allele::Sequence(b"G".to_vec()),
+-            51, None,
++            51,
++            None,
+         );
+         assert_eq!(result, Some("ENST00000001:c.152-3A>G".to_string()));
+     }
+@@ -602,11 +682,14 @@
+         let seq = "AACTTTTGA";
+         let result = hgvsc_with_seq(
+             "ENST00000001",
+-            4, 4, // cdna_start=4, cdna_end=4 (the first T in TTTT)
++            4,
++            4, // cdna_start=4, cdna_end=4 (the first T in TTTT)
+             &Allele::Sequence(b"T".to_vec()),
+             &Allele::Deletion,
+-            1, None,
+-            Some(seq), 0,
++            1,
++            None,
++            Some(seq),
++            0,
+         );
+         // Should shift from pos 4 to pos 7 (last T in the TTTT run)
+         assert_eq!(result, Some("ENST00000001:c.7del".to_string()));
+@@ -618,11 +701,14 @@
+         let seq = "ACGTACGT";
+         let result = hgvsc_with_seq(
+             "ENST00000001",
+-            1, 1,
++            1,
++            1,
+             &Allele::Sequence(b"A".to_vec()),
+             &Allele::Deletion,
+-            1, None,
+-            Some(seq), 0,
++            1,
++            None,
++            Some(seq),
++            0,
+         );
+         assert_eq!(result, Some("ENST00000001:c.1del".to_string()));
+     }
+@@ -631,7 +717,8 @@
+     fn test_hgvsc_noncoding_snv() {
+         let result = hgvsc_noncoding(
+             "ENST00000472807.5",
+-            100, 100,
++            100,
++            100,
+             &Allele::Sequence(b"A".to_vec()),
+             &Allele::Sequence(b"G".to_vec()),
+         );
+diff -ruN a/fastvep-hgvs/src/genomic.rs b/fastvep-hgvs/src/genomic.rs
+--- a/fastvep-hgvs/src/genomic.rs	2026-06-13 21:22:56.606706541 +0200
++++ b/fastvep-hgvs/src/genomic.rs	2026-06-14 02:22:19.926918164 +0200
+@@ -5,7 +5,13 @@
+ /// Format: chromosome:g.positionREF>ALT (for SNVs)
+ ///         chromosome:g.start_enddelREF (for deletions)
+ ///         chromosome:g.pos_pos+1insALT (for insertions)
+-pub fn hgvsg(chrom: &str, start: u64, end: u64, ref_allele: &Allele, alt_allele: &Allele) -> String {
++pub fn hgvsg(
++    chrom: &str,
++    start: u64,
++    end: u64,
++    ref_allele: &Allele,
++    alt_allele: &Allele,
++) -> String {
+     let prefix = format!("{}:g.", chrom);
+ 
+     match (ref_allele, alt_allele) {
+@@ -15,10 +21,7 @@
+         {
+             format!(
+                 "{}{}{}>{}",
+-                prefix,
+-                start,
+-                ref_bases[0] as char,
+-                alt_bases[0] as char
++                prefix, start, ref_bases[0] as char, alt_bases[0] as char
+             )
+         }
+         // Deletion
+@@ -82,7 +85,9 @@
+     #[test]
+     fn test_hgvsg_snv() {
+         let result = hgvsg(
+-            "chr1", 12345, 12345,
++            "chr1",
++            12345,
++            12345,
+             &Allele::Sequence(b"A".to_vec()),
+             &Allele::Sequence(b"G".to_vec()),
+         );
+@@ -92,7 +97,9 @@
+     #[test]
+     fn test_hgvsg_deletion_single() {
+         let result = hgvsg(
+-            "chr1", 100, 100,
++            "chr1",
++            100,
++            100,
+             &Allele::Sequence(b"A".to_vec()),
+             &Allele::Deletion,
+         );
+@@ -102,7 +109,9 @@
+     #[test]
+     fn test_hgvsg_deletion_multi() {
+         let result = hgvsg(
+-            "chr1", 100, 102,
++            "chr1",
++            100,
++            102,
+             &Allele::Sequence(b"ACG".to_vec()),
+             &Allele::Deletion,
+         );
+@@ -112,7 +121,9 @@
+     #[test]
+     fn test_hgvsg_insertion() {
+         let result = hgvsg(
+-            "chr1", 101, 100, // insertion: start > end in Ensembl coords
++            "chr1",
++            101,
++            100, // insertion: start > end in Ensembl coords
+             &Allele::Deletion,
+             &Allele::Sequence(b"TCG".to_vec()),
+         );
+@@ -122,7 +133,9 @@
+     #[test]
+     fn test_hgvsg_mnv() {
+         let result = hgvsg(
+-            "chr1", 100, 101,
++            "chr1",
++            100,
++            101,
+             &Allele::Sequence(b"AC".to_vec()),
+             &Allele::Sequence(b"GT".to_vec()),
+         );
+diff -ruN a/fastvep-hgvs/src/lib.rs b/fastvep-hgvs/src/lib.rs
+--- a/fastvep-hgvs/src/lib.rs	2026-06-13 21:22:56.606706541 +0200
++++ b/fastvep-hgvs/src/lib.rs	2026-06-14 02:22:19.926918164 +0200
+@@ -2,7 +2,10 @@
+ mod genomic;
+ mod protein;
+ 
+-pub use coding::{hgvsc, hgvsc_with_seq, hgvsc_intronic, hgvsc_intronic_range, hgvsc_noncoding, hgvsc_noncoding_intronic, hgvsc_noncoding_intronic_range};
++pub use coding::{
++    hgvsc, hgvsc_intronic, hgvsc_intronic_range, hgvsc_noncoding, hgvsc_noncoding_intronic,
++    hgvsc_noncoding_intronic_range, hgvsc_with_seq,
++};
+ pub use genomic::hgvsg;
+ pub use protein::{hgvsp, hgvsp_frameshift};
+ 
+diff -ruN a/fastvep-hgvs/src/protein.rs b/fastvep-hgvs/src/protein.rs
+--- a/fastvep-hgvs/src/protein.rs	2026-06-13 21:22:56.606706541 +0200
++++ b/fastvep-hgvs/src/protein.rs	2026-06-14 02:22:19.927918162 +0200
+@@ -29,12 +29,12 @@
+ 
+     if alt_aa == b'*' {
+         // Stop gained
+-        return Some(format!("{}{}{}{}",prefix, ref_aa3, protein_pos, alt_aa3));
++        return Some(format!("{}{}{}{}", prefix, ref_aa3, protein_pos, alt_aa3));
+     }
+ 
+     if ref_aa == b'*' {
+         // Stop lost - extension
+-        return Some(format!("{}{}{}ext*?",prefix, alt_aa3, protein_pos));
++        return Some(format!("{}{}{}ext*?", prefix, alt_aa3, protein_pos));
+     }
+ 
+     // Missense
+@@ -116,7 +116,8 @@
+     // If the sequence contains unresolved (X) amino acids, use Ter? to indicate uncertainty.
+     let mut stop_dist = None;
+     let mut hit_unresolved = false;
+-    let unresolved_count = alt_peptide[first_changed_offset..].iter()
++    let unresolved_count = alt_peptide[first_changed_offset..]
++        .iter()
+         .take(10)
+         .filter(|&&aa| aa == b'X')
+         .count();
+@@ -136,13 +137,22 @@
+     }
+ 
+     if let Some(d) = stop_dist {
+-        Some(format!("{}{}{}{}fsTer{}", prefix, ref_aa3, first_changed_pos, alt_aa3, d))
++        Some(format!(
++            "{}{}{}{}fsTer{}",
++            prefix, ref_aa3, first_changed_pos, alt_aa3, d
++        ))
+     } else if hit_unresolved || mostly_unresolved {
+         // Sequence has unresolved regions - can't determine stop position
+-        Some(format!("{}{}{}{}fsTer?", prefix, ref_aa3, first_changed_pos, alt_aa3))
++        Some(format!(
++            "{}{}{}{}fsTer?",
++            prefix, ref_aa3, first_changed_pos, alt_aa3
++        ))
+     } else {
+         // No stop found and sequence is clean - true extension
+-        Some(format!("{}{}{}{}fsTer?", prefix, ref_aa3, first_changed_pos, alt_aa3))
++        Some(format!(
++            "{}{}{}{}fsTer?",
++            prefix, ref_aa3, first_changed_pos, alt_aa3
++        ))
+     }
+ }
+ 

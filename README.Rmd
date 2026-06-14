@@ -230,9 +230,20 @@ duckvep's accuracy patches over the vendored engine are in [`PATCHES.md`](PATCHE
 
 ## Benchmarks
 
-Throughput, memory footprint, and engine head-to-heads are in
-**[`benchmarks/results.md`](benchmarks/results.md)** (`make benchmarks`), rendered
-directly from recorded CSVs under `benchmarks/data/`.
+Wall-clock + peak memory, duckvep vs fastVEP CLI (same consequence engine; the
+difference is data-engineering — caching, streaming, columnar), **generated from
+`benchmarks/data/timings.csv`**:
+
+```{r benchmarks-timings, echo=FALSE, message=FALSE, results="asis"}
+t <- read.csv("benchmarks/data/timings.csv", check.names = FALSE, stringsAsFactors = FALSE)
+cat(knitr::kable(t[, c("dataset", "variants", "tool", "wall_clock", "peak_rss_mb")],
+                 col.names = c("dataset", "variants", "tool", "wall", "peak RSS (MB)"),
+                 format.args = list(big.mark = ",")), sep = "\n")
+```
+
+Full throughput / footprint / HGVS-concordance tables, and the methodology, are in
+**[`benchmarks/results.md`](benchmarks/results.md)** (`make benchmarks`). Setup and
+inputs: [`scripts/fetch-data.sh`](scripts/fetch-data.sh) (pinned versions).
 
 ## License
 

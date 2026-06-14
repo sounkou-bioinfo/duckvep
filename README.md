@@ -305,10 +305,22 @@ duckvep’s accuracy patches over the vendored engine are in
 
 ## Benchmarks
 
-Throughput, memory footprint, and engine head-to-heads are in
-**[`benchmarks/results.md`](benchmarks/results.md)**
-(`make benchmarks`), rendered directly from recorded CSVs under
-`benchmarks/data/`.
+Wall-clock + peak memory, duckvep vs fastVEP CLI (same consequence
+engine; the difference is data-engineering — caching, streaming,
+columnar), **generated from `benchmarks/data/timings.csv`**:
+
+| dataset                   |  variants | tool                            | wall    | peak RSS (MB) |
+|:--------------------------|----------:|:--------------------------------|:--------|--------------:|
+| GIAB HG002 (whole genome) | 4,048,342 | fastVEP CLI                     | 0:19.46 |         1,113 |
+| GIAB HG002 (whole genome) | 4,048,342 | duckvep (warm cache; streaming) | 0:09.02 |         1,985 |
+| ClinVar chr17             |   267,534 | fastVEP CLI                     | 0:06.07 |           694 |
+| ClinVar chr17             |   267,534 | duckvep (cold / parses GFF3)    | 0:07.23 |         1,370 |
+| ClinVar chr17             |   267,534 | duckvep (warm cache)            | 0:01.88 |         1,276 |
+
+Full throughput / footprint / HGVS-concordance tables, and the
+methodology, are in **[`benchmarks/results.md`](benchmarks/results.md)**
+(`make benchmarks`). Setup and inputs:
+[`scripts/fetch-data.sh`](scripts/fetch-data.sh) (pinned versions).
 
 ## License
 

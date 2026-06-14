@@ -48,6 +48,7 @@ pub struct ConsequencePredictor {
     pub upstream_distance: u64,
     pub downstream_distance: u64,
     codon_table: CodonTable,
+    mito_codon_table: CodonTable,
 }
 
 impl ConsequencePredictor {
@@ -56,6 +57,19 @@ impl ConsequencePredictor {
             upstream_distance,
             downstream_distance,
             codon_table: CodonTable::standard(),
+            // Vertebrate mitochondrial code (NCBI table 2): TGA=Trp, ATA=Met,
+            // AGA/AGG=stop. chrM transcripts must use this, not the standard table.
+            mito_codon_table: CodonTable::from_ncbi_table(2),
+        }
+    }
+
+    /// The codon table to translate a given transcript with — mitochondrial
+    /// (NCBI table 2) for chrM/MT transcripts, the standard table otherwise.
+    fn ct(&self, transcript: &Transcript) -> &CodonTable {
+        if matches!(&*transcript.chromosome, "MT" | "chrM" | "M" | "chrMT") {
+            &self.mito_codon_table
+        } else {
+            &self.codon_table
         }
     }
 
@@ -446,8 +460,8 @@ impl ConsequencePredictor {
                     }
                 }
 
-                let ref_aa = self.codon_table.translate(&ref_codon);
-                let alt_aa = self.codon_table.translate(&alt_codon);
+                let ref_aa = self.ct(transcript).translate(&ref_codon);
+                let alt_aa = self.ct(transcript).translate(&alt_codon);
 
                 let (ref_codon_str, alt_codon_str) = format_codon_change(&ref_codon, &alt_codon);
 
@@ -542,7 +556,7 @@ impl ConsequencePredictor {
             seq_bytes[codon_start + 1],
             seq_bytes[codon_start + 2],
         ];
-        let ref_aa = self.codon_table.translate(&ref_codon);
+        let ref_aa = self.ct(transcript).translate(&ref_codon);
         let ref_aa_str = String::from(ref_aa as char);
 
         if is_frameshift {
@@ -658,7 +672,7 @@ impl ConsequencePredictor {
                         let ref_aas: String = ref_region
                             .chunks(3)
                             .filter(|c| c.len() == 3)
-                            .map(|c| self.codon_table.translate(&[c[0], c[1], c[2]]) as char)
+                            .map(|c| self.ct(transcript).translate(&[c[0], c[1], c[2]]) as char)
                             .collect();
                         let ref_codons: String = ref_region
                             .iter()
@@ -675,12 +689,12 @@ impl ConsequencePredictor {
                         let ref_aas: String = ref_region
                             .chunks(3)
                             .filter(|c| c.len() == 3)
-                            .map(|c| self.codon_table.translate(&[c[0], c[1], c[2]]) as char)
+                            .map(|c| self.ct(transcript).translate(&[c[0], c[1], c[2]]) as char)
                             .collect();
                         let alt_codon_end = (codon_start + 3).min(alt_seq.len());
                         let alt_region = &alt_seq[codon_start..alt_codon_end];
                         let alt_aas: String = if alt_region.len() == 3 {
-                            String::from(self.codon_table.translate(&[
+                            String::from(self.ct(transcript).translate(&[
                                 alt_region[0],
                                 alt_region[1],
                                 alt_region[2],
@@ -737,7 +751,7 @@ impl ConsequencePredictor {
                     let alt_aas: String = alt_region
                         .chunks(3)
                         .filter(|c| c.len() == 3)
-                        .map(|c| self.codon_table.translate(&[c[0], c[1], c[2]]) as char)
+                        .map(|c| self.ct(transcript).translate(&[c[0], c[1], c[2]]) as char)
                         .collect();
 
                     // Build alt codon string: original bases lowercase, inserted uppercase
