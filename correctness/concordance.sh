@@ -3,7 +3,7 @@
 # annotator (fastVEP CLI by default; Ensembl VEP when --vep <tsv> is given).
 #
 # Usage:
-#   scripts/concordance.sh <input.vcf> <genes.gff3> [--fasta ref.fa] [--vep vep.tsv]
+#   correctness/concordance.sh <input.vcf> <genes.gff3> [--fasta ref.fa] [--vep vep.tsv]
 #
 # Prints an agreement summary and writes per-row diffs to concordance.out/.
 set -euo pipefail

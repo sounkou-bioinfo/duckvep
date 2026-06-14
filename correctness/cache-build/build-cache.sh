@@ -59,5 +59,5 @@ load_table "$FUNCGEN" regulatory_feature
 
 echo ">> [2/2] assembling columnar cache -> $OUT/*.parquet"
 sed -e "s|@OUT@|$OUT|g" -e "s|@CHROMFILTER@|$CHROMFILTER|g" \
-    "$DIR/scripts/cache-build/assemble.sql" | "$DUCKDB" -unsigned "$DB"
+    "$DIR/correctness/cache-build/assemble.sql" | "$DUCKDB" -unsigned "$DB"
 echo ">> done: $OUT"

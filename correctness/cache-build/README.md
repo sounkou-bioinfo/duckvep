@@ -22,7 +22,7 @@ supplementary-annotation source (ClinVar/gnomAD/dbSNP/COSMIC, or the Ensembl
 ## Usage
 
 ```sh
-scripts/cache-build/build-cache.sh [species] [release] [build] [host] [port]
+correctness/cache-build/build-cache.sh [species] [release] [build] [host] [port]
 ```
 
 Organism- and build-agnostic — the database name is built from the args, so this

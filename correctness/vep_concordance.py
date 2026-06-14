@@ -8,7 +8,7 @@ VEP source: the live REST API by default (paced for rate limits), or an offline
 VEP cache via `--vep-tsv <file>` (run VEP yourself for unlimited scale).
 
 Usage:
-  scripts/vep_concordance.py <vcf> <gff3(.gz)> <fasta> [N] [--vep-tsv f]
+  correctness/vep_concordance.py <vcf> <gff3(.gz)> <fasta> [N] [--vep-tsv f]
 Dumps: data/vep_dumps/<YYYY-MM-DD>/annotations.parquet  (+ concordance_log.csv)
 """
 import json, subprocess, sys, time, urllib.request, urllib.error, random, datetime, os

@@ -1,4 +1,4 @@
-.PHONY: clean clean_all readme benchmarks
+.PHONY: clean clean_all readme benchmarks correctness
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -35,3 +35,6 @@ readme:
 
 benchmarks:
 	Rscript scripts/render-benchmarks.R
+
+correctness:
+	Rscript scripts/render-correctness.R

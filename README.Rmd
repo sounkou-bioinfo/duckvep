@@ -191,6 +191,27 @@ FROM csq JOIN genes g USING (gene_id);
 A FASTA-backed, tabix-region version (adding `hgvsp`) is in
 [`scripts/duckhts_integration_demo.sh`](scripts/duckhts_integration_demo.sh).
 
+## Correctness
+
+Our accuracy oracle is **Ensembl VEP itself**. Concordance is measured
+version-matched (same Ensembl release for VEP code, VEP cache and the gene model)
+and is **always split by IMPACT × variant class** — an aggregate % hides where the
+misses are (high-impact, clinically actionable sites). The full report, rendered
+directly from recorded CSVs, is **[`correctness/correctness.md`](correctness/correctness.md)**
+(`make correctness`).
+
+Headline (50k biallelic ClinVar vs offline Ensembl VEP, `discordant / pairs`):
+SNVs are near-perfect at every impact tier (HIGH `1/43294`, MODERATE `1/403438`,
+MODIFIER `6/654709`) and ahead of fastVEP; the open frontier is **high-impact
+indels and MNVs** (HIGH del `2427/23414`, HIGH mnv `176/210`). duckvep's accuracy
+patches over the vendored engine are in [`PATCHES.md`](PATCHES.md).
+
+## Benchmarks
+
+Throughput, memory footprint, and engine head-to-heads are in
+**[`benchmarks/results.md`](benchmarks/results.md)** (`make benchmarks`), rendered
+directly from recorded CSVs under `benchmarks/data/`.
+
 ## License
 
 GPL-2.0-or-later. duckvep vendors parts of [fastVEP](https://github.com/Huang-lab/fastVEP)

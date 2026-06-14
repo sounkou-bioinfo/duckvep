@@ -82,7 +82,7 @@ for (i in seq_len(nrow(introns))) {
 }
 
 w <- methods::new(vcfppR::vcfwriter, OUT, "VCFv4.2")
-w$addLine("##source=scripts/gen_hard_variants.R")
+w$addLine("##source=correctness/gen_hard_variants.R")
 w$addContig(CHROM)
 ord <- order(as.integer(sub(".*\t(\\d+)\t.*", "\\1", sub("^[^\t]*\t", "", recs))))
 for (r in recs[ord]) w$writeline(r)
