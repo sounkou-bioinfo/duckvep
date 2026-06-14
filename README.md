@@ -13,11 +13,20 @@ optimizer — instead of hand-rolled file formats. See
 [DESIGN.md](DESIGN.md) for the design, [NEWS.md](NEWS.md) for the
 changelog, and [PATCHES.md](PATCHES.md) for our accuracy patches.
 
-> Status: `read_vcf`/`vcf_samples`, `vep_consequence` (scan-driven
-> scalar) and `vep_annotate`, plus a columnar Parquet transcript cache,
-> are implemented and Ensembl-VEP-concordant. HGVS (g./c./p.) is wired
-> and 100%-concordant with fastVEP; supplementary-annotation joins are
-> next.
+> **Status (v0.3.0).** Implemented: `read_vcf`/`vcf_samples`;
+> `vep_consequence` (scan-driven scalar, incl. an END-aware form for
+> structural variants) and `vep_annotate`; HGVS g./c./p.;
+> `normalize_variant` (canonical minimal key for valid cross-annotator
+> joins); a columnar Parquet transcript cache **built directly from
+> Ensembl MySQL dumps** (inheriting MANE / `cds_start_NF` /
+> selenocysteine / regulatory flags). Accuracy patches make duckvep
+> *more* Ensembl-VEP-concordant than fastVEP (see
+> [PATCHES.md](PATCHES.md)); concordance is reported version-matched and
+> **split by impact × class** (see
+> [correctness/](correctness/correctness.md)). Next: close the
+> high-impact indel/MNV engine gap; supplementary-annotation joins;
+> chrM/PAR/sex-chromosome correctness. Composes with the **duckhts**
+> community extension in one session.
 
 ## Build
 

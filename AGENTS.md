@@ -95,6 +95,22 @@ Next (each a table function or a join, not a new file format):
   FORMAT parsing, regulatory build, mitochondrial (NCBI codon table 2), `--merged`
   Ensembl+RefSeq cache, custom VCF/BED annotations, gzipped input (done).
 
+## Open correctness gaps (paper-relevant — add regression tests + examples)
+
+- **High-impact indel/MNV engine gap** — the measured frontier vs Ensembl VEP
+  (shared with fastVEP). The real next engine work (frameshift→stop, MNV codon
+  handling). See [`correctness/correctness.md`](correctness/correctness.md).
+- **Mitochondrial codon table** — `predictor.rs` uses `CodonTable::standard()`
+  only; chrM/MT transcripts need **NCBI table 2** (TGA=Trp not stop, ATA=Met,
+  AGA/AGG=stop). Source: Ensembl `transcript_attrib` code `codon_table` (value 2
+  for mito) — add it to the cache + thread a per-transcript codon table into the
+  predictor. Currently mis-calls every MT coding variant.
+- **chrX/Y haploid + pseudoautosomal regions (PAR)** — PAR genes appear on both
+  X and Y; hemizygous calling and PAR boundaries are untested. HG002 is male; add
+  a **female sample (e.g. NA12878)** so chrX diploid + PAR are exercised.
+- Regression tests for all three belong in the `correctness/` suite (genome-wide
+  cache + primary FASTA), with worked examples.
+
 ## Haplotype-aware consequences (haplosaurus) — flexibility note
 
 Ensembl **haplo**/haplosaurus computes protein haplotypes: the joint consequence
