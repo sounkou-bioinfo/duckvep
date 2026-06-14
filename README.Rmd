@@ -180,7 +180,8 @@ WITH csq AS (
   WHERE c.canonical
 ), genes AS (
   SELECT attributes_map['gene_id'] AS gene_id, attributes_map['Name'] AS gene_name
-  FROM read_gff('test/data/test.gff3', attributes_map := true)
+  FROM read_gff('test/data/test.gff3.gz', region := '17:43044295-43170245',
+                attributes_map := true)
   WHERE feature = 'gene'
 )
 SELECT g.gene_name, csq.consequence, csq.hgvsc

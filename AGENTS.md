@@ -50,3 +50,65 @@ cargo fmt && cargo clippy   # keep clean before committing
 - **Wrap-then-delete:** reach output parity with fastVEP before deleting any of
   the old hand-rolled formats.
 - Match surrounding style; run `cargo fmt`/`clippy` clean.
+
+## Directives (accuracy & philosophy)
+
+- **Ensembl VEP is the accuracy oracle — not fastVEP.** fastVEP is our starting
+  code, but it took shortcuts and its engines overfit; it carries slop and
+  inaccuracies. Where fastVEP disagrees with Ensembl VEP, fix the engine *toward
+  VEP*. duckvep already beats fastVEP on genome-wide Ensembl-VEP concordance
+  (see [PATCHES.md](PATCHES.md)) — keep widening that gap.
+- **Correctness is paramount; there is no "diminishing returns."** Ensembl VEP is
+  congealed knowledge of decades of curation (non-ATG starts, selenocysteine,
+  `cds_start_NF`/`cds_end_NF`, edited transcripts, miRBase mature products,
+  regulatory build). Every residual discordance gets a *root cause*, not a
+  hand-wave. When in doubt, **read Ensembl's actual source** — it ships in the VEP
+  conda env at `…/ensembl-vep-*/Bio/EnsEMBL/Variation/Utils/VariationEffect.pm`
+  and `…/BaseTranscriptVariationAllele.pm`. Inherit the definition, don't guess it.
+- **VEP may have bugs too — but that needs heavy evidence.** Before concluding a
+  discordance is VEP's fault, rule out our bug, then version skew (we run VEP code
+  vs a possibly-older cache: match `--cache_version` to the installed VEP, or note
+  the skew). Only large, reproducible evidence justifies "VEP is wrong here."
+- **Inherit work, don't reinvent.** Lean on DuckDB's decade of query optimization,
+  noodles for IO, Ensembl for biology. Annotation DBs are **Parquet/DuckDB tables
+  joined by the optimizer**, not bespoke formats (fastVEP's `.osa`/`.osa2`/Var32 is
+  exactly the overfitting we avoid — DuckDB + Parquet give zone maps, predicate
+  pushdown, and joins for free).
+- **Generic over special-cased.** Prefer deepening a shared mechanism over adding a
+  per-case bandaid (the engine is organism-agnostic; the data plane is just columns).
+
+## Feature roadmap (parity with fastVEP, then beyond — all via SQL/Parquet)
+
+Have: `read_vcf`/`vcf_samples`, `vep_consequence`/`vep_annotate`, 49-term
+consequence vocabulary, structural variants (`<DEL>/<DUP>/<CNV>/<INV>/<INS>/<BND>/<STR>`,
+copy-number), HGVS g./c./p., columnar Parquet transcript cache, duckhts composition.
+
+Next (each a table function or a join, not a new file format):
+- **Supplementary annotations** — ClinVar, gnomAD, dbSNP, COSMIC, 1000G, TOPMed,
+  MitoMap as Parquet/DuckDB tables joined on `(chrom,pos,ref,alt)`. Replaces
+  fastSA `.osa`/`.osa2`.
+- **Prediction scores** — PhyloP, GERP, REVEL, SpliceAI, PrimateAI, DANN; SIFT/
+  PolyPhen via dbNSFP — all Parquet joins.
+- **Gene-level** — OMIM, gnomAD constraint (pLI/LOEUF), ClinGen validity.
+- **ACMG-AMP** (Richards 2015 + ClinGen SVI), filter engine (`filter_vep` syntax),
+  output formats (VCF 49-field CSQ / tab / JSON / Nirvana-style), multi-sample
+  FORMAT parsing, regulatory build, mitochondrial (NCBI codon table 2), `--merged`
+  Ensembl+RefSeq cache, custom VCF/BED annotations, gzipped input (done).
+
+## Haplotype-aware consequences (haplosaurus) — flexibility note
+
+Ensembl **haplo**/haplosaurus computes protein haplotypes: the joint consequence
+of *multiple phased variants on the same transcript* (e.g. two SNVs in one codon,
+or a frameshift+SNV that interact) — not each variant in isolation. Status:
+- The consequence kernel (`predictor::predict`, `engine::annotate_variant`) is
+  **per-variant** today: it applies one variant's alt alleles to the transcript
+  and translates. It does **not** apply a *set* of variants jointly. This is the
+  one structural gap for haplo.
+- But the architecture is well-suited: `read_vcf` already exposes **phased GT**
+  (`0|1` preserved) and `vcf_samples`, so variants can be `GROUP BY`-ed into
+  (sample, haplotype, transcript) sets in pure SQL. The missing piece is a kernel
+  that applies an ordered set of variants to the spliced CDS and translates the
+  resulting peptide — a generalization of the single-variant apply, not a rewrite.
+- Action: design `vep_haplotype(transcript, [variants])` (or a table function over
+  phased genotypes) as a multi-variant apply over `translateable_seq`. Verify the
+  engine's sequence-application path is factored to accept N edits before building.
