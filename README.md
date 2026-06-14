@@ -293,9 +293,9 @@ indels/MNVs (shared with fastVEP — an engine gap, not a duckvep bug).
 
 | impact   | class | duckvep /100K | fastVEP /100K |
 |:---------|:------|:--------------|:--------------|
-| HIGH     | del   | 503/100K      | 9641/100K     |
+| HIGH     | del   | 282/100K      | 9641/100K     |
 | HIGH     | ins   | 272/100K      | 6110/100K     |
-| HIGH     | mnv   | 8990/100K     | 48711/100K    |
+| HIGH     | mnv   | 5017/100K     | 48711/100K    |
 | HIGH     | snv   | 0/100K        | 0/100K        |
 | MODERATE | del   | 0/100K        | 1535/100K     |
 | MODERATE | ins   | 114/100K      | 1767/100K     |
@@ -305,7 +305,7 @@ indels/MNVs (shared with fastVEP — an engine gap, not a duckvep bug).
 | LOW      | ins   | 335/100K      | 22920/100K    |
 | LOW      | mnv   | 4975/100K     | 22886/100K    |
 | LOW      | snv   | 2/100K        | 15/100K       |
-| MODIFIER | del   | 43/100K       | 43/100K       |
+| MODIFIER | del   | 9/100K        | 43/100K       |
 | MODIFIER | ins   | 0/100K        | 220/100K      |
 | MODIFIER | mnv   | 200/100K      | 200/100K      |
 | MODIFIER | snv   | 3/100K        | 3/100K        |
@@ -321,16 +321,16 @@ fastVEP matches VEP (`regression` = duckvep worse than upstream;
 `shared` = inherited engine gap) — top by pair count, generated from
 `correctness/data/error_transitions.csv`:
 
-| type   | impact | VEP calls                                                                                                                           | duckvep calls                                                                                                     |   n |
-|:-------|:-------|:------------------------------------------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------|----:|
-| shared | HIGH   | 5_prime_UTR_variant&splice_region_variant&start_lost                                                                                | frameshift_variant&splice_region_variant&start_lost                                                               |  35 |
-| shared | HIGH   | frameshift_variant&splice_donor_variant                                                                                             | frameshift_variant&splice_region_variant                                                                          |  25 |
-| shared | HIGH   | 3_prime_UTR_variant&stop_lost                                                                                                       | coding_sequence_variant&incomplete_terminal_codon_variant                                                         |  23 |
-| shared | HIGH   | stop_gained                                                                                                                         | protein_altering_variant&stop_gained                                                                              |  19 |
-| shared | HIGH   | 5_prime_UTR_variant&NMD_transcript_variant&splice_region_variant&start_lost                                                         | NMD_transcript_variant&frameshift_variant&splice_region_variant&start_lost                                        |  18 |
-| shared | HIGH   | 3_prime_UTR_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant&stop_retained_variant | coding_sequence_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant |  18 |
-| shared | LOW    | 3_prime_UTR_variant&stop_retained_variant                                                                                           | coding_sequence_variant&incomplete_terminal_codon_variant                                                         |  18 |
-| shared | HIGH   | 5_prime_UTR_variant&coding_sequence_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant                       | coding_sequence_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant                         |  17 |
+| type   | impact | VEP calls                                                                                                                           | duckvep calls                                                                                                                         |   n |
+|:-------|:-------|:------------------------------------------------------------------------------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------|----:|
+| shared | HIGH   | 3_prime_UTR_variant&stop_lost                                                                                                       | 3_prime_UTR_variant                                                                                                                   |  28 |
+| shared | HIGH   | frameshift_variant&splice_donor_variant                                                                                             | frameshift_variant&splice_region_variant                                                                                              |  25 |
+| shared | HIGH   | stop_gained                                                                                                                         | protein_altering_variant&stop_gained                                                                                                  |  19 |
+| shared | LOW    | 3_prime_UTR_variant&stop_retained_variant                                                                                           | 3_prime_UTR_variant                                                                                                                   |  18 |
+| shared | HIGH   | 3_prime_UTR_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant&stop_retained_variant | 3_prime_UTR_variant&coding_sequence_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant |  18 |
+| shared | HIGH   | intron_variant&splice_acceptor_variant&stop_retained_variant                                                                        | coding_sequence_variant&intron_variant&splice_acceptor_variant                                                                        |  14 |
+| shared | HIGH   | coding_sequence_variant&intron_variant&splice_acceptor_variant                                                                      | coding_sequence_variant&splice_acceptor_variant                                                                                       |  13 |
+| shared | LOW    | non_coding_transcript_variant&splice_region_variant                                                                                 | non_coding_transcript_exon_variant&splice_region_variant                                                                              |  12 |
 
 So the open work splits cleanly: **regressions** (the splice sub-term
 precedence our interval rewrite broke — being fixed to match Ensembl

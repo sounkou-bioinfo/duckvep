@@ -30,6 +30,8 @@ COPY (
       CASE
         WHEN dd.dc LIKE '%frameshift_variant&stop_gained%' THEN 'insertion_stop_gained'
         WHEN dd.dc='start_lost' AND k.chrom='MT' THEN 'mito_start_lost'
+        WHEN dd.dc LIKE '%5_prime_UTR_variant%' AND dd.dc LIKE '%start_lost%' THEN 'utr5_start_lost_cooccur'
+        WHEN dd.dc LIKE '%3_prime_UTR_variant%' AND (dd.dc LIKE '%stop_lost%' OR dd.dc LIKE '%stop_retained%') THEN 'utr3_stop_cooccur'
         WHEN dd.dc LIKE '%protein_altering_variant%' THEN 'inframe_delins_protein_altering'
         WHEN dd.dc LIKE '%intron_variant%splice_donor_variant%' AND k.nalt='-' THEN 'boundary_del_intron_cooccur'
         WHEN dd.dc LIKE '%splice_polypyrimidine%' AND length(k.oref)<length(k.oalt) THEN 'insertion_polypyrimidine'
