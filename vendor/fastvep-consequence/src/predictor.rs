@@ -43,6 +43,29 @@ pub struct PredictionResult {
     pub most_severe: Option<Consequence>,
 }
 
+/// The genomic interval actually changed by a variant — the VCF anchor-inclusive
+/// `[start, end]` minus the common prefix/suffix of ref/alt (matching Ensembl
+/// VEP's normalized `r_start/r_end`). SNVs/MNVs are unchanged; a deletion trims its
+/// leading anchor base; an insertion collapses to a point (start may exceed end).
+fn normalized_interval(start: u64, end: u64, r: &Allele, a: &Allele) -> (u64, u64) {
+    let (rb, ab) = match (r, a) {
+        (Allele::Sequence(rb), Allele::Sequence(ab)) => (rb.as_slice(), ab.as_slice()),
+        _ => return (start, end),
+    };
+    let mut p = 0;
+    while p < rb.len() && p < ab.len() && rb[p] == ab[p] {
+        p += 1;
+    }
+    let mut s = 0;
+    while s < rb.len().saturating_sub(p)
+        && s < ab.len().saturating_sub(p)
+        && rb[rb.len() - 1 - s] == ab[ab.len() - 1 - s]
+    {
+        s += 1;
+    }
+    (start + p as u64, end.saturating_sub(s as u64))
+}
+
 /// The consequence prediction engine.
 pub struct ConsequencePredictor {
     pub upstream_distance: u64,
@@ -139,8 +162,12 @@ impl ConsequencePredictor {
         transcript: &Transcript,
         _ref_seq: Option<&[u8]>,
     ) -> AlleleConsequenceResult {
-        let var_start = position.start;
-        let var_end = position.end;
+        // VEP computes consequences on the NORMALIZED affected interval (the
+        // anchor-trimmed changed bases), not the VCF anchor-inclusive interval.
+        // For indels at a splice site, the unchanged anchor base wrongly overlaps
+        // the donor/acceptor and mis-classifies — match VEP by trimming it.
+        let (var_start, var_end) =
+            normalized_interval(position.start, position.end, ref_allele, alt_allele);
         let tr_start = transcript.start;
         let tr_end = transcript.end;
 
@@ -230,32 +257,33 @@ impl ConsequencePredictor {
             consequences.push(Consequence::SpliceAcceptorVariant);
         }
 
-        // Only add extended splice consequences if not already a donor/acceptor
-        let is_essential_splice = consequences.iter().any(|c| {
-            matches!(
-                c,
-                Consequence::SpliceDonorVariant | Consequence::SpliceAcceptorVariant
-            )
-        });
-
-        if !is_essential_splice {
-            let is_donor_5th = splice::is_splice_donor_5th_base(transcript, var_start, var_end);
-            let is_donor_region = splice::is_splice_donor_region(transcript, var_start, var_end);
-            if is_donor_5th {
-                consequences.push(Consequence::SpliceDonorFifthBaseVariant);
-            } else if is_donor_region {
-                consequences.push(Consequence::SpliceDonorRegionVariant);
-            }
-            if splice::is_splice_polypyrimidine_tract(transcript, var_start, var_end) {
-                consequences.push(Consequence::SplicePolypyrimidineTractVariant);
-            }
-            // VEP excludes splice_region_variant when a more specific splice term is present:
-            // splice_donor_region_variant or splice_donor_5th_base_variant
-            if !is_donor_5th && !is_donor_region {
-                if splice::is_splice_region(transcript, var_start, var_end) {
-                    consequences.push(Consequence::SpliceRegionVariant);
-                }
-            }
+        // Extended splice terms, with Ensembl `VariationEffect.pm` precedence (NOT
+        // an essential-splice blanket suppression — that over-suppressed):
+        //   5th_base: no suppression;  donor_region: suppressed by 5th_base;
+        //   polypyrimidine: no suppression;
+        //   splice_region: suppressed by donor/acceptor/donor_region/5th_base (NOT
+        //   by polypyrimidine, so polypyrimidine + splice_region co-occur).
+        let is_donor = consequences.contains(&Consequence::SpliceDonorVariant);
+        let is_acceptor = consequences.contains(&Consequence::SpliceAcceptorVariant);
+        let is_essential_splice = is_donor || is_acceptor;
+        let is_donor_5th = splice::is_splice_donor_5th_base(transcript, var_start, var_end);
+        let is_donor_region =
+            !is_donor_5th && splice::is_splice_donor_region(transcript, var_start, var_end);
+        if is_donor_5th {
+            consequences.push(Consequence::SpliceDonorFifthBaseVariant);
+        }
+        if is_donor_region {
+            consequences.push(Consequence::SpliceDonorRegionVariant);
+        }
+        if splice::is_splice_polypyrimidine_tract(transcript, var_start, var_end) {
+            consequences.push(Consequence::SplicePolypyrimidineTractVariant);
+        }
+        if !is_essential_splice
+            && !is_donor_region
+            && !is_donor_5th
+            && splice::is_splice_region(transcript, var_start, var_end)
+        {
+            consequences.push(Consequence::SpliceRegionVariant);
         }
 
         // 5. Coding vs non-coding transcript
