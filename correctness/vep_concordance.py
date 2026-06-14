@@ -179,13 +179,16 @@ CREATE TABLE ann AS
   {fv_union};
 COPY (SELECT * FROM ann ORDER BY pos, transcript_id, source) TO '{OUTDIR}/annotations.parquet' (FORMAT parquet);
 CREATE TABLE vv AS
-  SELECT pos,alt,transcript_id,consequence,impact,
+  SELECT pos,ref,alt,transcript_id,consequence,impact,
          CASE WHEN alt='-' THEN 'del' WHEN ref='-' THEN 'ins'
               WHEN length(ref)=1 AND length(alt)=1 THEN 'snv' ELSE 'mnv' END AS class
   FROM ann WHERE source='vep';
+-- The join key MUST include `ref`: deletions all carry alt='-', so (pos,alt,transcript)
+-- alone collides distinct deletions at the same locus (e.g. AA>- vs AAAA>-), spuriously
+-- pairing VEP's call for one with another engine's call for the other.
 CREATE TABLE pairs AS
   SELECT e.source AS engine, vv.impact, vv.class, vv.consequence AS vep_csq, e.consequence AS eng_csq
-  FROM (SELECT * FROM ann WHERE source<>'vep') e JOIN vv USING (pos,alt,transcript_id);
+  FROM (SELECT * FROM ann WHERE source<>'vep') e JOIN vv USING (pos,ref,alt,transcript_id);
 
 -- (a) recorded: split by IMPACT x class (overwrite with this run = source of truth)
 COPY (
@@ -213,12 +216,12 @@ COPY (
 -- and whether fastVEP matches VEP (=> duckvep-SPECIFIC regression, worse than the
 -- upstream engine; vs a shared engine gap where both differ from VEP).
 COPY (
-  WITH v AS (SELECT pos,alt,transcript_id,consequence vc,impact FROM ann WHERE source='vep'),
-       dd AS (SELECT pos,alt,transcript_id,consequence dc FROM ann WHERE source='duckvep'),
-       ff AS (SELECT pos,alt,transcript_id,consequence fc FROM ann WHERE source='fastvep')
+  WITH v AS (SELECT pos,ref,alt,transcript_id,consequence vc,impact FROM ann WHERE source='vep'),
+       dd AS (SELECT pos,ref,alt,transcript_id,consequence dc FROM ann WHERE source='duckvep'),
+       ff AS (SELECT pos,ref,alt,transcript_id,consequence fc FROM ann WHERE source='fastvep')
   SELECT '{DATE}' AS date, v.impact, v.vc AS vep_calls, dd.dc AS duckvep_calls,
          (ff.fc IS NOT DISTINCT FROM v.vc) AS duckvep_specific_regression, count(*) AS n
-  FROM v JOIN dd USING(pos,alt,transcript_id) LEFT JOIN ff USING(pos,alt,transcript_id)
+  FROM v JOIN dd USING(pos,ref,alt,transcript_id) LEFT JOIN ff USING(pos,ref,alt,transcript_id)
   WHERE v.vc <> dd.dc GROUP BY ALL ORDER BY n DESC LIMIT 60
 ) TO '{ROOT}/correctness/data/error_transitions.csv' (HEADER, FORMAT csv);
 

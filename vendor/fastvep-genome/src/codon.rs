@@ -3,6 +3,12 @@ use std::collections::HashMap;
 /// Standard genetic code codon translation table.
 pub struct CodonTable {
     table: HashMap<[u8; 3], u8>,
+    /// Recognised initiator (start) codons for this table. The standard code uses
+    /// only ATG; the vertebrate-mitochondrial code (NCBI table 2) also initiates at
+    /// ATT/ATC/ATA/GTG. Used to gate `start_lost` so a first codon that is not a
+    /// real start (e.g. a transcript whose modelled CDS start does not align with
+    /// the annotated initiator) is not mis-called.
+    start_codons: Vec<[u8; 3]>,
 }
 
 impl CodonTable {
@@ -100,7 +106,10 @@ impl CodonTable {
         for (codon, aa) in codons {
             table.insert(*codon, aa);
         }
-        Self { table }
+        Self {
+            table,
+            start_codons: vec![*b"ATG"],
+        }
     }
 
     /// Create a codon table from an NCBI translation table number.
@@ -115,6 +124,8 @@ impl CodonTable {
             table.table.insert(*b"AGG", b'*');
             table.table.insert(*b"ATA", b'M');
             table.table.insert(*b"TGA", b'W');
+            // NCBI table 2 initiator codons (ATG plus the alternative starts).
+            table.start_codons = vec![*b"ATT", *b"ATC", *b"ATA", *b"ATG", *b"GTG"];
         }
         table
     }
@@ -147,14 +158,15 @@ impl CodonTable {
         self.translate(codon) == b'*'
     }
 
-    /// Check if a codon is the standard start codon (ATG).
-    pub fn is_start(codon: &[u8; 3]) -> bool {
+    /// Check if a codon is an initiator (start) codon for *this* table — ATG for the
+    /// standard code, plus ATT/ATC/ATA/GTG for the vertebrate-mitochondrial code.
+    pub fn is_start(&self, codon: &[u8; 3]) -> bool {
         let upper = [
             codon[0].to_ascii_uppercase(),
             codon[1].to_ascii_uppercase(),
             codon[2].to_ascii_uppercase(),
         ];
-        upper == *b"ATG"
+        self.start_codons.contains(&upper)
     }
 }
 
@@ -297,7 +309,7 @@ mod tests {
         assert!(table.is_stop(b"TAG"));
         assert!(table.is_stop(b"TGA"));
         assert!(!table.is_stop(b"ATG"));
-        assert!(CodonTable::is_start(b"ATG"));
-        assert!(!CodonTable::is_start(b"TTT"));
+        assert!(CodonTable::standard().is_start(b"ATG"));
+        assert!(!CodonTable::standard().is_start(b"TTT"));
     }
 }

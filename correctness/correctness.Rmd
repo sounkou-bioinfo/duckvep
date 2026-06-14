@@ -122,17 +122,23 @@ inherited engine gap). Generated from `correctness/data/error_transitions.csv`.
 et <- csv("correctness/data/error_transitions.csv")
 et$type <- ifelse(as.logical(et$duckvep_specific_regression), "regression", "shared")
 et <- et[order(-et$n), c("type", "impact", "vep_calls", "duckvep_calls", "n")]
+reg_pairs <- sum(et$n[et$type == "regression"])
 knitr::kable(head(et, 16), col.names = c("type", "impact", "VEP calls", "duckvep calls", "n"),
              row.names = FALSE, format.args = list(big.mark = ","))
 ```
 
-Two distinct fronts: **(1) duckvep-specific regressions** — the interval-aware
-splice rewrite got boundaries right but broke the splice sub-term *precedence*
-fastVEP had correct (over-calls `splice_acceptor`/`splice_donor`, confuses
-`splice_donor_region` ↔ `splice_donor_5th_base`, over/under-adds `splice_region`).
-**(2) shared engine gaps** — `frameshift_variant&stop_gained` → `frameshift_variant`
-(a frameshift introducing a premature stop), and `missense` → `synonymous`. Fixing
-(1) means matching Ensembl `VariationEffect.pm` splice precedence term-for-term.
+**duckvep-specific regressions: `r format(reg_pairs, big.mark=",")` pairs** (a
+`regression` is a discordance where fastVEP *matches* VEP, so our patches — not the
+inherited engine — are responsible). The interval-aware splice rewrite originally
+introduced ~1,900 such pairs; root-causing them against Ensembl
+`BaseTranscriptVariationAllele.pm` closed them in three steps: the polypyrimidine
+`(min,max)` swap and `_intron_overlap` insertion cases (283 insertion under-calls),
+the codon-table-aware non-ATG `start_lost` (mito initiators), and a harness join-key
+fix (deletions share `alt='-'`, so the key must include `ref`). What remains are all
+**shared engine gaps** (both duckvep *and* fastVEP differ from VEP): a frameshift
+introducing a premature stop (`frameshift_variant&stop_gained` → `frameshift_variant`)
+and MNV codon edges — real engine accuracy work vs Ensembl, not something our patches
+broke.
 
 ## Synthetic hard-variant corpus
 

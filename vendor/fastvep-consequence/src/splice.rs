@@ -71,6 +71,12 @@ pub fn is_splice_donor_region(transcript: &Transcript, start: u64, end: u64) -> 
 /// (i.e., 3 to 17 bases from the 3' end of the intron), matching the Ensembl definition
 /// of acceptor -3 to acceptor -17.
 pub fn is_splice_polypyrimidine_tract(transcript: &Transcript, start: u64, end: u64) -> bool {
+    // VEP swaps the affected interval to (min,max) before the polypyrimidine overlap
+    // (BaseTranscriptVariationAllele::_intron_effects, first loop). For insertions
+    // `normalized_interval` yields start=end+1, so without this swap an insertion at
+    // the PPT edge (one base inside the window) is missed. For SNV/del start<=end so
+    // the swap is a no-op.
+    let (start, end) = (start.min(end), start.max(end));
     for_each_intron_boundary_extended(transcript, |intron_start, intron_end, is_donor_at_start| {
         // Polypyrimidine tract is near the acceptor end (Ensembl: intron_end-16 ..
         // intron_end-2 on the forward strand; mirrored on the reverse strand).
@@ -94,6 +100,9 @@ pub fn is_splice_polypyrimidine_tract(transcript: &Transcript, start: u64, end: 
 /// indels/MNVs/haplotypes spanning the boundary.
 pub fn is_splice_region(transcript: &Transcript, start: u64, end: u64) -> bool {
     // Introns lie in the gaps between position-sorted exons (strand-agnostic).
+    // For insertions `normalized_interval` yields start=end+1; VEP's _intron_overlap
+    // adds explicit boundary-touch cases for that zero-width interval.
+    let insertion = start > end;
     let mut exons: Vec<_> = transcript.exons.iter().collect();
     exons.sort_by_key(|e| e.start);
     for w in exons.windows(2) {
@@ -108,8 +117,14 @@ pub fn is_splice_region(transcript: &Transcript, start: u64, end: u64) -> bool {
         if ov(start, end, intron_start + 2, intron_start + 7)   // intronic, 5' band
             || ov(start, end, intron_end - 7, intron_end - 2)   // intronic, 3' band
             || ov(start, end, intron_start.saturating_sub(3), intron_start - 1) // left exon 1-3
-            || ov(start, end, intron_end + 1, intron_end + 3)
-        // right exon 1-3
+            || ov(start, end, intron_end + 1, intron_end + 3)   // right exon 1-3
+            // Insertion boundary-touch cases (VEP _intron_overlap insertion clause):
+            // an insertion exactly at the exon/intron junction or the +2/-2 boundary.
+            || (insertion
+                && (start == intron_start
+                    || end == intron_end
+                    || start == intron_start + 2
+                    || end == intron_end - 2))
         {
             return true;
         }
@@ -304,37 +319,37 @@ mod tests {
     fn test_splice_donor() {
         let tr = make_forward_transcript();
         // Intron: 1201-1999. Donor = first 2 bases: 1201, 1202
-        assert!(is_splice_donor(&tr, 1201));
-        assert!(is_splice_donor(&tr, 1202));
-        assert!(!is_splice_donor(&tr, 1203));
-        assert!(!is_splice_donor(&tr, 1200)); // exonic
+        assert!(is_splice_donor(&tr, 1201, 1201));
+        assert!(is_splice_donor(&tr, 1202, 1202));
+        assert!(!is_splice_donor(&tr, 1203, 1203));
+        assert!(!is_splice_donor(&tr, 1200, 1200)); // exonic
     }
 
     #[test]
     fn test_splice_acceptor() {
         let tr = make_forward_transcript();
         // Intron: 1201-1999. Acceptor = last 2 bases: 1998, 1999
-        assert!(is_splice_acceptor(&tr, 1998));
-        assert!(is_splice_acceptor(&tr, 1999));
-        assert!(!is_splice_acceptor(&tr, 1997));
-        assert!(!is_splice_acceptor(&tr, 2000)); // exonic
+        assert!(is_splice_acceptor(&tr, 1998, 1998));
+        assert!(is_splice_acceptor(&tr, 1999, 1999));
+        assert!(!is_splice_acceptor(&tr, 1997, 1997));
+        assert!(!is_splice_acceptor(&tr, 2000, 2000)); // exonic
     }
 
     #[test]
     fn test_splice_region() {
         let tr = make_forward_transcript();
         // Exonic splice region: last 3 bases of exon1 (1198, 1199, 1200)
-        assert!(is_splice_region(&tr, 1198));
-        assert!(is_splice_region(&tr, 1200));
+        assert!(is_splice_region(&tr, 1198, 1198));
+        assert!(is_splice_region(&tr, 1200, 1200));
         // Exonic splice region: first 3 bases of exon2 (2000, 2001, 2002)
-        assert!(is_splice_region(&tr, 2000));
-        assert!(is_splice_region(&tr, 2002));
+        assert!(is_splice_region(&tr, 2000, 2000));
+        assert!(is_splice_region(&tr, 2002, 2002));
         // Intronic splice region: 3-8 bases from donor (1203-1208)
-        assert!(is_splice_region(&tr, 1203));
-        assert!(is_splice_region(&tr, 1208));
-        assert!(!is_splice_region(&tr, 1209));
+        assert!(is_splice_region(&tr, 1203, 1203));
+        assert!(is_splice_region(&tr, 1208, 1208));
+        assert!(!is_splice_region(&tr, 1209, 1209));
         // Mid-intron: not splice region
-        assert!(!is_splice_region(&tr, 1500));
+        assert!(!is_splice_region(&tr, 1500, 1500));
     }
 
     #[test]
@@ -347,7 +362,7 @@ mod tests {
 
         // Check boundaries
         for pos in 1980..=2000 {
-            let in_ppt = is_splice_polypyrimidine_tract(&tr, pos);
+            let in_ppt = is_splice_polypyrimidine_tract(&tr, pos, pos);
             eprintln!(
                 "  pos {} (dist from end = {}): ppt={}",
                 pos,
@@ -362,19 +377,19 @@ mod tests {
         //   dist 17 from exon = 2000-17 = 1983 = intron_end - 16
         //   dist 3 from exon = 2000-3 = 1997 = intron_end - 2
         assert!(
-            is_splice_polypyrimidine_tract(&tr, 1983),
+            is_splice_polypyrimidine_tract(&tr, 1983, 1983),
             "pos 1983 (dist 17 from exon) should be PPT"
         );
         assert!(
-            is_splice_polypyrimidine_tract(&tr, 1997),
+            is_splice_polypyrimidine_tract(&tr, 1997, 1997),
             "pos 1997 (dist 3 from exon) should be PPT"
         );
         assert!(
-            !is_splice_polypyrimidine_tract(&tr, 1982),
+            !is_splice_polypyrimidine_tract(&tr, 1982, 1982),
             "pos 1982 (dist 18 from exon) should NOT be PPT"
         );
         assert!(
-            !is_splice_polypyrimidine_tract(&tr, 1998),
+            !is_splice_polypyrimidine_tract(&tr, 1998, 1998),
             "pos 1998 (dist 2 from exon) should NOT be PPT - it's the acceptor site"
         );
     }
@@ -469,7 +484,7 @@ mod tests {
         //   dist 17: 1200+17 = 1217 = intron_start + 16
 
         for pos in 1199..=1220 {
-            let in_ppt = is_splice_polypyrimidine_tract(&tr, pos);
+            let in_ppt = is_splice_polypyrimidine_tract(&tr, pos, pos);
             eprintln!(
                 "  REV pos {} (dist from intron_start=1201: {}): ppt={}",
                 pos,
@@ -480,22 +495,22 @@ mod tests {
 
         // c.X-17 = 17 bases from exon boundary = 1200+17 = 1217 = intron_start + 16
         assert!(
-            is_splice_polypyrimidine_tract(&tr, 1217),
+            is_splice_polypyrimidine_tract(&tr, 1217, 1217),
             "pos 1217 (c.X-17, dist 16 from intron_start) should be PPT"
         );
         // c.X-3 = 3 bases from exon boundary = 1200+3 = 1203 = intron_start + 2
         assert!(
-            is_splice_polypyrimidine_tract(&tr, 1203),
+            is_splice_polypyrimidine_tract(&tr, 1203, 1203),
             "pos 1203 (c.X-3, dist 2 from intron_start) should be PPT"
         );
         // c.X-18 = 18 bases = 1218 = intron_start + 17
         assert!(
-            !is_splice_polypyrimidine_tract(&tr, 1218),
+            !is_splice_polypyrimidine_tract(&tr, 1218, 1218),
             "pos 1218 (c.X-18) should NOT be PPT"
         );
         // c.X-2 = 2 bases = 1202 = intron_start + 1 (acceptor site)
         assert!(
-            !is_splice_polypyrimidine_tract(&tr, 1202),
+            !is_splice_polypyrimidine_tract(&tr, 1202, 1202),
             "pos 1202 (c.X-2, acceptor site) should NOT be PPT"
         );
     }

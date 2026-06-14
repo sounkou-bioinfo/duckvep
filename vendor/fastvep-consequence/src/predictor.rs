@@ -512,11 +512,29 @@ impl ConsequencePredictor {
                         return Some((Consequence::CodingSequenceVariant, None, None));
                     }
                     let incomplete_start = transcript.flags.iter().any(|f| f == "cds_start_NF");
-                    if !incomplete_start
-                        && CodonTable::is_start(&ref_codon)
-                        && !CodonTable::is_start(&alt_codon)
-                    {
-                        return Some((Consequence::StartLost, aa_pair, codon_pair));
+                    // Gate on the reference first codon being a real initiator *in this
+                    // transcript's codon table* (ATG, or the mito alt-starts ATT/ATC/…).
+                    // This both (a) skips first codons that are not genuine starts — e.g.
+                    // a transcript whose modelled CDS start does not align with VEP's
+                    // initiator, which must stay missense/synonymous — and (b) recognises
+                    // non-ATG mito starts the old standard-table-only check dropped.
+                    if !incomplete_start && self.ct(transcript).is_start(&ref_codon) {
+                        // The initiator always encodes Methionine ('M') regardless of the
+                        // triplet (mito ATT/ATC translate to Ile). Ensembl's start_lost
+                        // therefore tests whether the alt codon still yields Met, NOT
+                        // whether the alt is itself a start codon (the old
+                        // `!is_start(alt)` gate, which mis-fired on start->start changes
+                        // like ATT->ATC). If the alt still encodes Met it is
+                        // start_retained, not lost.
+                        let start_pair = Some(("M".to_string(), alt_aa_str.clone()));
+                        if alt_aa != b'M' {
+                            return Some((Consequence::StartLost, start_pair, codon_pair));
+                        }
+                        return Some((
+                            Consequence::StartRetainedVariant,
+                            Some(("M".to_string(), "M".to_string())),
+                            codon_pair,
+                        ));
                     }
                 }
 
@@ -1385,6 +1403,63 @@ mod tests {
         assert!(
             ac.consequences.contains(&Consequence::StartLost),
             "Expected start_lost, got: {:?}",
+            ac.consequences
+        );
+    }
+
+    // A vertebrate-mito transcript whose annotated initiator is ATT (a valid mito
+    // start that *translates* to Ile). The initiator always encodes Met, so a change
+    // that no longer yields Met is start_lost even though ATT->ATC is a start->start
+    // change — the old `is_start(ref) && !is_start(alt)` gate (standard-table only)
+    // missed this. ATT->ATA stays Met (mito) -> start_retained, not lost.
+    fn make_mito_start_transcript() -> Transcript {
+        let mut tr = make_coding_transcript();
+        tr.chromosome = "MT".into();
+        tr.gene.chromosome = "MT".into();
+        // CDS begins at genomic 1050 with ATT (vertebrate-mito initiator).
+        tr.translateable_seq = Some("ATTGCTTCAAAGCCC".to_string() + &"A".repeat(938));
+        tr
+    }
+
+    #[test]
+    fn test_mito_start_lost_non_atg() {
+        let predictor = ConsequencePredictor::default();
+        let tr = make_mito_start_transcript();
+        // 3rd base of the ATT initiator is genomic 1052; T->C => ATC (Ile, not Met).
+        let pos = GenomicPosition::new("MT", 1052, 1052, Strand::Forward);
+        let result = predictor.predict(
+            &pos,
+            &Allele::from_str("T"),
+            &[Allele::from_str("C")],
+            &[&tr],
+            None,
+        );
+        let ac = &result.transcript_consequences[0].allele_consequences[0];
+        assert!(
+            ac.consequences.contains(&Consequence::StartLost),
+            "ATT->ATC at the mito initiator should be start_lost, got: {:?}",
+            ac.consequences
+        );
+    }
+
+    #[test]
+    fn test_mito_start_retained_to_met() {
+        let predictor = ConsequencePredictor::default();
+        let tr = make_mito_start_transcript();
+        // ATT->ATA: ATA is Met in the vertebrate-mito table, so the initiator is kept.
+        let pos = GenomicPosition::new("MT", 1052, 1052, Strand::Forward);
+        let result = predictor.predict(
+            &pos,
+            &Allele::from_str("T"),
+            &[Allele::from_str("A")],
+            &[&tr],
+            None,
+        );
+        let ac = &result.transcript_consequences[0].allele_consequences[0];
+        assert!(
+            ac.consequences
+                .contains(&Consequence::StartRetainedVariant),
+            "ATT->ATA (still Met in mito) should be start_retained, got: {:?}",
             ac.consequences
         );
     }

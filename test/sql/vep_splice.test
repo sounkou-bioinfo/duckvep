@@ -62,3 +62,33 @@ FROM UNNEST(vep_consequence('17', 43047640, 43047642, 'NNN', 'N')) u(c)
 WHERE c.transcript_id = 'ENST00000357654';
 ----
 splice_donor_variant
+
+# INSERTION at the polypyrimidine-tract EDGE. An insertion normalizes to start=end+1
+# (here [43045820,43045819]); the reverse-strand PPT window is intron_start+2..+16 =
+# [43045805,43045819]. VEP swaps the affected interval to (min,max) before the PPT
+# overlap, so an insertion whose lower base touches the window edge IS in the tract.
+# Without that swap (the bug that caused 283 insertion under-calls vs VEP) this was
+# wrongly dropped to bare intron_variant.
+query T
+SELECT list_aggregate(list_sort(c.consequence),'string_agg','&')
+FROM UNNEST(vep_consequence('17', 43045819, 'A', 'AC')) u(c)
+WHERE c.transcript_id = 'ENST00000357654';
+----
+intron_variant&splice_polypyrimidine_tract_variant
+
+# INSERTION inside both the PPT and the splice_region intronic band -> both terms
+# co-occur (VEP _intron_overlap also special-cases insertion boundary touches).
+query T
+SELECT list_aggregate(list_sort(c.consequence),'string_agg','&')
+FROM UNNEST(vep_consequence('17', 43045806, 'A', 'AC')) u(c)
+WHERE c.transcript_id = 'ENST00000357654';
+----
+intron_variant&splice_polypyrimidine_tract_variant&splice_region_variant
+
+# INSERTION just past the PPT window (norm-interval [43045821,43045820]) -> deep intron.
+query T
+SELECT list_aggregate(list_sort(c.consequence),'string_agg','&')
+FROM UNNEST(vep_consequence('17', 43045820, 'A', 'AC')) u(c)
+WHERE c.transcript_id = 'ENST00000357654';
+----
+intron_variant
