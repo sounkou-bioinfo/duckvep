@@ -130,7 +130,7 @@ slices (`ATTACH … (READ_ONLY)`) — **no MySQL, no network, no duckhts**. This
 local DB *is* the cache; it replaces the bincode `transcript_cache.rs` and is
 strictly richer.
 
-**Slices to persist** (`scripts/ensembl-sync.sql`):
+**Slices to persist** (`scripts/cache-build/`):
 
 - **Coordinates & names:** `coord_system`, `seq_region`, `seq_region_synonym`
   (contig-name aliasing), `seq_region_attrib`.
@@ -356,9 +356,11 @@ zone-map pruning.
 - **GFF importer** — `read_gff_transcripts(gff3)` (+ `read_gff_exons`) table
   functions reuse `parse_gff3`; build with `CREATE TABLE transcripts AS SELECT *
   FROM read_gff_transcripts('x.gff3')`. Portable/offline, any organism. ✅
-- **Ensembl MySQL sync** — `scripts/ensembl-sync.sql` `CREATE TABLE … AS SELECT`
-  from attached `ensembldb`, adding HGVS exceptions + `chrom_alias` from
-  `seq_region_synonym`. Exact ensembl-vep / haplosaurus fidelity. ✅ (both proven)
+- **Ensembl cache builder** — `scripts/cache-build/` (`build-cache.sh` +
+  `assemble.sql`) loads Ensembl's published flat-file MySQL **dumps** (no live
+  server, no flakiness) and assembles a columnar Parquet cache inheriting the
+  curated flags (MANE, cds_start_NF/cds_end_NF, selenocysteine, regulatory build).
+  Organism/build-agnostic. Exact ensembl-vep fidelity. ✅ (see scripts/cache-build/README.md)
 
 MySQL/Parquet are *build-time only*; either way the runtime artifact is the same
 core-only `.duckdb`.
