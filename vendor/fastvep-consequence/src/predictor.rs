@@ -66,6 +66,39 @@ fn normalized_interval(start: u64, end: u64, r: &Allele, a: &Allele) -> (u64, u6
     (start + p as u64, end.saturating_sub(s as u64))
 }
 
+/// The feature-overlap flags a variant has against a transcript, computed ONCE
+/// (Ensembl `_overlapped_introns`/`_boundary`/`_exons`). Consequence terms are gated
+/// on these via their declarative `include` conditions (see `include_satisfied`),
+/// rather than scattered `if` guards.
+#[derive(Debug, Clone, Copy)]
+struct FeatureOverlap {
+    exon: bool,
+    intron: bool,
+    intron_boundary: bool,
+}
+
+/// Ensembl OverlapConsequence `include` conditions (`Constants.pm`): a term is kept
+/// only if the variant's feature-overlap flags match. This is the declarative gate that
+/// replaces hand-wired guards — e.g. splice_polypyrimidine requires `exon=0, intron=1`
+/// (so a deletion spanning an exon into the tract is correctly NOT called PPT), the
+/// splice donor/acceptor/region terms require `intron_boundary=1`, and the UTR /
+/// non-coding-exon terms require `exon=1`. Terms with no `include` (the protein-level
+/// consequences) always pass.
+fn include_satisfied(c: Consequence, f: &FeatureOverlap) -> bool {
+    use Consequence::*;
+    match c {
+        SplicePolypyrimidineTractVariant => !f.exon && f.intron,
+        IntronVariant => f.intron,
+        SpliceDonorVariant
+        | SpliceAcceptorVariant
+        | SpliceDonorFifthBaseVariant
+        | SpliceDonorRegionVariant
+        | SpliceRegionVariant => f.intron_boundary,
+        FivePrimeUtrVariant | ThreePrimeUtrVariant | NonCodingTranscriptExonVariant => f.exon,
+        _ => true,
+    }
+}
+
 /// One edit applied to the reference CDS in transcript (5'->3') orientation: replace
 /// `ref_bases` starting at `cds_idx` (0-based) with `alt_bases`. A single variant
 /// produces one edit; a phased haplotype (Ensembl haplosaurus / `bcftools csq`)
@@ -390,12 +423,9 @@ impl ConsequencePredictor {
         if is_donor_region {
             consequences.push(Consequence::SpliceDonorRegionVariant);
         }
-        // splice_polypyrimidine_tract_variant is the ONLY splice term Ensembl gates on
-        // `exon => 0` (Constants.pm OverlapConsequence `include`): it is emitted only
-        // when the variant does NOT overlap an exon. A deletion spanning an exon into the
-        // intron sets the polypyrimidine flag but VEP suppresses the term (verified by
-        // instrumenting VEP). Match that — gate on `!in_exon`.
-        if !in_exon && splice::is_splice_polypyrimidine_tract(transcript, var_start, var_end) {
+        // polypyrimidine is a candidate from the positional predicate; its `exon=0,
+        // intron=1` include gate is applied declaratively below (`include_satisfied`).
+        if splice::is_splice_polypyrimidine_tract(transcript, var_start, var_end) {
             consequences.push(Consequence::SplicePolypyrimidineTractVariant);
         }
         if !is_essential_splice
@@ -502,6 +532,16 @@ impl ConsequencePredictor {
         {
             consequences.push(Consequence::IntronVariant);
         }
+
+        // Declarative OverlapConsequence `include` gate: keep only terms whose feature
+        // requirements match the variant's overlap flags (computed once). This replaces
+        // the scattered hand-wired guards with Ensembl's actual model.
+        let flags = FeatureOverlap {
+            exon: in_exon,
+            intron: splice::overlaps_intron(transcript, var_start, var_end),
+            intron_boundary: splice::overlaps_intron_boundary(transcript, var_start, var_end),
+        };
+        consequences.retain(|c| include_satisfied(*c, &flags));
 
         // If still no consequences, add catch-all
         if consequences.is_empty() {

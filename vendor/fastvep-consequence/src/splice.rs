@@ -94,6 +94,48 @@ pub fn is_splice_polypyrimidine_tract(transcript: &Transcript, start: u64, end: 
     })
 }
 
+/// Ensembl's `intron` overlap flag (OverlapConsequence `include`): the variant
+/// overlaps an intron region, defined by the intron interval tree as
+/// `[intron_start-4, intron_end+3]`. Used to gate intron-only terms.
+pub fn overlaps_intron(transcript: &Transcript, start: u64, end: u64) -> bool {
+    let (s, e) = (start.min(end), start.max(end));
+    let mut exons: Vec<_> = transcript.exons.iter().collect();
+    exons.sort_by_key(|x| x.start);
+    for w in exons.windows(2) {
+        let intron_start = w[0].end + 1;
+        let intron_end = w[1].start.saturating_sub(1);
+        if intron_start > intron_end {
+            continue;
+        }
+        if ov(s, e, intron_start.saturating_sub(4), intron_end + 3) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Ensembl's `intron_boundary` overlap flag: the variant overlaps a splice boundary
+/// zone — `[intron_start-4, intron_start+7]` or `[intron_end-8, intron_end+3]` (the
+/// intron boundary interval tree). Gates the donor/acceptor/region/5th/splice_region terms.
+pub fn overlaps_intron_boundary(transcript: &Transcript, start: u64, end: u64) -> bool {
+    let (s, e) = (start.min(end), start.max(end));
+    let mut exons: Vec<_> = transcript.exons.iter().collect();
+    exons.sort_by_key(|x| x.start);
+    for w in exons.windows(2) {
+        let intron_start = w[0].end + 1;
+        let intron_end = w[1].start.saturating_sub(1);
+        if intron_start > intron_end {
+            continue;
+        }
+        if ov(s, e, intron_start.saturating_sub(4), intron_start + 7)
+            || ov(s, e, intron_end.saturating_sub(8), intron_end + 3)
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Does the variant interval overlap the INTERIOR of an intron — Ensembl's
 /// `intronic` flag (`_intron_effects`): `overlap(start, end, intron_start+2,
 /// intron_end-2)`. This is exactly the `intron_variant` (SO:0001627) predicate
