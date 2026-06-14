@@ -66,6 +66,105 @@ fn normalized_interval(start: u64, end: u64, r: &Allele, a: &Allele) -> (u64, u6
     (start + p as u64, end.saturating_sub(s as u64))
 }
 
+/// One edit applied to the reference CDS in transcript (5'->3') orientation: replace
+/// `ref_bases` starting at `cds_idx` (0-based) with `alt_bases`. A single variant
+/// produces one edit; a phased haplotype (Ensembl haplosaurus / `bcftools csq`)
+/// produces several edits applied to the SAME CDS before translation — which is how
+/// co-located variants on one haplotype combine into one correct protein
+/// consequence (an in-codon multi-SNP is just a degenerate "local haplotype").
+#[derive(Debug, Clone)]
+pub(crate) struct CdsEdit {
+    pub cds_idx: usize,
+    pub ref_bases: Vec<u8>,
+    pub alt_bases: Vec<u8>,
+}
+
+/// Peptide/codon view of one or more `CdsEdit`s, built once and queried by the flat
+/// consequence-predicate set. Equivalent to Ensembl's TranscriptVariationAllele
+/// peptide layer, but keyed on a set of edits so it serves single variants and whole
+/// phased haplotypes identically.
+struct CodingContext {
+    /// 0-based codon number of the first affected codon.
+    first_codon: usize,
+    /// the affected codon span runs past the end of the translateable CDS.
+    incomplete_terminal: bool,
+    /// reference codon sequence spanning the change (whole codons).
+    ref_codons: Vec<u8>,
+    /// translated reference / alternate peptides over the affected window.
+    ref_pep: Vec<u8>,
+    alt_pep: Vec<u8>,
+    /// total reference / alternate bases changed (summed over edits).
+    ref_len: usize,
+    alt_len: usize,
+}
+
+/// Trim the shared prefix/suffix of two alleles to their minimal changed bytes
+/// (genomic orientation). Matches VEP's minimal representation; e.g. GAATTT/G -> (AATTT, "").
+fn minimal_alleles(r: &Allele, a: &Allele) -> (Vec<u8>, Vec<u8>) {
+    let rb: &[u8] = match r {
+        Allele::Sequence(b) => b,
+        _ => &[],
+    };
+    let ab: &[u8] = match a {
+        Allele::Sequence(b) => b,
+        _ => &[],
+    };
+    let mut p = 0;
+    while p < rb.len() && p < ab.len() && rb[p] == ab[p] {
+        p += 1;
+    }
+    let mut s = 0;
+    while s < rb.len().saturating_sub(p)
+        && s < ab.len().saturating_sub(p)
+        && rb[rb.len() - 1 - s] == ab[ab.len() - 1 - s]
+    {
+        s += 1;
+    }
+    (rb[p..rb.len() - s].to_vec(), ab[p..ab.len() - s].to_vec())
+}
+
+/// Convert one variant into a CDS edit in transcript orientation. `cds_start`/`cds_end`
+/// are the already-normalized (anchor-trimmed) CDS coordinates from `predict_allele`,
+/// so the minimal allele and the CDS index stay consistent (the anchor-base frame bug
+/// is impossible by construction). Reverse-strand bases are reverse-complemented.
+fn variant_to_cds_edit(
+    ref_allele: &Allele,
+    alt_allele: &Allele,
+    cds_start: Option<u64>,
+    cds_end: Option<u64>,
+    strand: Strand,
+) -> Option<CdsEdit> {
+    let (mref_g, malt_g) = minimal_alleles(ref_allele, alt_allele);
+    let cds_lo = match (cds_start, cds_end) {
+        (Some(a), Some(b)) => a.min(b),
+        (Some(a), None) => a,
+        (None, Some(b)) => b,
+        (None, None) => return None,
+    };
+    if cds_lo == 0 {
+        return None;
+    }
+    let (ref_bases, alt_bases) = match strand {
+        Strand::Forward => (mref_g, malt_g),
+        Strand::Reverse => (
+            fastvep_genome::codon::reverse_complement(&mref_g),
+            fastvep_genome::codon::reverse_complement(&malt_g),
+        ),
+    };
+    // A pure insertion (no ref bases) goes AFTER cds_lo; a substitution/deletion
+    // starts AT cds_lo. cds_lo is 1-based.
+    let cds_idx = if ref_bases.is_empty() {
+        cds_lo as usize
+    } else {
+        (cds_lo - 1) as usize
+    };
+    Some(CdsEdit {
+        cds_idx,
+        ref_bases,
+        alt_bases,
+    })
+}
+
 /// The consequence prediction engine.
 pub struct ConsequencePredictor {
     pub upstream_distance: u64,
@@ -314,21 +413,50 @@ impl ConsequencePredictor {
                 consequences.push(Consequence::FivePrimeUtrVariant);
             } else if in_3_utr && in_exon {
                 consequences.push(Consequence::ThreePrimeUtrVariant);
+            } else if in_coding_region && in_exon && is_essential_splice {
+                // The variant reaches an essential splice site (donor/acceptor), so it
+                // straddles the exon/intron boundary and is not fully within the CDS —
+                // Ensembl cannot determine the peptide and uses the generic
+                // coding_sequence_variant (the specific in-frame/frameshift term would
+                // be unreliable). The splice term itself is already pushed above.
+                consequences.push(Consequence::CodingSequenceVariant);
             } else if in_coding_region && in_exon {
-                // Coding exonic variant - determine coding consequence
-                let coding_conseq = self.predict_coding_consequence(
+                // Coding exonic variant. TERMS come from the peptide-level predicate
+                // set (`coding_terms_for_variant`, collecting every applicable Ensembl
+                // overlap-consequence); the amino-acid/codon DISPLAY comes from the
+                // existing HGVS-validated computation.
+                let display = self.predict_coding_consequence(
                     ref_allele, alt_allele, transcript, cds_start, cds_end,
                 );
-                if let Some((conseq, aa, cdn)) = coding_conseq {
-                    // VEP pairs incomplete_terminal_codon_variant with coding_sequence_variant.
-                    if conseq == Consequence::IncompleteTerminalCodonVariant {
-                        consequences.push(Consequence::CodingSequenceVariant);
+                let terms = self.coding_terms_for_variant(
+                    ref_allele, alt_allele, transcript, cds_start, cds_end,
+                );
+                match terms {
+                    Some(ts) => {
+                        for t in &ts {
+                            // VEP pairs incomplete_terminal_codon_variant with coding_sequence_variant.
+                            if *t == Consequence::IncompleteTerminalCodonVariant {
+                                consequences.push(Consequence::CodingSequenceVariant);
+                            }
+                            consequences.push(*t);
+                        }
                     }
-                    consequences.push(conseq);
+                    None => {
+                        // No coding context (e.g. no translateable sequence): fall back
+                        // to the legacy single-term path.
+                        if let Some((conseq, _, _)) = &display {
+                            if *conseq == Consequence::IncompleteTerminalCodonVariant {
+                                consequences.push(Consequence::CodingSequenceVariant);
+                            }
+                            consequences.push(*conseq);
+                        } else {
+                            consequences.push(Consequence::CodingSequenceVariant);
+                        }
+                    }
+                }
+                if let Some((_, aa, cdn)) = display {
                     amino_acids = aa;
                     codons = cdn;
-                } else {
-                    consequences.push(Consequence::CodingSequenceVariant);
                 }
             } else if in_intron && !is_essential_splice {
                 // VEP excludes intron_variant for positions at splice donor/acceptor sites
@@ -382,6 +510,177 @@ impl ConsequencePredictor {
             intron: intron_info,
             distance,
         }
+    }
+
+    /// Translate every coding consequence TERM for a variant from the peptide-level
+    /// `CodingContext` (the haplotype-ready abstraction). Returns the full term SET
+    /// (Ensembl collects overlap-consequences; a variant can be e.g.
+    /// frameshift_variant&stop_gained), or None if no coding context could be built
+    /// (caller falls back). Single-variant path: one `CdsEdit`.
+    fn coding_terms_for_variant(
+        &self,
+        ref_allele: &Allele,
+        alt_allele: &Allele,
+        transcript: &Transcript,
+        cds_start: Option<u64>,
+        cds_end: Option<u64>,
+    ) -> Option<Vec<Consequence>> {
+        let edit = variant_to_cds_edit(ref_allele, alt_allele, cds_start, cds_end, transcript.strand)?;
+        let ctx = self.build_coding_context(transcript, &[edit])?;
+        Some(self.coding_consequence_terms(&ctx, transcript))
+    }
+
+    /// Build the peptide/codon view of a set of edits applied to the transcript CDS.
+    /// One edit = one variant; many edits = a phased haplotype (haplosaurus /
+    /// `bcftools csq`): they are applied to the SAME reference CDS before translation,
+    /// so co-located variants combine into one correct protein consequence.
+    fn build_coding_context(
+        &self,
+        transcript: &Transcript,
+        edits: &[CdsEdit],
+    ) -> Option<CodingContext> {
+        let seq = transcript.translateable_seq.as_ref()?.as_bytes();
+        if edits.is_empty() {
+            return None;
+        }
+        let mut edits = edits.to_vec();
+        edits.sort_by_key(|e| e.cds_idx);
+        let first_idx = edits.first().unwrap().cds_idx;
+        let last = edits.last().unwrap();
+        let last_ref_end = last.cds_idx + last.ref_bases.len();
+        if first_idx > seq.len() {
+            return None;
+        }
+        let first_codon = first_idx / 3;
+        let codon_start = first_codon * 3;
+        let last_codon = last_ref_end.saturating_sub(1).max(first_idx) / 3;
+        let codon_len = (last_codon - first_codon + 1) * 3;
+        // The last whole codon of the CDS runs past the translateable sequence
+        // (Ensembl cds_end_NF) -> incomplete_terminal_codon_variant.
+        let incomplete_terminal = codon_start < seq.len() && codon_start + codon_len > seq.len();
+        let ref_codons = seq[codon_start..(codon_start + codon_len).min(seq.len())].to_vec();
+
+        // Reconstruct the alternate sequence from codon_start, applying every edit.
+        let mut alt: Vec<u8> = Vec::new();
+        alt.extend_from_slice(&seq[codon_start..first_idx.min(seq.len())]);
+        let mut cursor = first_idx;
+        let (mut total_ref, mut total_alt) = (0usize, 0usize);
+        for e in &edits {
+            if e.cds_idx > cursor {
+                let lo = cursor.min(seq.len());
+                let hi = e.cds_idx.min(seq.len());
+                alt.extend_from_slice(&seq[lo..hi]);
+            }
+            alt.extend_from_slice(&e.alt_bases);
+            cursor = e.cds_idx + e.ref_bases.len();
+            total_ref += e.ref_bases.len();
+            total_alt += e.alt_bases.len();
+        }
+        if cursor < seq.len() {
+            alt.extend_from_slice(&seq[cursor..]);
+        }
+        // VEP bounds the alt peptide to the affected window: the ref codon span plus
+        // the net length change — NOT the whole downstream frame.
+        let window_len =
+            (codon_len as i64 + total_alt as i64 - total_ref as i64).max(0) as usize;
+        let alt_codons: Vec<u8> = alt.into_iter().take(window_len).collect();
+
+        let ct = self.ct(transcript);
+        let translate = |s: &[u8]| -> Vec<u8> {
+            s.chunks_exact(3)
+                .map(|c| ct.translate(&[c[0], c[1], c[2]]))
+                .collect()
+        };
+        Some(CodingContext {
+            first_codon,
+            incomplete_terminal,
+            ref_pep: translate(&ref_codons),
+            alt_pep: translate(&alt_codons),
+            ref_codons,
+            ref_len: total_ref,
+            alt_len: total_alt,
+        })
+    }
+
+    /// The flat predicate set over a `CodingContext`. Every applicable Ensembl
+    /// overlap-consequence is collected (not a single hand-picked term), so
+    /// co-occurring terms like frameshift_variant&stop_gained fall out naturally.
+    fn coding_consequence_terms(
+        &self,
+        ctx: &CodingContext,
+        transcript: &Transcript,
+    ) -> Vec<Consequence> {
+        let mut out = Vec::new();
+        let net = ctx.alt_len as i64 - ctx.ref_len as i64;
+        let is_indel = net != 0;
+        let is_frameshift = is_indel && (net % 3 != 0);
+        let ref_stop = ctx.ref_pep.contains(&b'*');
+        let alt_stop = ctx.alt_pep.contains(&b'*');
+
+        // Incomplete terminal codon: the affected codon runs past the CDS; VEP cannot
+        // translate it. Pair with coding_sequence_variant (handled by caller).
+        if ctx.incomplete_terminal {
+            out.push(Consequence::IncompleteTerminalCodonVariant);
+            return out;
+        }
+
+        // Start codon: only when the variant touches codon 0 of a complete CDS whose
+        // reference first codon is a real initiator (table-aware). The initiator always
+        // encodes Met, so start_lost iff the alt no longer yields Met, else start_retained.
+        if ctx.first_codon == 0
+            && transcript.codon_table_start_phase == 0
+            && !transcript.flags.iter().any(|f| f == "cds_start_NF")
+            && ctx.ref_codons.len() >= 3
+            && self
+                .ct(transcript)
+                .is_start(&[ctx.ref_codons[0], ctx.ref_codons[1], ctx.ref_codons[2]])
+        {
+            let alt_first = ctx.alt_pep.first().copied().unwrap_or(b'X');
+            out.push(if alt_first == b'M' {
+                Consequence::StartRetainedVariant
+            } else {
+                Consequence::StartLost
+            });
+            return out;
+        }
+
+        // Stop gained / lost (peptide-level, on the normalized/reconstructed sequence).
+        // Reliable for substitutions and deletions, where the affected window is
+        // frame-unambiguous. INSERTIONS (net > 0) are excluded: matching VEP's exact
+        // insertion peptide window is subtle and currently over-calls (the inserted
+        // bases + a downstream base can spuriously read as a stop) — tracked separately.
+        if net <= 0 {
+            if alt_stop && !ref_stop {
+                out.push(Consequence::StopGained);
+            }
+            if ref_stop && !alt_stop {
+                out.push(Consequence::StopLost);
+            }
+        }
+
+        if is_frameshift {
+            out.push(Consequence::FrameshiftVariant);
+        } else if is_indel {
+            out.push(if net > 0 {
+                Consequence::InframeInsertion
+            } else {
+                Consequence::InframeDeletion
+            });
+        } else if !alt_stop && !ref_stop {
+            // Same-length substitution (SNV / MNV / in-codon haplotype).
+            if ctx.ref_pep == ctx.alt_pep {
+                out.push(Consequence::SynonymousVariant);
+            } else {
+                out.push(Consequence::MissenseVariant);
+            }
+        } else if ref_stop && alt_stop && ctx.ref_pep == ctx.alt_pep {
+            out.push(Consequence::StopRetainedVariant);
+        }
+
+        if out.is_empty() {
+            out.push(Consequence::CodingSequenceVariant);
+        }
+        out
     }
 
     /// Predict the coding consequence (missense, synonymous, frameshift, etc.)
@@ -1462,6 +1761,30 @@ mod tests {
             "ATT->ATA (still Met in mito) should be start_retained, got: {:?}",
             ac.consequences
         );
+    }
+
+    // The haplotype-ready abstraction: two phased edits in the SAME codon are applied
+    // together to the reference CDS before translation (haplosaurus / bcftools csq),
+    // yielding the COMBINED amino acid — not two independent per-base calls. codon 2 of
+    // make_coding_transcript is GCT (Ala); editing base 1 (G->T) and base 3 (T->A)
+    // together gives TCA (Ser), which neither edit produces alone.
+    #[test]
+    fn test_haplotype_two_edits_one_codon() {
+        let predictor = ConsequencePredictor::default();
+        let tr = make_coding_transcript();
+        let edits = vec![
+            CdsEdit { cds_idx: 3, ref_bases: vec![b'G'], alt_bases: vec![b'T'] },
+            CdsEdit { cds_idx: 5, ref_bases: vec![b'T'], alt_bases: vec![b'A'] },
+        ];
+        let ctx = predictor.build_coding_context(&tr, &edits).unwrap();
+        assert_eq!(ctx.ref_pep, b"A", "reference codon GCT = Ala");
+        assert_eq!(
+            ctx.alt_pep, b"S",
+            "combined edits give TCA = Ser (proves edits applied together, not independently)"
+        );
+        assert!(predictor
+            .coding_consequence_terms(&ctx, &tr)
+            .contains(&Consequence::MissenseVariant));
     }
 
     #[test]
