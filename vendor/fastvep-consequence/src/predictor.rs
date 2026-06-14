@@ -659,9 +659,13 @@ impl ConsequencePredictor {
             let last_codon = last_ref_end.saturating_sub(1).max(first_idx) / 3;
             (cs, (last_codon - first_codon + 1) * 3)
         };
-        // The last whole codon of the CDS runs past the translateable sequence
-        // (Ensembl cds_end_NF) -> incomplete_terminal_codon_variant.
-        let incomplete_terminal = codon_start < seq.len() && codon_start + codon_len > seq.len();
+        // incomplete_terminal_codon_variant is a GENUINE cds_end_NF case: the CDS length
+        // is not a multiple of 3, so its last codon is partial, and the variant lands in
+        // that partial codon. A normal CDS whose variant merely EXTENDS past the stop
+        // codon into the 3'UTR is NOT incomplete-terminal — the stop codon is complete,
+        // so it translates (-> stop_lost/stop_retained, kept by the straddle filter).
+        let incomplete_terminal =
+            seq.len() % 3 != 0 && codon_start >= (seq.len() / 3) * 3 && codon_start < seq.len();
         let ref_codons = seq[codon_start..(codon_start + codon_len).min(seq.len())].to_vec();
 
         // VEP bounds the alt peptide to the affected window: the ref codon span plus the
