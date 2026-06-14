@@ -457,14 +457,24 @@ impl ConsequencePredictor {
 
             let in_coding_region =
                 self.is_in_coding_region(var_start, var_end, coding_start, coding_end);
-            let in_5_utr = self.is_in_5_utr(var_start, var_end, transcript);
-            let in_3_utr = self.is_in_3_utr(var_start, var_end, transcript);
+            // Interval-overlap UTR flags (for the co-occurrence union). A variant
+            // spanning a UTR into the CDS is BOTH the UTR term AND the coding term.
+            let ov_5utr = self.overlaps_5utr(var_start, var_end, transcript);
+            let ov_3utr = self.overlaps_3utr(var_start, var_end, transcript);
+            // Straddles the CDS boundary: part coding, part UTR. Ensembl then cannot
+            // call the length-based terms (frameshift/inframe/missense: cds bounds
+            // undefined / partial codon) — only the start/stop boundary terms survive.
+            let straddles_cds = in_coding_region && (ov_5utr || ov_3utr);
 
-            if in_5_utr && in_exon {
+            // 5'/3' UTR terms as a UNION (exon=1 include gate applied later).
+            if ov_5utr && in_exon {
                 consequences.push(Consequence::FivePrimeUtrVariant);
-            } else if in_3_utr && in_exon {
+            }
+            if ov_3utr && in_exon {
                 consequences.push(Consequence::ThreePrimeUtrVariant);
-            } else if in_coding_region && in_exon && is_essential_splice {
+            }
+
+            if in_coding_region && in_exon && is_essential_splice {
                 // The variant reaches an essential splice site (donor/acceptor), so it
                 // straddles the exon/intron boundary and is not fully within the CDS —
                 // Ensembl cannot determine the peptide and uses the generic
@@ -482,14 +492,29 @@ impl ConsequencePredictor {
                 let terms = self.coding_terms_for_variant(
                     ref_allele, alt_allele, transcript, cds_start, cds_end,
                 );
+                // When the variant straddles the CDS boundary into a UTR, only the
+                // start/stop boundary terms survive (the start/stop codon is genuinely
+                // hit); the length-based terms are suppressed (Ensembl: cds bounds
+                // undefined / partial codon), and the UTR term (pushed above) carries it.
+                let keep = |t: Consequence| {
+                    !straddles_cds
+                        || matches!(
+                            t,
+                            Consequence::StartLost
+                                | Consequence::StartRetainedVariant
+                                | Consequence::StopGained
+                                | Consequence::StopLost
+                                | Consequence::StopRetainedVariant
+                        )
+                };
                 match terms {
                     Some(ts) => {
-                        for t in &ts {
+                        for t in ts.into_iter().filter(|t| keep(*t)) {
                             // VEP pairs incomplete_terminal_codon_variant with coding_sequence_variant.
-                            if *t == Consequence::IncompleteTerminalCodonVariant {
+                            if t == Consequence::IncompleteTerminalCodonVariant {
                                 consequences.push(Consequence::CodingSequenceVariant);
                             }
-                            consequences.push(*t);
+                            consequences.push(t);
                         }
                     }
                     None => {
@@ -1295,37 +1320,33 @@ impl ConsequencePredictor {
         var_start <= coding_end && var_end >= coding_start
     }
 
-    fn is_in_5_utr(&self, var_start: u64, _var_end: u64, transcript: &Transcript) -> bool {
-        let coding_start = match transcript.coding_region_start {
-            Some(s) => s,
-            None => return false,
+    /// Does the variant INTERVAL overlap the 5'/3' UTR region (for the co-occurrence
+    /// union — a variant spanning a UTR into the CDS is BOTH the UTR term and the
+    /// coding term in Ensembl). The exon=1 include gate is applied separately.
+    fn overlaps_5utr(&self, var_start: u64, var_end: u64, transcript: &Transcript) -> bool {
+        let (s, e) = (var_start.min(var_end), var_start.max(var_end));
+        let (cs, ce) = match (transcript.coding_region_start, transcript.coding_region_end) {
+            (Some(a), Some(b)) => (a, b),
+            _ => return false,
         };
-        let coding_end = match transcript.coding_region_end {
-            Some(e) => e,
-            None => return false,
-        };
-
         match transcript.strand {
-            Strand::Forward => var_start < coding_start && var_start >= transcript.start,
-            Strand::Reverse => var_start > coding_end && var_start <= transcript.end,
+            Strand::Forward => s <= cs.saturating_sub(1) && e >= transcript.start,
+            Strand::Reverse => e >= ce + 1 && s <= transcript.end,
+        }
+    }
+    fn overlaps_3utr(&self, var_start: u64, var_end: u64, transcript: &Transcript) -> bool {
+        let (s, e) = (var_start.min(var_end), var_start.max(var_end));
+        let (cs, ce) = match (transcript.coding_region_start, transcript.coding_region_end) {
+            (Some(a), Some(b)) => (a, b),
+            _ => return false,
+        };
+        match transcript.strand {
+            Strand::Forward => e >= ce + 1 && s <= transcript.end,
+            Strand::Reverse => s <= cs.saturating_sub(1) && e >= transcript.start,
         }
     }
 
-    fn is_in_3_utr(&self, var_start: u64, _var_end: u64, transcript: &Transcript) -> bool {
-        let coding_start = match transcript.coding_region_start {
-            Some(s) => s,
-            None => return false,
-        };
-        let coding_end = match transcript.coding_region_end {
-            Some(e) => e,
-            None => return false,
-        };
 
-        match transcript.strand {
-            Strand::Forward => var_start > coding_end && var_start <= transcript.end,
-            Strand::Reverse => var_start < coding_start && var_start >= transcript.start,
-        }
-    }
 }
 
 fn complement(base: u8) -> u8 {
