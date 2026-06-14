@@ -112,6 +112,43 @@ splice-region term *combinations* and the incomplete-CDS / stop edges
 still diverge from VEP. **An impact-only view hid exactly which
 categories to fix** — this is the precise frontier.
 
+## Error transitions — what VEP calls vs what duckvep calls
+
+The exact discordances: VEP’s call → duckvep’s call. The `type` column
+flags whether fastVEP matches VEP — `regression` = **duckvep is worse
+than the upstream engine** (something our patches broke), `shared` =
+both engines differ from VEP (an inherited engine gap). Generated from
+`correctness/data/error_transitions.csv`.
+
+| type       | impact   | VEP calls                                                                                                    | duckvep calls                                                            |   n |
+|:-----------|:---------|:-------------------------------------------------------------------------------------------------------------|:-------------------------------------------------------------------------|----:|
+| shared     | HIGH     | frameshift_variant&stop_gained                                                                               | frameshift_variant                                                       | 473 |
+| regression | LOW      | intron_variant&splice_polypyrimidine_tract_variant&splice_region_variant                                     | splice_acceptor_variant                                                  | 362 |
+| shared     | MODERATE | missense_variant                                                                                             | synonymous_variant                                                       | 325 |
+| regression | LOW      | intron_variant&splice_donor_region_variant                                                                   | intron_variant&splice_donor_5th_base_variant                             | 269 |
+| regression | LOW      | NMD_transcript_variant&intron_variant&splice_polypyrimidine_tract_variant&splice_region_variant              | NMD_transcript_variant&splice_acceptor_variant                           | 202 |
+| shared     | LOW      | intron_variant&splice_region_variant                                                                         | intron_variant&splice_donor_region_variant                               | 169 |
+| shared     | HIGH     | coding_sequence_variant&intron_variant&splice_acceptor_variant                                               | coding_sequence_variant&splice_acceptor_variant                          | 169 |
+| regression | LOW      | intron_variant&splice_polypyrimidine_tract_variant                                                           | intron_variant&splice_polypyrimidine_tract_variant&splice_region_variant | 168 |
+| shared     | HIGH     | 3_prime_UTR_variant&NMD_transcript_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant | 3_prime_UTR_variant&NMD_transcript_variant&splice_donor_variant          | 161 |
+| shared     | HIGH     | coding_sequence_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant                    | inframe_deletion&splice_donor_variant                                    | 156 |
+| shared     | HIGH     | coding_sequence_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant                    | coding_sequence_variant&splice_donor_variant                             | 155 |
+| shared     | HIGH     | coding_sequence_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant                    | frameshift_variant&splice_donor_variant                                  | 137 |
+| regression | LOW      | intron_variant&splice_region_variant                                                                         | intron_variant&splice_donor_region_variant                               | 135 |
+| regression | MODIFIER | intron_variant                                                                                               | intron_variant&splice_region_variant                                     | 124 |
+| regression | LOW      | intron_variant&splice_donor_region_variant                                                                   | splice_donor_variant                                                     | 123 |
+| shared     | LOW      | NMD_transcript_variant&intron_variant&splice_region_variant                                                  | NMD_transcript_variant&intron_variant&splice_donor_region_variant        | 114 |
+
+Two distinct fronts: **(1) duckvep-specific regressions** — the
+interval-aware splice rewrite got boundaries right but broke the splice
+sub-term *precedence* fastVEP had correct (over-calls
+`splice_acceptor`/`splice_donor`, confuses `splice_donor_region` ↔
+`splice_donor_5th_base`, over/under-adds `splice_region`). **(2) shared
+engine gaps** — `frameshift_variant&stop_gained` → `frameshift_variant`
+(a frameshift introducing a premature stop), and `missense` →
+`synonymous`. Fixing (1) means matching Ensembl `VariationEffect.pm`
+splice precedence term-for-term.
+
 ## Synthetic hard-variant corpus
 
 Random ClinVar sampling almost never places an indel *exactly* on a

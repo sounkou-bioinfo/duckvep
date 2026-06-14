@@ -209,6 +209,19 @@ COPY (
   FROM t GROUP BY ALL HAVING count(*) >= 20 ORDER BY engine, discordant DESC
 ) TO '{ROOT}/correctness/data/discordance_by_consequence.csv' (HEADER, FORMAT csv);
 
+-- (c) recorded: error TRANSITIONS — exactly what VEP calls vs what duckvep calls,
+-- and whether fastVEP matches VEP (=> duckvep-SPECIFIC regression, worse than the
+-- upstream engine; vs a shared engine gap where both differ from VEP).
+COPY (
+  WITH v AS (SELECT pos,alt,transcript_id,consequence vc,impact FROM ann WHERE source='vep'),
+       dd AS (SELECT pos,alt,transcript_id,consequence dc FROM ann WHERE source='duckvep'),
+       ff AS (SELECT pos,alt,transcript_id,consequence fc FROM ann WHERE source='fastvep')
+  SELECT '{DATE}' AS date, v.impact, v.vc AS vep_calls, dd.dc AS duckvep_calls,
+         (ff.fc IS NOT DISTINCT FROM v.vc) AS duckvep_specific_regression, count(*) AS n
+  FROM v JOIN dd USING(pos,alt,transcript_id) LEFT JOIN ff USING(pos,alt,transcript_id)
+  WHERE v.vc <> dd.dc GROUP BY ALL ORDER BY n DESC LIMIT 60
+) TO '{ROOT}/correctness/data/error_transitions.csv' (HEADER, FORMAT csv);
+
 -- printed summary (impact x class)
 SELECT engine, impact, class, count(*) AS pairs,
        count(*) FILTER (WHERE vep_csq=eng_csq) AS agree,

@@ -111,6 +111,29 @@ are right (interval predicates) but the splice-region term *combinations* and th
 incomplete-CDS / stop edges still diverge from VEP. **An impact-only view hid
 exactly which categories to fix** — this is the precise frontier.
 
+## Error transitions — what VEP calls vs what duckvep calls
+
+The exact discordances: VEP's call → duckvep's call. The `type` column flags
+whether fastVEP matches VEP — `regression` = **duckvep is worse than the upstream
+engine** (something our patches broke), `shared` = both engines differ from VEP (an
+inherited engine gap). Generated from `correctness/data/error_transitions.csv`.
+
+```{r echo=FALSE, message=FALSE}
+et <- csv("correctness/data/error_transitions.csv")
+et$type <- ifelse(as.logical(et$duckvep_specific_regression), "regression", "shared")
+et <- et[order(-et$n), c("type", "impact", "vep_calls", "duckvep_calls", "n")]
+knitr::kable(head(et, 16), col.names = c("type", "impact", "VEP calls", "duckvep calls", "n"),
+             row.names = FALSE, format.args = list(big.mark = ","))
+```
+
+Two distinct fronts: **(1) duckvep-specific regressions** — the interval-aware
+splice rewrite got boundaries right but broke the splice sub-term *precedence*
+fastVEP had correct (over-calls `splice_acceptor`/`splice_donor`, confuses
+`splice_donor_region` ↔ `splice_donor_5th_base`, over/under-adds `splice_region`).
+**(2) shared engine gaps** — `frameshift_variant&stop_gained` → `frameshift_variant`
+(a frameshift introducing a premature stop), and `missense` → `synonymous`. Fixing
+(1) means matching Ensembl `VariationEffect.pm` splice precedence term-for-term.
+
 ## Synthetic hard-variant corpus
 
 Random ClinVar sampling almost never places an indel *exactly* on a splice
