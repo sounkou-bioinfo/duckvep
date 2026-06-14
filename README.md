@@ -293,9 +293,9 @@ indels/MNVs (shared with fastVEP — an engine gap, not a duckvep bug).
 
 | impact   | class | duckvep /100K | fastVEP /100K |
 |:---------|:------|:--------------|:--------------|
-| HIGH     | del   | 7617/100K     | 9641/100K     |
+| HIGH     | del   | 3284/100K     | 9641/100K     |
 | HIGH     | ins   | 5911/100K     | 6110/100K     |
-| HIGH     | mnv   | 39303/100K    | 48711/100K    |
+| HIGH     | mnv   | 24530/100K    | 48711/100K    |
 | HIGH     | snv   | 0/100K        | 0/100K        |
 | MODERATE | del   | 0/100K        | 1535/100K     |
 | MODERATE | ins   | 1767/100K     | 1767/100K     |
@@ -321,16 +321,16 @@ fastVEP matches VEP (`regression` = duckvep worse than upstream;
 `shared` = inherited engine gap) — top by pair count, generated from
 `correctness/data/error_transitions.csv`:
 
-| type   | impact | VEP calls                                                                                                    | duckvep calls                                                                                 |   n |
-|:-------|:-------|:-------------------------------------------------------------------------------------------------------------|:----------------------------------------------------------------------------------------------|----:|
-| shared | HIGH   | frameshift_variant&stop_gained                                                                               | frameshift_variant                                                                            | 427 |
-| shared | HIGH   | coding_sequence_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant                    | coding_sequence_variant&splice_donor_5th_base_variant&splice_donor_variant                    | 385 |
-| shared | HIGH   | coding_sequence_variant&intron_variant&splice_acceptor_variant                                               | coding_sequence_variant&splice_acceptor_variant&splice_polypyrimidine_tract_variant           | 238 |
-| shared | HIGH   | intron_variant&splice_donor_region_variant&splice_donor_variant                                              | splice_donor_region_variant&splice_donor_variant                                              | 141 |
-| shared | HIGH   | coding_sequence_variant&intron_variant&splice_donor_region_variant&splice_donor_variant                      | coding_sequence_variant&splice_donor_region_variant&splice_donor_variant                      | 108 |
-| shared | HIGH   | 3_prime_UTR_variant&NMD_transcript_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant | 3_prime_UTR_variant&NMD_transcript_variant&splice_donor_5th_base_variant&splice_donor_variant |  99 |
-| shared | HIGH   | intron_variant&splice_donor_5th_base_variant&splice_donor_variant                                            | splice_donor_5th_base_variant&splice_donor_variant                                            |  82 |
-| shared | HIGH   | protein_altering_variant&stop_gained                                                                         | inframe_insertion                                                                             |  81 |
+| type   | impact   | VEP calls                                                                                                    | duckvep calls                                                                                                                                    |   n |
+|:-------|:---------|:-------------------------------------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------|----:|
+| shared | HIGH     | frameshift_variant&stop_gained                                                                               | frameshift_variant                                                                                                                               | 427 |
+| shared | HIGH     | coding_sequence_variant&intron_variant&splice_acceptor_variant                                               | coding_sequence_variant&intron_variant&splice_acceptor_variant&splice_polypyrimidine_tract_variant                                               | 238 |
+| shared | HIGH     | protein_altering_variant&stop_gained                                                                         | inframe_insertion                                                                                                                                |  81 |
+| shared | MODERATE | protein_altering_variant                                                                                     | inframe_deletion                                                                                                                                 |  77 |
+| shared | HIGH     | NMD_transcript_variant&coding_sequence_variant&intron_variant&splice_acceptor_variant                        | NMD_transcript_variant&coding_sequence_variant&intron_variant&splice_acceptor_variant&splice_polypyrimidine_tract_variant                        |  64 |
+| shared | HIGH     | coding_sequence_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant                    | coding_sequence_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant&splice_polypyrimidine_tract_variant                    |  63 |
+| shared | HIGH     | 3_prime_UTR_variant&NMD_transcript_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant | 3_prime_UTR_variant&NMD_transcript_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant&splice_polypyrimidine_tract_variant |  62 |
+| shared | HIGH     | NMD_transcript_variant&frameshift_variant&stop_gained                                                        | NMD_transcript_variant&frameshift_variant                                                                                                        |  57 |
 
 So the open work splits cleanly: **regressions** (the splice sub-term
 precedence our interval rewrite broke — being fixed to match Ensembl
