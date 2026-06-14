@@ -22,6 +22,35 @@ the patches:
    These raise the accuracy ceiling: annotations fastVEP's fixed pipeline can't
    reach (e.g. miRBase mature-miRNA regions) are a join away.
 
+## Architecture: peptide-level `CodingContext` (haplotype-ready)
+
+The largest structural change. Upstream `predict_coding_consequence` returned a
+**single** consequence chosen by `if/else`, so co-occurring Ensembl terms
+(`frameshift_variant&stop_gained`, the generic `coding_sequence_variant`, the
+intron co-occurrence on boundary indels) and MNV codon handling all required
+special cases — and computing a frame off the *un-normalized* allele kept
+re-introducing anchor-base bugs. Replaced with the shape Ensembl actually uses:
+
+- A **`CdsEdit`** = `{cds_idx, ref_bases, alt_bases}` in transcript orientation,
+  derived from the **normalized** (anchor-trimmed) allele — so the reading frame
+  is correct by construction.
+- **`CodingContext`** applies a *set* of edits to the reference CDS, then
+  translates → `ref_pep`/`alt_pep` over the affected window. Built **once**.
+- **`coding_consequence_terms`** is a flat predicate set that **collects every
+  applicable** term (Ensembl's `@OverlapConsequences`), not one.
+
+**Why a set of edits, not `(ref, alt)`:** one variant is one edit; a *phased
+haplotype* is several edits applied to the **same** CDS before translation — the
+Ensembl haplosaurus / `bcftools csq` model. Co-located variants on one haplotype
+therefore combine into one correct protein consequence (an in-codon MNV is the
+degenerate "local haplotype"). fastVEP cannot do haplotype-aware consequence;
+here it falls out of the abstraction for free (`test_haplotype_two_edits_one_codon`).
+Result: MNV `missense↔synonymous` discordances **325 → 0**, with **0**
+duckvep-specific regressions vs Ensembl VEP. Two boundary rules are kept exact: a
+coding variant reaching an essential splice site straddles the exon/intron edge →
+generic `coding_sequence_variant` (VEP can't determine the peptide); insertion
+`stop_gained` is deferred (needs VEP's exact insertion window).
+
 ## Accuracy-driven patches (toward Ensembl VEP)
 
 These close systematic disagreements found by genome-wide concordance against
