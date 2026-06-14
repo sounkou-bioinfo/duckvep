@@ -576,9 +576,19 @@ impl ConsequencePredictor {
             return None;
         }
         let first_codon = first_idx / 3;
-        let codon_start = first_codon * 3;
-        let last_codon = last_ref_end.saturating_sub(1).max(first_idx) / 3;
-        let codon_len = (last_codon - first_codon + 1) * 3;
+        // Number of REFERENCE codons the edits overlap. A pure insertion between two
+        // codons (boundary, first_idx % 3 == 0, no ref bases) overlaps ZERO reference
+        // codons — Ensembl's `codon` is then `-` and the alt window is ONLY the inserted
+        // bases (no downstream base pulled in, so no spurious stop). A mid-codon
+        // insertion or any ref-spanning edit overlaps the containing codon(s).
+        let total_ref_bases: usize = edits.iter().map(|e| e.ref_bases.len()).sum();
+        let (codon_start, codon_len) = if total_ref_bases == 0 && first_idx % 3 == 0 {
+            (first_idx, 0)
+        } else {
+            let cs = first_codon * 3;
+            let last_codon = last_ref_end.saturating_sub(1).max(first_idx) / 3;
+            (cs, (last_codon - first_codon + 1) * 3)
+        };
         // The last whole codon of the CDS runs past the translateable sequence
         // (Ensembl cds_end_NF) -> incomplete_terminal_codon_variant.
         let incomplete_terminal = codon_start < seq.len() && codon_start + codon_len > seq.len();
@@ -682,17 +692,15 @@ impl ConsequencePredictor {
         }
 
         // Stop gained / lost (peptide-level, on the normalized/reconstructed sequence).
-        // Reliable for substitutions and deletions, where the affected window is
-        // frame-unambiguous. INSERTIONS (net > 0) are excluded: matching VEP's exact
-        // insertion peptide window is subtle and currently over-calls (the inserted
-        // bases + a downstream base can spuriously read as a stop) — tracked separately.
-        if net <= 0 {
-            if alt_stop && !ref_stop {
-                out.push(Consequence::StopGained);
-            }
-            if ref_stop && !alt_stop {
-                out.push(Consequence::StopLost);
-            }
+        // The alt window now matches Ensembl's exactly for insertions too (a boundary
+        // insertion's window is ONLY the inserted bases — no downstream base pulled in),
+        // so insertion stop_gained is no longer an over-call: a stop is reported iff the
+        // inserted/changed codons themselves translate to one.
+        if alt_stop && !ref_stop {
+            out.push(Consequence::StopGained);
+        }
+        if ref_stop && !alt_stop {
+            out.push(Consequence::StopLost);
         }
 
         if is_frameshift {
@@ -1877,6 +1885,28 @@ mod tests {
         assert!(predictor
             .coding_consequence_terms(&ctx2, &tr)
             .contains(&Consequence::InframeDeletion));
+    }
+
+    // Insertion stop_gained uses Ensembl's exact window: a boundary insertion's alt
+    // codon is ONLY the inserted bases (no downstream base pulled in). Inserting a
+    // whole stop codon -> stop_gained; inserting bases that don't form a stop codon ->
+    // bare frameshift (no spurious stop from a trailing reference base).
+    #[test]
+    fn test_insertion_stop_gained_exact_window() {
+        let predictor = ConsequencePredictor::default();
+        let tr = make_coding_transcript();
+        // Boundary insertion (cds_idx 6) of TAATT: first whole codon TAA = stop.
+        let with_stop = vec![CdsEdit { cds_idx: 6, ref_bases: vec![], alt_bases: b"TAATT".to_vec() }];
+        let ctx = predictor.build_coding_context(&tr, &with_stop).unwrap();
+        let terms = predictor.coding_consequence_terms(&ctx, &tr);
+        assert!(terms.contains(&Consequence::StopGained), "TAATT inserts a stop codon");
+        assert!(terms.contains(&Consequence::FrameshiftVariant));
+        // Inserting TT (no whole codon) must NOT pull in a downstream base to form a stop.
+        let no_stop = vec![CdsEdit { cds_idx: 6, ref_bases: vec![], alt_bases: b"TT".to_vec() }];
+        let ctx2 = predictor.build_coding_context(&tr, &no_stop).unwrap();
+        let terms2 = predictor.coding_consequence_terms(&ctx2, &tr);
+        assert!(!terms2.contains(&Consequence::StopGained), "TT alone is not a stop");
+        assert!(terms2.contains(&Consequence::FrameshiftVariant));
     }
 
     #[test]
