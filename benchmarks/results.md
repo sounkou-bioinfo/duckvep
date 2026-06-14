@@ -83,11 +83,19 @@ serial GFF3 load is subtracted so this is the parallel kernel). `CPU %`
 |      16 |            6.17 |     43,360 |   603 |    7.24 |       0.45 |
 |      20 |            5.88 |     45,498 |   568 |    7.59 |       0.38 |
 
-The kernel is a thread-safe scalar over a lock-free cache, so it scales;
-the efficiency falloff at high thread counts is **per-row allocation
-pressure** (the peptide/codon `CodingContext` is rebuilt per variant),
-which is the lever for fuller core utilization — measured here rather
-than assumed.
+The kernel is a thread-safe scalar over a lock-free cache, so it scales.
+The efficiency falloff is **mostly a hardware artifact, not software
+slop** — `perf stat` on the kernel (1 vs 8 threads) shows the *same*
+instruction count, a healthy IPC (2.78 → 2.09) and a stable cache-miss
+rate (12.1% → 13.1%), i.e. it is neither allocation-thrashing nor
+memory-thrashing. The dominant factors are **turbo frequency scaling**
+(single-core 4.58 GHz vs all-core 4.02 GHz — the 1-thread baseline is
+turbo-boosted, which inflates its apparent efficiency) and shared memory
+bandwidth across cores. The scan source is *not* the limiter: the same
+kernel over a parallel `read_parquet` plateaus identically to
+`read_vcf`. (We did remove the genuine per-row allocation slop — a dead
+~10 KB `ref_seq` fetch and a whole-CDS copy — for a real but modest
+gain.)
 
 ## Ensembl-VEP concordance
 
@@ -329,6 +337,38 @@ reference FASTA (so synonymous vs missense is exact). Both duckvep
 | 2026-06-14 | duckvep | MODERATE | del   |      50000 |   4885 |   4885 | 100.0000 |
 | 2026-06-14 | duckvep | MODERATE | ins   |      50000 |   1754 |   1723 |  98.2326 |
 | 2026-06-14 | duckvep | MODERATE | mnv   |      50000 |   1687 |   1586 |  94.0130 |
+| 2026-06-14 | duckvep | MODERATE | snv   |      50000 | 403438 | 403438 | 100.0000 |
+| 2026-06-14 | duckvep | MODIFIER | del   |      50000 |  35069 |  35054 |  99.9572 |
+| 2026-06-14 | duckvep | MODIFIER | ins   |      50000 |  17711 |  17711 | 100.0000 |
+| 2026-06-14 | duckvep | MODIFIER | mnv   |      50000 |   2995 |   2989 |  99.7997 |
+| 2026-06-14 | duckvep | MODIFIER | snv   |      50000 | 654709 | 654689 |  99.9969 |
+| 2026-06-14 | fastvep | HIGH     | del   |      50000 |  22685 |  20498 |  90.3593 |
+| 2026-06-14 | fastvep | HIGH     | ins   |      50000 |   9558 |   8974 |  93.8899 |
+| 2026-06-14 | fastvep | HIGH     | mnv   |      50000 |   1435 |    736 |  51.2892 |
+| 2026-06-14 | fastvep | HIGH     | snv   |      50000 |  43294 |  43294 | 100.0000 |
+| 2026-06-14 | fastvep | LOW      | del   |      50000 |   7378 |   6164 |  83.5457 |
+| 2026-06-14 | fastvep | LOW      | ins   |      50000 |   3582 |   2761 |  77.0798 |
+| 2026-06-14 | fastvep | LOW      | mnv   |      50000 |    402 |    310 |  77.1144 |
+| 2026-06-14 | fastvep | LOW      | snv   |      50000 | 214055 | 214022 |  99.9846 |
+| 2026-06-14 | fastvep | MODERATE | del   |      50000 |   4885 |   4810 |  98.4647 |
+| 2026-06-14 | fastvep | MODERATE | ins   |      50000 |   1754 |   1723 |  98.2326 |
+| 2026-06-14 | fastvep | MODERATE | mnv   |      50000 |   1687 |   1204 |  71.3693 |
+| 2026-06-14 | fastvep | MODERATE | snv   |      50000 | 403438 | 403419 |  99.9953 |
+| 2026-06-14 | fastvep | MODIFIER | del   |      50000 |  35069 |  35054 |  99.9572 |
+| 2026-06-14 | fastvep | MODIFIER | ins   |      50000 |  17711 |  17672 |  99.7798 |
+| 2026-06-14 | fastvep | MODIFIER | mnv   |      50000 |   2995 |   2989 |  99.7997 |
+| 2026-06-14 | fastvep | MODIFIER | snv   |      50000 | 654709 | 654689 |  99.9969 |
+| 2026-06-14 | duckvep | HIGH     | del   |      50000 |  22685 |  21940 |  96.7159 |
+| 2026-06-14 | duckvep | HIGH     | ins   |      50000 |   9558 |   8993 |  94.0887 |
+| 2026-06-14 | duckvep | HIGH     | mnv   |      50000 |   1435 |   1083 |  75.4704 |
+| 2026-06-14 | duckvep | HIGH     | snv   |      50000 |  43294 |  43294 | 100.0000 |
+| 2026-06-14 | duckvep | LOW      | del   |      50000 |   7378 |   7352 |  99.6476 |
+| 2026-06-14 | duckvep | LOW      | ins   |      50000 |   3582 |   3570 |  99.6650 |
+| 2026-06-14 | duckvep | LOW      | mnv   |      50000 |    402 |    382 |  95.0249 |
+| 2026-06-14 | duckvep | LOW      | snv   |      50000 | 214055 | 214050 |  99.9977 |
+| 2026-06-14 | duckvep | MODERATE | del   |      50000 |   4885 |   4885 | 100.0000 |
+| 2026-06-14 | duckvep | MODERATE | ins   |      50000 |   1754 |   1752 |  99.8860 |
+| 2026-06-14 | duckvep | MODERATE | mnv   |      50000 |   1687 |   1687 | 100.0000 |
 | 2026-06-14 | duckvep | MODERATE | snv   |      50000 | 403438 | 403438 | 100.0000 |
 | 2026-06-14 | duckvep | MODIFIER | del   |      50000 |  35069 |  35054 |  99.9572 |
 | 2026-06-14 | duckvep | MODIFIER | ins   |      50000 |  17711 |  17711 | 100.0000 |
