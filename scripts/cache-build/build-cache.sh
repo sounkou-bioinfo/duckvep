@@ -53,7 +53,7 @@ echo ">> [1/2] loading Ensembl dumps for $CORE + $FUNCGEN (server-free)"
 # Funcgen regulatory features reference the CORE seq_region id space directly
 # (verified: rf.seq_region_id 131550 -> core chr '1'), so no funcgen seq_region.
 for t in gene transcript exon exon_transcript translation seq_region coord_system \
-         attrib_type transcript_attrib xref; do load_table "$CORE" "$t"; done
+         attrib_type transcript_attrib translation_attrib xref; do load_table "$CORE" "$t"; done
 load_table "$FUNCGEN" feature_type
 load_table "$FUNCGEN" regulatory_feature
 

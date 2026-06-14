@@ -57,8 +57,6 @@ chromatin/TFBS) with SO terms.
 
 ## Known refinements (TODO)
 
-- **Selenocysteine** lives in `translation_attrib` (per-translation), not
-  `transcript_attrib`; add that table to flag the ~25 selenoproteins (UGA→Sec).
 - **RefSeq xrefs** and the `otherfeatures` RefSeq gene models (for `--merged`).
 - **MySQL-dump text escaping**: `read_csv` does not de-escape MySQL's `\t`/`\n`/`\\`
   in free-text columns; we only consume id/coord/code/stable_id columns, which are

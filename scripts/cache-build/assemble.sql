@@ -10,6 +10,15 @@ CREATE OR REPLACE TEMP VIEW tx_flags AS
   FROM transcript_attrib ta JOIN attrib_type aty ON ta.attrib_type_id = aty.attrib_type_id
   GROUP BY ta.transcript_id;
 
+-- Selenocysteine is a TRANSLATION attrib (per-protein), so it comes from
+-- translation_attrib (via translation -> transcript), not transcript_attrib.
+CREATE OR REPLACE TEMP VIEW seleno AS
+  SELECT DISTINCT tl.transcript_id
+  FROM translation_attrib tla
+  JOIN translation tl ON tla.translation_id = tl.translation_id
+  JOIN attrib_type aty ON tla.attrib_type_id = aty.attrib_type_id
+  WHERE aty.code = '_selenocysteine';
+
 -- One row per transcript on a chromosome: coords, gene, symbol, canonical, MANE,
 -- and the incomplete-CDS / selenocysteine flags as booleans.
 COPY (
@@ -25,13 +34,14 @@ COPY (
          coalesce(list_contains(f.codes, 'cds_end_NF'), false)          AS cds_end_nf,
          coalesce(list_contains(f.codes, 'mRNA_start_NF'), false)       AS mrna_start_nf,
          coalesce(list_contains(f.codes, 'mRNA_end_NF'), false)         AS mrna_end_nf,
-         coalesce(list_contains(f.codes, '_selenocysteine'), false)     AS selenocysteine
+         (sel.transcript_id IS NOT NULL)                                AS selenocysteine
   FROM transcript t
   JOIN gene g ON t.gene_id = g.gene_id
   JOIN seq_region sr ON t.seq_region_id = sr.seq_region_id
   JOIN coord_system cs ON sr.coord_system_id = cs.coord_system_id AND cs.name = 'chromosome'
   LEFT JOIN xref x ON g.display_xref_id = x.xref_id
   LEFT JOIN tx_flags f ON f.transcript_id = t.transcript_id
+  LEFT JOIN seleno sel ON sel.transcript_id = t.transcript_id
   WHERE 1=1 @CHROMFILTER@
   ORDER BY chrom, start
 ) TO '@OUT@/transcripts.parquet' (FORMAT parquet);
