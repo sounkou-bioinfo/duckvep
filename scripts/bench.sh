@@ -2,7 +2,7 @@
 # End-to-end throughput: duckvep vs fastVEP on a VCF + GFF3 (+ optional FASTA).
 # Uses hyperfine if available, else `time`. For full-size GIAB:
 #   scripts/fetch-giab.sh && scripts/bench.sh data/giab/HG002.vcf.gz \
-#       data/giab/GRCh38.112.gff3.gz --fasta data/giab/GRCh38.fa
+#       data/giab/GRCh38.116.gff3.gz --fasta data/giab/GRCh38.fa
 set -euo pipefail
 VCF=${1:?input.vcf}; GFF3=${2:?genes.gff3}; shift 2
 FASTA=""; [ "${1:-}" = "--fasta" ] && { FASTA=$2; shift 2; }

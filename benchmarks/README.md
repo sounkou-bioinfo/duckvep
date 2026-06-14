@@ -26,8 +26,8 @@ Downloads HG002 GRCh38 benchmark VCF + Ensembl GRCh38 GFF3 + reference into
 
 ```sh
 scripts/fetch-giab.sh
-scripts/bench.sh       data/giab/HG002.vcf.gz data/giab/GRCh38.112.gff3.gz --fasta data/giab/GRCh38.fa
-scripts/concordance.sh data/giab/HG002.vcf.gz data/giab/GRCh38.112.gff3.gz --fasta data/giab/GRCh38.fa
+scripts/bench.sh       data/giab/HG002.vcf.gz data/giab/GRCh38.116.gff3.gz --fasta data/giab/GRCh38.fa
+scripts/concordance.sh data/giab/HG002.vcf.gz data/giab/GRCh38.116.gff3.gz --fasta data/giab/GRCh38.fa
 ```
 
 > Full GIAB runs are gated behind the manual fetch (not CI). For Ensembl-VEP

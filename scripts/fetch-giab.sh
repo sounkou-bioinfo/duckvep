@@ -6,13 +6,13 @@ cd "$(dirname "$0")/.."
 mkdir -p data/giab && cd data/giab
 
 GIAB_VCF=${GIAB_VCF:-https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/AshkenazimTrio/HG002_NA24385_son/latest/GRCh38/HG002_GRCh38_1_22_v4.2.1_benchmark.vcf.gz}
-REF=${REF:-https://ftp.ensembl.org/pub/release-112/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz}
-GFF3=${GFF3:-https://ftp.ensembl.org/pub/release-112/gff3/homo_sapiens/Homo_sapiens.GRCh38.112.gff3.gz}
+REF=${REF:-https://ftp.ensembl.org/pub/release-116/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz}
+GFF3=${GFF3:-https://ftp.ensembl.org/pub/release-116/gff3/homo_sapiens/Homo_sapiens.GRCh38.116.gff3.gz}
 
 fetch() { local url=$1 out=$2; [ -f "$out" ] && { echo "have $out"; return; }; echo "↓ $out"; curl -fSL --retry 3 -o "$out" "$url"; }
 
 fetch "$GIAB_VCF" HG002.vcf.gz
-fetch "$GFF3"     GRCh38.112.gff3.gz
+fetch "$GFF3"     GRCh38.116.gff3.gz
 fetch "$REF"      GRCh38.fa.gz
 
 # Reference needs to be bgzipped + faidx for random access (see DESIGN.md §5).

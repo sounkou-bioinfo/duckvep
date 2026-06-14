@@ -24,20 +24,27 @@ DATE = datetime.date.today().isoformat()
 OUTDIR = f"{ROOT}/data/vep_dumps/{DATE}"
 os.makedirs(OUTDIR, exist_ok=True)
 
-# 1. Sample biallelic SNVs (transparently handles bgzip/gzip input).
-import gzip
+# 1. Sample biallelic variants — SNVs AND indels/MNVs (the indel paths exercise
+# frameshift / inframe / HGVS-3'-shift, the most divergence-prone logic).
+# Transparently handles bgzip/gzip input.
+import gzip, re
+ACGT = re.compile(r"[ACGT]+\Z")
 opener = gzip.open if VCF.endswith(".gz") else open
-snvs = []
+variants = []
 with opener(VCF, "rt") as fh:
     for line in fh:
         if line.startswith("#"):
             continue
         f = line.split("\t")
-        if len(f[3]) == 1 and len(f[4]) == 1 and f[3] in "ACGT" and f[4] in "ACGT":
-            snvs.append((f[0], int(f[1]), f[3], f[4]))
+        ref, alt = f[3], f[4]
+        if "," in alt:  # biallelic only (clean join key)
+            continue
+        if ACGT.match(ref) and ACGT.match(alt) and not (ref == alt):
+            variants.append((f[0], int(f[1]), ref, alt))
 random.seed(42)
-sample = random.sample(snvs, min(N, len(snvs)))
-print(f"sampled {len(sample)} SNVs", file=sys.stderr)
+sample = random.sample(variants, min(N, len(variants)))
+n_indel = sum(1 for (_, _, r, a) in sample if len(r) != len(a))
+print(f"sampled {len(sample)} biallelic variants ({n_indel} indels)", file=sys.stderr)
 
 # Shared sorted sample VCF (read by duckvep, offline VEP, and fastVEP). Declare
 # every contig present so genome-wide samples parse, and sort grouped-by-contig
@@ -68,26 +75,27 @@ def vep_rest(batch, tries=4):
 
 # 2b. OFFLINE Ensembl VEP (preferred): no REST rate limit -> high throughput.
 VEP_CACHE = os.environ.get("VEP_CACHE", f"{ROOT}/data/vep_cache")
-VEP_REL = os.environ.get("VEP_CACHE_VERSION", "112")
+VEP_REL = os.environ.get("VEP_CACHE_VERSION", "116")
 VEP_RUN = os.environ.get("VEP_CMD", "conda run -n vep vep").split()
 
 def vep_offline(sample):
+    # JSON output (not tab) so every record carries `input` = the original VCF
+    # line: we join on the ORIGINAL VCF (pos,ref,alt), which matches duckvep
+    # exactly. (Tab output reports a trimmed/anchor-stripped Allele that does NOT
+    # match the VCF alt for indels — a silent join miss.)
     subprocess.run(VEP_RUN + ["-i", SAMPLE_VCF, "--offline", "--cache",
         "--dir_cache", VEP_CACHE, "--cache_version", VEP_REL, "--species", "homo_sapiens",
-        "--assembly", "GRCh38", "--fasta", FASTA, "--symbol", "--tab", "-o", "/tmp/vep_off.tab",
+        "--assembly", "GRCh38", "--fasta", FASTA, "--symbol", "--json", "-o", "/tmp/vep_off.json",
         "--force_overwrite", "--no_stats"], check=True, capture_output=True, text=True)
-    rows, cols = [], None
-    for line in open("/tmp/vep_off.tab"):
-        if line.startswith("##"):
-            continue
-        f = line.rstrip("\n").split("\t")
-        if line.startswith("#"):
-            cols = {n: i for i, n in enumerate(f)}; continue
-        get = lambda k: f[cols[k]] if k in cols and f[cols[k]] != "-" else ""
-        pos = int(get("Location").split(":")[1].split("-")[0])
-        rows.append(dict(source="vep", date=DATE, pos=pos, ref="", alt=get("Allele"),
-            transcript_id=get("Feature"), gene_symbol=get("SYMBOL"),
-            consequence="&".join(sorted(get("Consequence").split(","))), impact=get("IMPACT")))
+    rows = []
+    for line in open("/tmp/vep_off.json"):
+        rec = json.loads(line)
+        inp = rec["input"].split("\t")
+        pos, ref, alt = int(inp[1]), inp[3], inp[4]
+        for tc in rec.get("transcript_consequences", []):
+            rows.append(dict(source="vep", date=DATE, pos=pos, ref=ref, alt=alt,
+                transcript_id=tc["transcript_id"], gene_symbol=tc.get("gene_symbol", ""),
+                consequence="&".join(sorted(tc["consequence_terms"])), impact=tc.get("impact", "")))
     return rows
 
 USE_OFFLINE = os.path.isdir(f"{VEP_CACHE}/homo_sapiens/{VEP_REL}_GRCh38")
@@ -158,23 +166,29 @@ CREATE TABLE ann AS
   UNION ALL BY NAME SELECT * FROM read_json('/tmp/dv.json')
   {fv_union};
 COPY (SELECT * FROM ann ORDER BY pos, transcript_id, source) TO '{OUTDIR}/annotations.parquet' (FORMAT parquet);
-WITH v AS (SELECT pos,alt,transcript_id,consequence FROM ann WHERE source='vep')
-SELECT e.source AS engine, count(*) AS pairs,
+WITH v AS (
+  SELECT pos,alt,transcript_id,consequence,
+         CASE WHEN length(ref)=1 AND length(alt)=1 THEN 'snv'
+              WHEN length(ref)>length(alt) THEN 'del'
+              WHEN length(ref)<length(alt) THEN 'ins'
+              ELSE 'mnv' END AS class
+  FROM ann WHERE source='vep')
+SELECT e.source AS engine, v.class, count(*) AS pairs,
        count(*) FILTER (WHERE v.consequence=e.consequence) AS agree,
        round(100.0*count(*) FILTER (WHERE v.consequence=e.consequence)/nullif(count(*),0),2) AS pct
 FROM (SELECT * FROM ann WHERE source<>'vep') e
 JOIN v USING (pos,alt,transcript_id)
-GROUP BY e.source ORDER BY e.source;
+GROUP BY e.source, v.class ORDER BY e.source, v.class;
 """
 out = subprocess.run([DUCKDB, "-csv", "-c", summary_sql], capture_output=True, text=True).stdout.strip().splitlines()
 log = f"{ROOT}/data/vep_dumps/concordance_log.csv"
 new = not os.path.exists(log)
-print(f"\n=== Concordance vs Ensembl VEP ({DATE}) ===")
+print(f"\n=== Concordance vs Ensembl VEP ({DATE}) — by variant class ===")
 with open(log, "a") as fh:
     if new:
-        fh.write("date,engine,n_variants,pairs,agree,pct\n")
+        fh.write("date,engine,class,n_variants,pairs,agree,pct\n")
     for row in out[1:]:  # skip header
-        engine, pairs, agree, pct = row.split(",")
-        fh.write(f"{DATE},{engine},{len(sample)},{pairs},{agree},{pct}\n")
-        print(f"  {engine:8s} vs VEP: pairs={pairs} agree={agree} concordance={pct}%")
+        engine, vclass, pairs, agree, pct = row.split(",")
+        fh.write(f"{DATE},{engine},{vclass},{len(sample)},{pairs},{agree},{pct}\n")
+        print(f"  {engine:8s} {vclass:4s} vs VEP: pairs={pairs} agree={agree} concordance={pct}%")
 print(f"  dump: {OUTDIR}/annotations.parquet")

@@ -19,7 +19,7 @@ if [ $# -ge 1 ]; then
 else
   LOAD_DUCKHTS="INSTALL duckhts FROM community; LOAD duckhts;"
 fi
-GFF="$ROOT/data/giab/GRCh38.112.gff3.gz"
+GFF="$ROOT/data/giab/GRCh38.116.gff3.gz"
 FA="$ROOT/data/giab/chr17.fa"
 # A tabix-indexed GFF for duckhts region scans (bgzip + .tbi). Built on demand.
 GFF_TBX=/tmp/chr17.gff3.gz
