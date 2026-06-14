@@ -693,6 +693,13 @@ impl ConsequencePredictor {
             } else {
                 Consequence::StartLost
             });
+            // A frameshift that also disrupts the start codon co-occurs with
+            // frameshift_variant (Ensembl runs both predicates); the inframe terms are
+            // suppressed by start_lost (`inframe_insertion: return 0 if start_lost`), so
+            // an inframe indel or SNV/MNV at the start stays start_lost only.
+            if is_frameshift {
+                out.push(Consequence::FrameshiftVariant);
+            }
             return out;
         }
 
