@@ -39,7 +39,7 @@ fair.
 | MODERATE | del   |   4921 | 61 (1240/100K)     | 75 (1524/100K)     |
 | MODERATE | ins   |   1754 | 31 (1767/100K)     | 31 (1767/100K)     |
 | MODERATE | mnv   |   1687 | 478 (28334/100K)   | 483 (28631/100K)   |
-| MODERATE | snv   | 403438 | 1 (0/100K)         | 19 (5/100K)        |
+| MODERATE | snv   | 403438 | 0 (0/100K)         | 19 (5/100K)        |
 | LOW      | del   |   7418 | 1249 (16837/100K)  | 1225 (16514/100K)  |
 | LOW      | ins   |   3582 | 1109 (30960/100K)  | 821 (22920/100K)   |
 | LOW      | mnv   |    402 | 20 (4975/100K)     | 92 (22886/100K)    |
@@ -69,6 +69,48 @@ across classes despite very different pair counts.
   The two are nearly identical, so the indel/MNV frontier is **shared
   engine behavior** vs Ensembl VEP — a real engine gap to close, not
   duckvep-specific and not a measurement artifact.
+
+## Where the misses are — per consequence (SO term)
+
+Impact × class is still too coarse: it buckets every “HIGH del” together
+while the real culprits are **specific consequence categories** (splice
+acceptor/donor, polypyrimidine tract, frameshift). This table explodes
+VEP’s `&`-joined call and attributes each discordant pair to the SO
+terms VEP assigned — the finest “where is it actually failing” view
+(duckvep, top by discordant count, generated from
+`correctness/data/discordance_by_consequence.csv`):
+
+| SO term (VEP)                       | impact   |   pairs | discordant | rate        |
+|:------------------------------------|:---------|--------:|-----------:|:------------|
+| intron_variant                      | LOW      |  78,863 |      2,307 | 2925/100K   |
+| intron_variant                      | HIGH     |   1,914 |      1,914 | 100000/100K |
+| splice_donor_variant                | HIGH     |  16,134 |      1,560 | 9669/100K   |
+| splice_region_variant               | LOW      |  46,523 |      1,356 | 2915/100K   |
+| coding_sequence_variant             | HIGH     |   1,488 |      1,302 | 87500/100K  |
+| splice_donor_5th_base_variant       | HIGH     |   1,039 |      1,039 | 100000/100K |
+| splice_polypyrimidine_tract_variant | LOW      |  58,013 |        961 | 1657/100K   |
+| frameshift_variant                  | HIGH     |  29,865 |        879 | 2943/100K   |
+| NMD_transcript_variant              | HIGH     |  15,307 |        874 | 5710/100K   |
+| stop_gained                         | HIGH     |  17,640 |        872 | 4943/100K   |
+| NMD_transcript_variant              | LOW      |  44,873 |        763 | 1700/100K   |
+| splice_acceptor_variant             | HIGH     |  12,737 |        758 | 5951/100K   |
+| splice_donor_region_variant         | LOW      |   9,904 |        618 | 6240/100K   |
+| missense_variant                    | MODERATE | 405,024 |        377 | 93/100K     |
+| splice_donor_region_variant         | HIGH     |     373 |        373 | 100000/100K |
+| 3_prime_UTR_variant                 | HIGH     |     391 |        305 | 78005/100K  |
+| intron_variant                      | MODIFIER | 214,734 |        292 | 136/100K    |
+| non_coding_transcript_variant       | LOW      |   6,696 |        240 | 3584/100K   |
+
+A pair is discordant when its **whole** `&`-joined SO set differs; this
+table credits that to each term VEP called, so a 100% rate means *every*
+variant whose VEP call includes that term has a different full set in
+duckvep. The splice-region sub-terms (`splice_donor_5th_base`,
+`splice_donor_region`, `splice_polypyrimidine_tract`, co-occurring
+`intron_variant`) and `coding_sequence_variant`/`stop_retained_variant`
+dominate — i.e. the boundaries are right (interval predicates) but the
+splice-region term *combinations* and the incomplete-CDS / stop edges
+still diverge from VEP. **An impact-only view hid exactly which
+categories to fix** — this is the precise frontier.
 
 ## Synthetic hard-variant corpus
 

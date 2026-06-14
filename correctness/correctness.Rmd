@@ -82,6 +82,35 @@ classes despite very different pair counts.
   Ensembl VEP — a real engine gap to close, not duckvep-specific and not a
   measurement artifact.
 
+## Where the misses are — per consequence (SO term)
+
+Impact × class is still too coarse: it buckets every "HIGH del" together while the
+real culprits are **specific consequence categories** (splice acceptor/donor,
+polypyrimidine tract, frameshift). This table explodes VEP's `&`-joined call and
+attributes each discordant pair to the SO terms VEP assigned — the finest
+"where is it actually failing" view (duckvep, top by discordant count, generated
+from `correctness/data/discordance_by_consequence.csv`):
+
+```{r echo=FALSE, message=FALSE}
+b <- csv("correctness/data/discordance_by_consequence.csv")
+b <- b[b$engine == "duckvep" & b$discordant > 0, ]
+b <- b[order(-b$discordant), c("so_term", "impact", "pairs", "discordant", "per100k")]
+b$per100k <- sprintf("%d/100K", b$per100k)
+knitr::kable(head(b, 18),
+             col.names = c("SO term (VEP)", "impact", "pairs", "discordant", "rate"),
+             row.names = FALSE, format.args = list(big.mark = ","))
+```
+
+A pair is discordant when its **whole** `&`-joined SO set differs; this table
+credits that to each term VEP called, so a 100% rate means *every* variant whose
+VEP call includes that term has a different full set in duckvep. The
+splice-region sub-terms (`splice_donor_5th_base`, `splice_donor_region`,
+`splice_polypyrimidine_tract`, co-occurring `intron_variant`) and
+`coding_sequence_variant`/`stop_retained_variant` dominate — i.e. the boundaries
+are right (interval predicates) but the splice-region term *combinations* and the
+incomplete-CDS / stop edges still diverge from VEP. **An impact-only view hid
+exactly which categories to fix** — this is the precise frontier.
+
 ## Synthetic hard-variant corpus
 
 Random ClinVar sampling almost never places an indel *exactly* on a splice

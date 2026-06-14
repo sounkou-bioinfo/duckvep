@@ -178,21 +178,42 @@ CREATE TABLE ann AS
   UNION ALL BY NAME SELECT * FROM read_json('/tmp/dv.json')
   {fv_union};
 COPY (SELECT * FROM ann ORDER BY pos, transcript_id, source) TO '{OUTDIR}/annotations.parquet' (FORMAT parquet);
-WITH v AS (
+CREATE TABLE vv AS
   SELECT pos,alt,transcript_id,consequence,impact,
-         CASE WHEN alt='-' THEN 'del'           -- canonical: '-' = empty allele
-              WHEN ref='-' THEN 'ins'
-              WHEN length(ref)=1 AND length(alt)=1 THEN 'snv'
-              ELSE 'mnv' END AS class
-  FROM ann WHERE source='vep')
--- Always split by IMPACT x class — an aggregate hides high-impact discordances
--- (the clinically actionable ones). Slop is not allowed: report raw counts.
-SELECT e.source AS engine, v.impact, v.class, count(*) AS pairs,
-       count(*) FILTER (WHERE v.consequence=e.consequence) AS agree,
-       round(100.0*count(*) FILTER (WHERE v.consequence=e.consequence)/nullif(count(*),0),4) AS pct
-FROM (SELECT * FROM ann WHERE source<>'vep') e
-JOIN v USING (pos,alt,transcript_id)
-GROUP BY e.source, v.impact, v.class ORDER BY e.source, v.impact, v.class;
+         CASE WHEN alt='-' THEN 'del' WHEN ref='-' THEN 'ins'
+              WHEN length(ref)=1 AND length(alt)=1 THEN 'snv' ELSE 'mnv' END AS class
+  FROM ann WHERE source='vep';
+CREATE TABLE pairs AS
+  SELECT e.source AS engine, vv.impact, vv.class, vv.consequence AS vep_csq, e.consequence AS eng_csq
+  FROM (SELECT * FROM ann WHERE source<>'vep') e JOIN vv USING (pos,alt,transcript_id);
+
+-- (a) recorded: split by IMPACT x class (overwrite with this run = source of truth)
+COPY (
+  SELECT '{DATE}' AS date, engine, impact, class, {len(sample)} AS n_variants,
+         count(*) AS pairs, count(*) FILTER (WHERE vep_csq=eng_csq) AS agree,
+         round(100.0*count(*) FILTER (WHERE vep_csq=eng_csq)/nullif(count(*),0),4) AS pct
+  FROM pairs WHERE engine IN ('duckvep','fastvep')
+  GROUP BY ALL ORDER BY engine, impact, class
+) TO '{ROOT}/correctness/data/concordance_by_impact.csv' (HEADER, FORMAT csv);
+
+-- (b) recorded: finer — per VEP SO TERM (explode the &-set). Impact x class is too
+-- coarse; the culprits are specific categories (splice_acceptor/polypyrimidine,
+-- frameshift, ...). This attributes each discordant pair to the SO terms VEP called.
+COPY (
+  WITH t AS (
+    SELECT engine, impact, unnest(string_split(vep_csq,'&')) AS so_term, (vep_csq<>eng_csq) AS disc
+    FROM pairs WHERE engine IN ('duckvep','fastvep'))
+  SELECT '{DATE}' AS date, engine, so_term, impact, count(*) AS pairs,
+         count(*) FILTER (WHERE disc) AS discordant,
+         round(1e5*count(*) FILTER (WHERE disc)/count(*)) AS per100k
+  FROM t GROUP BY ALL HAVING count(*) >= 20 ORDER BY engine, discordant DESC
+) TO '{ROOT}/correctness/data/discordance_by_consequence.csv' (HEADER, FORMAT csv);
+
+-- printed summary (impact x class)
+SELECT engine, impact, class, count(*) AS pairs,
+       count(*) FILTER (WHERE vep_csq=eng_csq) AS agree,
+       round(100.0*count(*) FILTER (WHERE vep_csq=eng_csq)/nullif(count(*),0),4) AS pct
+FROM pairs GROUP BY engine, impact, class ORDER BY engine, impact, class;
 """
 out = subprocess.run([DUCKDB, "-csv", "-c", summary_sql], capture_output=True, text=True).stdout.strip().splitlines()
 log = f"{ROOT}/data/vep_dumps/concordance_log.csv"
