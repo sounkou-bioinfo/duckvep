@@ -39,12 +39,29 @@ spurious `missense_variant`. Patch: detect the codon that runs past the
 translateable sequence and emit `incomplete_terminal_codon_variant`, paired with
 `coding_sequence_variant` at the call site (matching VEP's two-term output).
 
-**Impact:** on a genome-wide ClinVar sample these two patches resolved 42 of the
-67 (~63%) discordant transcript pairs — every incomplete-CDS case — lifting
-duckvep above fastVEP on Ensembl-VEP concordance. The remaining residual is a
-subtler start-codon case, the splice polypyrimidine-tract boundary, and
-`mature_miRNA_variant` (which needs miRBase data, a join duckvep can add and
-fastVEP cannot).
+### `start_lost` requires a real start codon (non-ATG annotated starts)
+Same file. Upstream emitted `start_lost` whenever the *alt* first codon was not a
+start, never checking the *reference*. Ensembl's `start_lost`
+(`VariationEffect.pm`) requires `_overlaps_start_codon` and a reference peptide of
+Met — i.e. the canonical start must actually be ATG. Patch: gate on
+`is_start(ref_codon) && !is_start(alt_codon)`. This fixes transcripts whose
+annotated CDS begins with a non-ATG codon (e.g. CGC→CGG is Arg→Arg, *synonymous*,
+not `start_lost`).
+
+**Impact (genome-wide ClinVar, 50k SNVs, vs offline Ensembl VEP):**
+
+| engine | agree / pairs | concordance |
+|--------|---------------|-------------|
+| **duckvep (patched)** | 601267 / 601279 | **100.0 %** (99.998) |
+| fastVEP (upstream)    | 601212 / 601279 | 99.99 % |
+
+The three patches resolve **55 of the 67** transcript pairs fastVEP gets wrong —
+every incomplete-CDS and non-ATG-start case. The remaining 12: 6 splice
+polypyrimidine-tract (duckvep's range `[intron_end-16, intron_end-2]` is
+*byte-identical* to Ensembl's `BaseTranscriptVariationAllele.pm` — these trace to
+VEP **code 116 vs cache 112** version skew, not a duckvep bug), 5
+`mature_miRNA_variant` (needs miRBase mature-product coordinates — a join duckvep
+can add and fastVEP's fixed pipeline cannot), and 1 stop-codon edge.
 
 ## Feature patches (parity with `fastvep annotate`, kept lean)
 
