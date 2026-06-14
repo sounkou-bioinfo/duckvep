@@ -45,24 +45,23 @@ fair.
 | MODIFIER | mnv   | 0 / 2073             | 0 / 2073             |
 | MODIFIER | snv   | 6 / 654709           | 20 / 654709          |
 
-**Reading it:**
+**Reading it** (all figures inline-generated from the CSV above):
 
-- **SNVs are near-perfect at every impact tier** (single-digit
-  discordances in hundreds of thousands) — including HIGH impact.
-  duckvep beats fastVEP on SNVs (e.g. MODERATE 1 vs 19, LOW 5 vs 33,
-  MODIFIER 6 vs 20) thanks to the incomplete-CDS / non-ATG-start
-  accuracy patches (see `../PATCHES.md`).
-- **Discordances concentrate in HIGH-impact indels and MNVs** — the
-  clinically actionable sites, the worst place to be wrong, and exactly
-  what an aggregate % would bury. This is the open correctness frontier
-  (HIGH del 2427/23414 ≈ 10%, HIGH mnv 176/210 ≈ 84%).
-- **fastVEP’s indel `pairs` counts are small and not comparable**
-  (e.g. HIGH del 729 vs duckvep’s 23414): fastVEP’s tab output reports
-  trimmed/anchor-stripped alleles that do not join on the original VCF
-  allele, so most fastVEP indel rows drop out of the join. Treat the
-  fastVEP **indel** column as unreliable here — only the **SNV** and
-  **MNV** head-to-heads (which join cleanly) are valid. MNV is a shared
-  engine gap (HIGH mnv 176/210 in both).
+- **SNVs are near-perfect at every impact tier** — duckvep
+  `discordant/pairs` HIGH 1/43294, MODERATE 1/403438, LOW 5/214055,
+  MODIFIER 6/654709 — and ahead of fastVEP (MODERATE 19/403438, LOW
+  33/214055, MODIFIER 20/654709), thanks to the incomplete-CDS /
+  non-ATG-start patches (see `../PATCHES.md`).
+- **Discordances concentrate in HIGH-impact indels and MNVs** — duckvep
+  HIGH del 2427/23414, HIGH ins 897/10054, HIGH mnv 176/210 — the
+  clinically actionable sites, and exactly what an aggregate % would
+  bury. This is the open correctness frontier.
+- **fastVEP’s indel `pairs` are small and not comparable** (HIGH del
+  305/729 vs duckvep 2427/23414): fastVEP’s tab output reports
+  anchor-stripped alleles that don’t join on the original VCF allele, so
+  most fastVEP indel rows drop out. Only the **SNV** and **MNV** fastVEP
+  head-to-heads (which join cleanly) are valid — MNV is a shared engine
+  gap (HIGH mnv 176/210 in both).
 
 ## Synthetic hard-variant corpus
 

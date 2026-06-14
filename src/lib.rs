@@ -14,6 +14,7 @@ use crate::io::gff::ReadGffTranscripts;
 use crate::io::vcf::{ReadVcf, VcfSamples};
 use crate::vep::annotate::VepAnnotate;
 use crate::vep::consequence::{VepConsequence, VepLoadCache};
+use crate::vep::normalize::NormalizeVariant;
 
 #[duckdb_entrypoint_c_api()]
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
@@ -29,5 +30,7 @@ pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>
         .expect("failed to register vep_load_cache");
     con.register_scalar_function::<VepConsequence>("vep_consequence")
         .expect("failed to register vep_consequence");
+    con.register_scalar_function::<NormalizeVariant>("normalize_variant")
+        .expect("failed to register normalize_variant");
     Ok(())
 }

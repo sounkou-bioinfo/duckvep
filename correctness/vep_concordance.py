@@ -79,10 +79,11 @@ VEP_REL = os.environ.get("VEP_CACHE_VERSION", "116")
 VEP_RUN = os.environ.get("VEP_CMD", "conda run -n vep vep").split()
 
 def vep_offline(sample):
-    # JSON output (not tab) so every record carries `input` = the original VCF
-    # line: we join on the ORIGINAL VCF (pos,ref,alt), which matches duckvep
-    # exactly. (Tab output reports a trimmed/anchor-stripped Allele that does NOT
-    # match the VCF alt for indels — a silent join miss.)
+    # JSON output, and we key on VEP's OWN canonical normalized form
+    # (rec.start + allele_string ref / tc.variant_allele) — the minimal,
+    # anchor-stripped representation ('-' for empty). duckvep emits the identical
+    # key via normalize_variant(), and fastVEP via its start+allele_string, so all
+    # three join correctly for EVERY class incl. indels (no representation skew).
     subprocess.run(VEP_RUN + ["-i", SAMPLE_VCF, "--offline", "--cache",
         "--dir_cache", VEP_CACHE, "--cache_version", VEP_REL, "--species", "homo_sapiens",
         "--assembly", "GRCh38", "--fasta", FASTA, "--symbol", "--json", "-o", "/tmp/vep_off.json",
@@ -90,10 +91,10 @@ def vep_offline(sample):
     rows = []
     for line in open("/tmp/vep_off.json"):
         rec = json.loads(line)
-        inp = rec["input"].split("\t")
-        pos, ref, alt = int(inp[1]), inp[3], inp[4]
+        pos = rec["start"]
+        nref = rec.get("allele_string", "/").split("/")[0]
         for tc in rec.get("transcript_consequences", []):
-            rows.append(dict(source="vep", date=DATE, pos=pos, ref=ref, alt=alt,
+            rows.append(dict(source="vep", date=DATE, pos=pos, ref=nref, alt=tc.get("variant_allele", ""),
                 transcript_id=tc["transcript_id"], gene_symbol=tc.get("gene_symbol", ""),
                 consequence="&".join(sorted(tc["consequence_terms"])), impact=tc.get("impact", "")))
     return rows
@@ -126,10 +127,18 @@ with open("/tmp/vep_raw.json", "w") as fh:
 sql = f"""LOAD '{EXT}';
 SELECT vep_load_cache('{GFF3}', '{FASTA}');
 COPY (
-  SELECT 'duckvep' AS source, '{DATE}' AS date, v.pos, v.ref, a.alt, c.transcript_id,
-         c.gene_symbol, list_aggregate(list_sort(c.consequence),'string_agg','&') AS consequence, c.impact
-  FROM read_vcf('{SAMPLE_VCF}') v, UNNEST(v.alt) AS a(alt),
-       UNNEST(vep_consequence(v.chrom, v.pos, v.ref, a.alt)) AS u(c)
+  WITH dv AS (
+    SELECT normalize_variant(v.pos, v.ref, a.alt) AS nv, c.transcript_id, c.gene_symbol,
+           c.consequence, c.impact
+    FROM read_vcf('{SAMPLE_VCF}') v, UNNEST(v.alt) AS a(alt),
+         UNNEST(vep_consequence(v.chrom, v.pos, v.ref, a.alt)) AS u(c))
+  SELECT 'duckvep' AS source, '{DATE}' AS date,
+         nv.pos AS pos,
+         CASE WHEN nv.ref='' THEN '-' ELSE nv.ref END AS ref,   -- canonical: '-' for empty,
+         CASE WHEN nv.alt='' THEN '-' ELSE nv.alt END AS alt,   -- matching VEP's variant_allele
+         transcript_id, gene_symbol,
+         list_aggregate(list_sort(consequence),'string_agg','&') AS consequence, impact
+  FROM dv
 ) TO '/tmp/dv.json' (FORMAT json);"""
 subprocess.run([DUCKDB, "-unsigned", "-c", sql], check=True)
 
@@ -137,21 +146,23 @@ subprocess.run([DUCKDB, "-unsigned", "-c", sql], check=True)
 FASTVEP = os.environ.get("FASTVEP", f"{ROOT}/../DuckfastVEP/target/release/fastvep")
 fv_rows = []
 if os.path.exists(FASTVEP):
+    # JSON (array): fastVEP reports its own canonical normalized form
+    # (start + allele_string), the SAME minimal key as VEP/duckvep -> valid join
+    # for every class incl. indels (the tab path's trimmed Allele did not join).
     fv = subprocess.run([FASTVEP, "annotate", "-i", SAMPLE_VCF, "--gff3", GFF3,
-                         "--fasta", FASTA, "--output-format", "tab"], capture_output=True, text=True)
-    cols = None
-    for line in fv.stdout.splitlines():
-        if line.startswith("##"):
-            continue
-        f = line.split("\t")
-        if line.startswith("#"):
-            cols = {n: i for i, n in enumerate(f)}; continue
-        if not cols:
-            continue
-        loc, allele, tid, csq = f[cols["Location"]], f[cols["Allele"]], f[cols["Feature"]], f[cols["Consequence"]]
-        pos = int(loc.split(":")[1].split("-")[0])
-        fv_rows.append(dict(source="fastvep", date=DATE, pos=pos, ref="", alt=allele,
-            transcript_id=tid, gene_symbol="", consequence="&".join(sorted(csq.split(","))), impact=""))
+                         "--fasta", FASTA, "--output-format", "json"], capture_output=True, text=True)
+    try:
+        arr = json.loads(fv.stdout)
+    except Exception:
+        arr = []
+    for rec in arr:
+        pos = rec["start"]
+        parts = rec.get("allele_string", "/").split("/")
+        nref, nalt = parts[0], parts[-1]
+        for tc in rec.get("transcript_consequences", []):
+            fv_rows.append(dict(source="fastvep", date=DATE, pos=pos, ref=nref, alt=nalt,
+                transcript_id=tc["transcript_id"], gene_symbol=tc.get("gene_symbol", ""),
+                consequence="&".join(sorted(tc["consequence_terms"])), impact=tc.get("impact", "")))
     with open("/tmp/fv.json", "w") as fh:
         for r in fv_rows:
             fh.write(json.dumps(r) + "\n")
@@ -159,7 +170,8 @@ if os.path.exists(FASTVEP):
 
 # 4. Dated Parquet dump (all sources) + THREE-WAY concordance vs Ensembl VEP.
 fv_union = "UNION ALL BY NAME SELECT * FROM read_json('/tmp/fv.json')" if fv_rows else ""
-# Join on (pos, alt, transcript_id): SNVs, and fastVEP's tab output omits ref.
+# All three sources are on the canonical normalized key (pos, ref, alt with '-' for
+# empty), so the join is valid for EVERY class including indels.
 summary_sql = f"""
 CREATE TABLE ann AS
   SELECT * FROM read_json('/tmp/vep_raw.json', columns={{source:'VARCHAR',date:'VARCHAR',pos:'BIGINT',ref:'VARCHAR',alt:'VARCHAR',transcript_id:'VARCHAR',gene_symbol:'VARCHAR',consequence:'VARCHAR',impact:'VARCHAR'}})
@@ -168,9 +180,9 @@ CREATE TABLE ann AS
 COPY (SELECT * FROM ann ORDER BY pos, transcript_id, source) TO '{OUTDIR}/annotations.parquet' (FORMAT parquet);
 WITH v AS (
   SELECT pos,alt,transcript_id,consequence,impact,
-         CASE WHEN length(ref)=1 AND length(alt)=1 THEN 'snv'
-              WHEN length(ref)>length(alt) THEN 'del'
-              WHEN length(ref)<length(alt) THEN 'ins'
+         CASE WHEN alt='-' THEN 'del'           -- canonical: '-' = empty allele
+              WHEN ref='-' THEN 'ins'
+              WHEN length(ref)=1 AND length(alt)=1 THEN 'snv'
               ELSE 'mnv' END AS class
   FROM ann WHERE source='vep')
 -- Always split by IMPACT x class — an aggregate hides high-impact discordances

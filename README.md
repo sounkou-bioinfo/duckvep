@@ -274,12 +274,13 @@ actionable sites). The full report, rendered directly from recorded
 CSVs, is **[`correctness/correctness.md`](correctness/correctness.md)**
 (`make correctness`).
 
-Headline (50k biallelic ClinVar vs offline Ensembl VEP,
-`discordant / pairs`): SNVs are near-perfect at every impact tier (HIGH
-`1/43294`, MODERATE `1/403438`, MODIFIER `6/654709`) and ahead of
-fastVEP; the open frontier is **high-impact indels and MNVs** (HIGH del
-`2427/23414`, HIGH mnv `176/210`). duckvep’s accuracy patches over the
-vendored engine are in [`PATCHES.md`](PATCHES.md).
+Headline — duckvep vs offline Ensembl VEP, `discordant / pairs`,
+**generated from `correctness/data/concordance_by_impact.csv`** (not
+hand-written): SNVs are near-perfect at every impact tier; the open
+frontier is high-impact indels/MNVs.
+
+duckvep’s accuracy patches over the vendored engine are in
+[`PATCHES.md`](PATCHES.md).
 
 ## Benchmarks
 
