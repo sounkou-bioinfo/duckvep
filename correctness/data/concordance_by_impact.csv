@@ -1,6 +1,6 @@
 date,engine,impact,class,n_variants,pairs,agree,pct
 2026-06-14,duckvep,HIGH,del,50000,22685,22632,99.7664
-2026-06-14,duckvep,HIGH,ins,50000,9558,9532,99.728
+2026-06-14,duckvep,HIGH,ins,50000,9558,9551,99.9268
 2026-06-14,duckvep,HIGH,mnv,50000,1435,1435,100.0
 2026-06-14,duckvep,HIGH,snv,50000,43294,43294,100.0
 2026-06-14,duckvep,LOW,del,50000,7378,7352,99.6476
