@@ -298,8 +298,8 @@ indels/MNVs (shared with fastVEP — an engine gap, not a duckvep bug).
 | HIGH     | mnv   | 24530/100K    | 48711/100K    |
 | HIGH     | snv   | 0/100K        | 0/100K        |
 | MODERATE | del   | 0/100K        | 1535/100K     |
-| MODERATE | ins   | 1767/100K     | 1767/100K     |
-| MODERATE | mnv   | 5987/100K     | 28631/100K    |
+| MODERATE | ins   | 114/100K      | 1767/100K     |
+| MODERATE | mnv   | 0/100K        | 28631/100K    |
 | MODERATE | snv   | 0/100K        | 5/100K        |
 | LOW      | del   | 352/100K      | 16454/100K    |
 | LOW      | ins   | 335/100K      | 22920/100K    |
@@ -321,16 +321,16 @@ fastVEP matches VEP (`regression` = duckvep worse than upstream;
 `shared` = inherited engine gap) — top by pair count, generated from
 `correctness/data/error_transitions.csv`:
 
-| type   | impact   | VEP calls                                                                                                    | duckvep calls                                                                                                                                    |   n |
-|:-------|:---------|:-------------------------------------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------|----:|
-| shared | HIGH     | frameshift_variant&stop_gained                                                                               | frameshift_variant                                                                                                                               | 427 |
-| shared | HIGH     | coding_sequence_variant&intron_variant&splice_acceptor_variant                                               | coding_sequence_variant&intron_variant&splice_acceptor_variant&splice_polypyrimidine_tract_variant                                               | 238 |
-| shared | HIGH     | protein_altering_variant&stop_gained                                                                         | inframe_insertion                                                                                                                                |  81 |
-| shared | MODERATE | protein_altering_variant                                                                                     | inframe_deletion                                                                                                                                 |  77 |
-| shared | HIGH     | NMD_transcript_variant&coding_sequence_variant&intron_variant&splice_acceptor_variant                        | NMD_transcript_variant&coding_sequence_variant&intron_variant&splice_acceptor_variant&splice_polypyrimidine_tract_variant                        |  64 |
-| shared | HIGH     | coding_sequence_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant                    | coding_sequence_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant&splice_polypyrimidine_tract_variant                    |  63 |
-| shared | HIGH     | 3_prime_UTR_variant&NMD_transcript_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant | 3_prime_UTR_variant&NMD_transcript_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant&splice_polypyrimidine_tract_variant |  62 |
-| shared | HIGH     | NMD_transcript_variant&frameshift_variant&stop_gained                                                        | NMD_transcript_variant&frameshift_variant                                                                                                        |  57 |
+| type   | impact | VEP calls                                                                                                    | duckvep calls                                                                                                                                    |   n |
+|:-------|:-------|:-------------------------------------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------|----:|
+| shared | HIGH   | frameshift_variant&stop_gained                                                                               | frameshift_variant                                                                                                                               | 427 |
+| shared | HIGH   | coding_sequence_variant&intron_variant&splice_acceptor_variant                                               | coding_sequence_variant&intron_variant&splice_acceptor_variant&splice_polypyrimidine_tract_variant                                               | 238 |
+| shared | HIGH   | protein_altering_variant&stop_gained                                                                         | protein_altering_variant                                                                                                                         |  81 |
+| shared | HIGH   | NMD_transcript_variant&coding_sequence_variant&intron_variant&splice_acceptor_variant                        | NMD_transcript_variant&coding_sequence_variant&intron_variant&splice_acceptor_variant&splice_polypyrimidine_tract_variant                        |  64 |
+| shared | HIGH   | coding_sequence_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant                    | coding_sequence_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant&splice_polypyrimidine_tract_variant                    |  63 |
+| shared | HIGH   | 3_prime_UTR_variant&NMD_transcript_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant | 3_prime_UTR_variant&NMD_transcript_variant&intron_variant&splice_donor_5th_base_variant&splice_donor_variant&splice_polypyrimidine_tract_variant |  62 |
+| shared | HIGH   | NMD_transcript_variant&frameshift_variant&stop_gained                                                        | NMD_transcript_variant&frameshift_variant                                                                                                        |  57 |
+| shared | HIGH   | NMD_transcript_variant&protein_altering_variant&stop_gained                                                  | NMD_transcript_variant&protein_altering_variant                                                                                                  |  54 |
 
 So the open work splits cleanly: **regressions** (the splice sub-term
 precedence our interval rewrite broke — being fixed to match Ensembl
