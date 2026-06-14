@@ -64,12 +64,13 @@ knitr::kable(w, col.names = c("impact", "class", "duckvep (disc/pairs)", "fastve
   duckvep HIGH del `r gv("duckvep","HIGH","del")`, HIGH ins `r gv("duckvep","HIGH","ins")`,
   HIGH mnv `r gv("duckvep","HIGH","mnv")`. These are the clinically actionable
   sites an aggregate % would bury.
-- **duckvep and fastVEP are now validly comparable on indels** — on the canonical
-  normalized key the indel `pairs` match (HIGH del fastVEP `r gv("fastvep","HIGH","del")`
-  vs duckvep `r gv("duckvep","HIGH","del")`), and the two largely agree: the
-  remaining indel/MNV discordances are **shared engine behavior** vs Ensembl VEP,
-  not duckvep-specific. (An earlier, larger indel "frontier" was a join artifact of
-  representation skew — fixed by normalizing both sides.)
+- **duckvep and fastVEP are now validly comparable on indels** — normalizing both
+  sides makes the indel `pairs` match across engines (HIGH del fastVEP
+  `r gv("fastvep","HIGH","del")` vs duckvep `r gv("duckvep","HIGH","del")`; before
+  normalization fastVEP joined only a small unrepresentative subset). The two are
+  nearly identical, so the indel/MNV frontier is **shared engine behavior** vs
+  Ensembl VEP — a real engine gap to close, not duckvep-specific and not a
+  measurement artifact.
 
 ## Synthetic hard-variant corpus
 

@@ -2,15 +2,16 @@
 <!-- README.md is generated from README.Rmd — edit the .Rmd and run `make readme`.
      SQL blocks below are executed live against the built extension via duckknit. -->
 
-# duckvep
+# duckvep — DuckDB-native VEP: SQL genomics readers, VEP UDFs, Parquet sources
 
-**DuckDB-native variant effect prediction.** A loadable DuckDB extension
-(Rust, [`duckdb-rs`](https://github.com/duckdb/duckdb-rs)) that reads
-genomics formats via [noodles](https://github.com/zaeleus/noodles),
-exposes the VEP consequence / HGVS / ACMG engine as SQL functions, and
-treats annotation databases as plain Parquet/DuckDB tables joined by the
+A loadable DuckDB extension (Rust,
+[`duckdb-rs`](https://github.com/duckdb/duckdb-rs)) that reads genomics
+formats via [noodles](https://github.com/zaeleus/noodles), exposes the
+VEP consequence / HGVS / ACMG engine as SQL functions, and treats
+annotation databases as plain Parquet/DuckDB tables joined by the
 optimizer — instead of hand-rolled file formats. See
-[DESIGN.md](DESIGN.md) for the full design and rationale.
+[DESIGN.md](DESIGN.md) for the design, [NEWS.md](NEWS.md) for the
+changelog, and [PATCHES.md](PATCHES.md) for our accuracy patches.
 
 > Status: `read_vcf`/`vcf_samples`, `vep_consequence` (scan-driven
 > scalar) and `vep_annotate`, plus a columnar Parquet transcript cache,
