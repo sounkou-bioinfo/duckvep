@@ -46,6 +46,9 @@ impl VTab for VepAnnotate {
         bind.add_result_column("amino_acids", varchar());
         bind.add_result_column("codons", varchar());
         bind.add_result_column("protein_pos", bigint());
+        bind.add_result_column("hgvsc", varchar());
+        bind.add_result_column("hgvsp", varchar());
+        bind.add_result_column("hgvsg", varchar());
 
         let vcf_path = bind.get_parameter(0).to_string();
         let gff3 = bind
@@ -131,6 +134,9 @@ impl VTab for VepAnnotate {
                 }
             }
         }
+        varchar_col!(14, hgvsc);
+        varchar_col!(15, hgvsp);
+        varchar_col!(16, hgvsg);
 
         init.cursor.store(start + n, Ordering::Relaxed);
         output.set_len(n);

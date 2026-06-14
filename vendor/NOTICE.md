@@ -9,10 +9,11 @@ We vendor rather than depend so we can adapt decisions that are suboptimal for a
 DuckDB-native, columnar use case (see `../DESIGN.md` §1, §6):
 
 - **Lean closure only.** We vendor `fastvep-core`, `fastvep-genome`,
-  `fastvep-cache`, `fastvep-consequence` and deliberately route around
-  `fastvep-annotate` (a god-object that also pulls `fastvep-sa`,
-  `fastvep-classification`, `fastvep-io`, `fastvep-hgvs`). The engine builds the
-  transcript provider + reference + predictor directly (see `src/vep/engine.rs`).
+  `fastvep-cache`, `fastvep-consequence`, `fastvep-hgvs` and deliberately route
+  around `fastvep-annotate` (a god-object that also pulls `fastvep-sa`,
+  `fastvep-classification`, `fastvep-io`). The engine builds the transcript
+  provider + reference + predictor directly and assembles HGVS from the lean
+  `fastvep-hgvs` functions itself (see `src/vep/engine.rs::build_hgvs`).
 - **Planned divergence:** replace the bincode+zstd transcript cache with Parquet;
   drop the hand-rolled `fastvep-sa` formats in favour of Parquet joins; unify on
   noodles 0.87. Tracked in `DESIGN.md`.

@@ -1,0 +1,10 @@
+[package]
+name = "fastvep-hgvs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "HGVS nomenclature generation for fastVEP"
+
+[dependencies]
+fastvep-core = { workspace = true }
+fastvep-genome = { workspace = true }

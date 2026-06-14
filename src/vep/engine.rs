@@ -13,8 +13,10 @@ use fastvep_cache::providers::{
     FastaSequenceProvider, IndexedTranscriptProvider, MmapFastaSequenceProvider, SequenceProvider,
     TranscriptProvider,
 };
+use fastvep_consequence::AlleleConsequenceResult;
 use fastvep_consequence::ConsequencePredictor;
-use fastvep_core::{Allele, GenomicPosition, Strand};
+use fastvep_core::{Allele, Consequence, GenomicPosition, Strand};
+use fastvep_genome::Transcript;
 use noodles::vcf;
 use std::error::Error;
 use std::fs::File;
@@ -164,10 +166,20 @@ impl EngineContext {
             ref_seq.as_deref(),
         );
 
+        // Index the overlapping transcripts by stable id so HGVS can reach the
+        // full transcript model (coding bounds, spliced sequence, protein id).
+        let tmap: std::collections::HashMap<&str, &Transcript> =
+            overlapping.iter().map(|t| (&*t.stable_id, *t)).collect();
+
         let chrom_arc: Arc<str> = Arc::from(chrom);
         let empty: Arc<str> = Arc::from("");
         for tc in &result.transcript_consequences {
+            let tr = tmap.get(&*tc.transcript_id).copied();
             for ac in &tc.allele_consequences {
+                let (hgvsg, hgvsc, hgvsp) = match tr {
+                    Some(t) => build_hgvs(t, chrom, pos, end, &ref_allele, ac),
+                    None => (String::new(), String::new(), String::new()),
+                };
                 rows.push(AnnotatedRow {
                     chrom: chrom_arc.clone(),
                     pos: pos as i64,
@@ -187,6 +199,9 @@ impl EngineContext {
                     amino_acids: pair_to_string(&ac.amino_acids),
                     codons: pair_to_string(&ac.codons),
                     protein_pos: ac.protein_start.map(|p| p as i64),
+                    hgvsg,
+                    hgvsc,
+                    hgvsp,
                 });
             }
         }
@@ -214,6 +229,10 @@ pub(crate) struct AnnotatedRow {
     pub amino_acids: String,
     pub codons: String,
     pub protein_pos: Option<i64>,
+    // HGVS nomenclature (empty string where a notation does not apply).
+    pub hgvsg: String,
+    pub hgvsc: String,
+    pub hgvsp: String,
 }
 
 /// Annotate every variant in `vcf_path` against the `gff3` gene model (optional
@@ -233,6 +252,165 @@ fn pair_to_string(p: &Option<(String, String)>) -> String {
         Some((a, b)) => format!("{a}/{b}"),
         None => String::new(),
     }
+}
+
+fn complement_allele(allele: &Allele) -> Allele {
+    match allele {
+        Allele::Sequence(bases) => Allele::Sequence(
+            bases
+                .iter()
+                .map(|&b| match b {
+                    b'A' | b'a' => b'T',
+                    b'T' | b't' => b'A',
+                    b'C' | b'c' => b'G',
+                    b'G' | b'g' => b'C',
+                    other => other,
+                })
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// Build `(HGVSg, HGVSc, HGVSp)` for one (transcript, allele) consequence,
+/// mirroring fastVEP's annotate layer (`fastvep-annotate`). Empty strings where a
+/// notation does not apply (e.g. HGVSp for a non-coding consequence). This is the
+/// last feature-parity gap with `fastvep annotate`'s tab/JSON output.
+fn build_hgvs(
+    tr: &Transcript,
+    chrom: &str,
+    pos_start: u64,
+    pos_end: u64,
+    ref_allele: &Allele,
+    ac: &AlleleConsequenceResult,
+) -> (String, String, String) {
+    let hgvsg = fastvep_hgvs::hgvsg(chrom, pos_start, pos_end, ref_allele, &ac.allele);
+
+    let versioned_tid = match tr.version {
+        Some(v) => format!("{}.{}", tr.stable_id, v),
+        None => tr.stable_id.to_string(),
+    };
+    // HGVS bases are written in the transcript's orientation.
+    let (hgvs_ref, hgvs_alt) = if tr.strand == Strand::Reverse {
+        (complement_allele(ref_allele), complement_allele(&ac.allele))
+    } else {
+        (ref_allele.clone(), ac.allele.clone())
+    };
+    let intronic = |start: u64, end: u64| {
+        tr.genomic_to_intronic_cdna(start)
+            .map(|(cdna_pos, offset)| {
+                let (end_cdna, end_offset) = if start != end {
+                    tr.genomic_to_intronic_cdna(end)
+                        .map(|(c, o)| (Some(c), Some(o)))
+                        .unwrap_or((None, None))
+                } else {
+                    (None, None)
+                };
+                (cdna_pos, offset, end_cdna, end_offset)
+            })
+    };
+
+    let mut hgvsc = None;
+    if let Some(coding_start) = tr.cdna_coding_start {
+        if let (Some(cs), Some(ce)) = (ac.cdna_start, ac.cdna_end) {
+            let (cs, ce) = (cs.min(ce), cs.max(ce));
+            hgvsc = fastvep_hgvs::hgvsc_with_seq(
+                &versioned_tid,
+                cs,
+                ce,
+                &hgvs_ref,
+                &hgvs_alt,
+                coding_start,
+                tr.cdna_coding_end,
+                tr.spliced_seq.as_deref(),
+                tr.codon_table_start_phase,
+            );
+        } else if ac.intron.is_some() {
+            if let Some((cdna_pos, offset, end_cdna, end_offset)) = intronic(pos_start, pos_end) {
+                hgvsc = fastvep_hgvs::hgvsc_intronic_range(
+                    &versioned_tid,
+                    cdna_pos,
+                    offset,
+                    end_cdna,
+                    end_offset,
+                    &hgvs_ref,
+                    &hgvs_alt,
+                    coding_start,
+                    tr.cdna_coding_end,
+                );
+            }
+        }
+    } else if let (Some(cs), Some(ce)) = (ac.cdna_start, ac.cdna_end) {
+        hgvsc = fastvep_hgvs::hgvsc_noncoding(&versioned_tid, cs, ce, &hgvs_ref, &hgvs_alt);
+    } else if ac.intron.is_some() {
+        if let Some((cdna_pos, offset, end_cdna, end_offset)) = intronic(pos_start, pos_end) {
+            hgvsc = fastvep_hgvs::hgvsc_noncoding_intronic_range(
+                &versioned_tid,
+                cdna_pos,
+                offset,
+                end_cdna,
+                end_offset,
+                &hgvs_ref,
+                &hgvs_alt,
+            );
+        }
+    }
+
+    let mut hgvsp = None;
+    if let (Some(aa), Some(ps)) = (&ac.amino_acids, ac.protein_start) {
+        if let Some(pid) = &tr.protein_id {
+            let versioned_pid = match tr.protein_version {
+                Some(v) => {
+                    let suffix = format!(".{v}");
+                    if pid.ends_with(suffix.as_str()) {
+                        pid.clone()
+                    } else {
+                        format!("{pid}.{v}")
+                    }
+                }
+                None => pid.clone(),
+            };
+            if ac.consequences.contains(&Consequence::FrameshiftVariant) {
+                if let (Some(spliced), Some(coding_start), Some(cds_s)) =
+                    (&tr.spliced_seq, tr.cdna_coding_start, ac.cds_start)
+                {
+                    let ref_from_cds = &spliced.as_bytes()[(coding_start - 1) as usize..];
+                    let cds_idx = (cds_s - 1) as usize;
+                    let mut alt_from_cds = ref_from_cds.to_vec();
+                    if ac.allele == Allele::Deletion {
+                        let end = (cds_idx + ref_allele.len()).min(alt_from_cds.len());
+                        alt_from_cds.drain(cds_idx..end);
+                    } else if let Allele::Sequence(ins_bases) = &ac.allele {
+                        let bases: Vec<u8> = if tr.strand == Strand::Reverse {
+                            match &complement_allele(&ac.allele) {
+                                Allele::Sequence(b) => b.clone(),
+                                _ => ins_bases.clone(),
+                            }
+                        } else {
+                            ins_bases.clone()
+                        };
+                        for (j, &b) in bases.iter().enumerate() {
+                            if cds_idx + j <= alt_from_cds.len() {
+                                alt_from_cds.insert(cds_idx + j, b);
+                            }
+                        }
+                    }
+                    hgvsp = fastvep_hgvs::hgvsp_frameshift(
+                        &versioned_pid,
+                        ref_from_cds,
+                        &alt_from_cds,
+                        cds_idx / 3,
+                    );
+                }
+            } else {
+                let ref_aa = aa.0.as_bytes().first().copied().unwrap_or(b'X');
+                let alt_aa = aa.1.as_bytes().first().copied().unwrap_or(b'X');
+                hgvsp = fastvep_hgvs::hgvsp(&versioned_pid, ps, ref_aa, alt_aa, false);
+            }
+        }
+    }
+
+    (hgvsg, hgvsc.unwrap_or_default(), hgvsp.unwrap_or_default())
 }
 
 fn annotate_all(

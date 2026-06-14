@@ -14,8 +14,9 @@ optimizer — instead of hand-rolled file formats. See
 
 > Status: `read_vcf`/`vcf_samples`, `vep_consequence` (scan-driven
 > scalar) and `vep_annotate`, plus a columnar Parquet transcript cache,
-> are implemented and Ensembl-VEP-concordant. HGVS strings and
-> supplementary-annotation joins are next.
+> are implemented and Ensembl-VEP-concordant. HGVS (g./c./p.) is wired
+> and 100%-concordant with fastVEP; supplementary-annotation joins are
+> next.
 
 ## Build
 
@@ -144,20 +145,24 @@ Then `vep_consequence(chrom, pos, ref, alt)` is a scan-driven scalar
 returning a native `LIST<STRUCT>` — `UNNEST` it. Driven by DuckDB’s
 scan, so variants come from `read_vcf`, `read_parquet`, or any relation.
 
+Each struct also carries HGVS notation — `hgvsg` (genomic), `hgvsc`
+(coding) and `hgvsp` (protein, when a FASTA is loaded) — at 100%
+concordance with fastVEP:
+
 ``` sql
-SELECT c.transcript_id, c.consequence, c.impact, c.canonical
+SELECT c.transcript_id, c.consequence, c.impact, c.hgvsg, c.hgvsc
 FROM UNNEST(vep_consequence('17', 43124090, 'A', 'G')) AS u(c)
 WHERE c.gene_symbol = 'BRCA1'
 ORDER BY c.canonical DESC
 LIMIT 4;
 ```
 
-| transcript_id   | consequence                       | impact   | canonical |
-|-----------------|-----------------------------------|----------|-----------|
-| ENST00000357654 | \[missense_variant\]              | MODERATE | true      |
-| ENST00000921914 | \[non_coding_transcript_variant\] | MODIFIER | false     |
-| ENST00000471181 | \[non_coding_transcript_variant\] | MODIFIER | false     |
-| ENST00000352993 | \[non_coding_transcript_variant\] | MODIFIER | false     |
+| transcript_id   | consequence                       | impact   | hgvsg             | hgvsc                     |
+|-----------------|-----------------------------------|----------|-------------------|---------------------------|
+| ENST00000357654 | \[missense_variant\]              | MODERATE | 17:g.43124090A\>G | ENST00000357654.9:c.7T\>C |
+| ENST00000921914 | \[non_coding_transcript_variant\] | MODIFIER | 17:g.43124090A\>G |                           |
+| ENST00000471181 | \[non_coding_transcript_variant\] | MODIFIER | 17:g.43124090A\>G |                           |
+| ENST00000352993 | \[non_coding_transcript_variant\] | MODIFIER | 17:g.43124090A\>G |                           |
 
 Or annotate a whole VCF in one call with `vep_annotate(vcf, gff3 := …)`
 — one row per (variant, transcript, allele), at parity with Ensembl VEP

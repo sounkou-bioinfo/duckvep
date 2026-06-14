@@ -695,6 +695,7 @@ dependencies = [
  "fastvep-consequence",
  "fastvep-core",
  "fastvep-genome",
+ "fastvep-hgvs",
  "flate2",
  "noodles",
  "parquet",
@@ -779,6 +780,14 @@ version = "0.2.0"
 dependencies = [
  "fastvep-core",
  "serde",
+]
+
+[[package]]
+name = "fastvep-hgvs"
+version = "0.2.0"
+dependencies = [
+ "fastvep-core",
+ "fastvep-genome",
 ]
 
 [[package]]

@@ -92,6 +92,9 @@ fn consequence_struct() -> LogicalTypeHandle {
             LogicalTypeHandle::from(LogicalTypeId::Bigint),
         ),
         ("alt", varchar()),
+        ("hgvsc", varchar()),
+        ("hgvsp", varchar()),
+        ("hgvsg", varchar()),
     ])
 }
 
@@ -211,6 +214,9 @@ impl VScalar for VepConsequence {
                 }
             }
             vcol!(10, alt);
+            vcol!(11, hgvsc);
+            vcol!(12, hgvsp);
+            vcol!(13, hgvsg);
         }
         for i in 0..nrows {
             list.set_entry(i, list_offsets[i], list_offsets[i + 1] - list_offsets[i]);

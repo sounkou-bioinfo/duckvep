@@ -17,6 +17,15 @@ WHERE c.transcript_id = 'ENST00000357654';
 ----
 [missense_variant]	MODERATE	true	3
 
+# HGVS notation (genomic + coding) at 100% concordance with fastVEP. HGVSp needs
+# a FASTA (translation), so it is exercised in the concordance harness, not here.
+query TT
+SELECT c.hgvsg, c.hgvsc
+FROM UNNEST(vep_consequence('17', 43124090, 'A', 'G')) AS u(c)
+WHERE c.transcript_id = 'ENST00000357654';
+----
+17:g.43124090A>G	ENST00000357654.9:c.7T>C
+
 # Driven by DuckDB's own scan of read_vcf — any source works.
 query I
 SELECT count(*) > 0
