@@ -94,6 +94,43 @@ pub fn is_splice_polypyrimidine_tract(transcript: &Transcript, start: u64, end: 
     })
 }
 
+/// Does the variant interval overlap the INTERIOR of an intron — Ensembl's
+/// `intronic` flag (`_intron_effects`): `overlap(start, end, intron_start+2,
+/// intron_end-2)`. This is exactly the `intron_variant` (SO:0001627) predicate
+/// (`within_intron`): the two essential-splice dinucleotide bases at each intron end
+/// are excluded, so a variant only at the donor/acceptor is NOT `intron_variant`,
+/// but a deletion spanning the boundary into the interior IS — and it co-occurs with
+/// the coding/splice terms (a union, not an exclusive branch).
+pub fn is_intronic(transcript: &Transcript, start: u64, end: u64) -> bool {
+    // For insertions `normalized_interval` yields start = end + 1.
+    let insertion = start > end;
+    let mut exons: Vec<_> = transcript.exons.iter().collect();
+    exons.sort_by_key(|e| e.start);
+    for w in exons.windows(2) {
+        let intron_start = w[0].end + 1;
+        let intron_end = w[1].start - 1;
+        if intron_start > intron_end {
+            continue;
+        }
+        // Interior = intron_start+2 .. intron_end-2; for very short introns where that
+        // is empty, fall back to the whole intron span.
+        let (lo, hi) = if intron_start + 2 <= intron_end.saturating_sub(2) {
+            (intron_start + 2, intron_end - 2)
+        } else {
+            (intron_start, intron_end)
+        };
+        if ov(start, end, lo, hi) {
+            return true;
+        }
+        // VEP's `intronic` flag adds insertion boundary-touch cases (_intron_effects):
+        // an insertion right at the interior edge (var_start==lo or var_end==hi) counts.
+        if insertion && (start == lo || end == hi) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Does the variant interval overlap a splice region (SO:0001630): within 1-3 bases
 /// of the exon or 3-8 bases of the intron, at either junction. The bands are plain
 /// genomic intervals (strand-independent for overlap), so this is correct for

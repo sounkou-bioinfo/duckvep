@@ -458,20 +458,28 @@ impl ConsequencePredictor {
                     amino_acids = aa;
                     codons = cdn;
                 }
-            } else if in_intron && !is_essential_splice {
-                // VEP excludes intron_variant for positions at splice donor/acceptor sites
-                consequences.push(Consequence::IntronVariant);
             }
+            // intron_variant is added below as a UNION (it co-occurs with the coding
+            // term for boundary-spanning indels), not in this exclusive chain.
         } else {
             // Non-coding transcript
             if in_exon {
                 consequences.push(Consequence::NonCodingTranscriptExonVariant);
             } else if in_intron {
-                if !is_essential_splice {
-                    consequences.push(Consequence::IntronVariant);
-                }
                 consequences.push(Consequence::NonCodingTranscriptVariant);
             }
+        }
+
+        // intron_variant (SO:0001627) co-occurs whenever the variant overlaps an intron
+        // INTERIOR — Ensembl's `within_intron`/`intronic` flag. A deletion spanning the
+        // exon/intron boundary is therefore BOTH the coding/splice terms AND
+        // intron_variant (a union, not an exclusive branch). The essential-splice
+        // dinucleotides are excluded by `is_intronic`, so a variant only at the
+        // donor/acceptor is not called intron_variant.
+        if splice::is_intronic(transcript, var_start, var_end)
+            && !consequences.contains(&Consequence::IntronVariant)
+        {
+            consequences.push(Consequence::IntronVariant);
         }
 
         // If still no consequences, add catch-all
