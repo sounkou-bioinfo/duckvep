@@ -92,3 +92,23 @@ FROM UNNEST(vep_consequence('17', 43045820, 'A', 'AC')) u(c)
 WHERE c.transcript_id = 'ENST00000357654';
 ----
 intron_variant
+
+# INTRON CO-OCCURRENCE (union, not exclusive branch): a deletion spanning the donor
+# INTO the intron interior is BOTH the splice terms AND intron_variant. The interval
+# [43047639,43047642] reaches the interior (<= intron_end-2 = 43047640), so
+# intron_variant co-occurs — the boundary-indel case the union fix added.
+query T
+SELECT list_aggregate(list_sort(c.consequence),'string_agg','&')
+FROM UNNEST(vep_consequence('17', 43047638, 43047642, 'NNNNN', 'N')) u(c)
+WHERE c.transcript_id = 'ENST00000357654';
+----
+intron_variant&splice_donor_region_variant&splice_donor_variant
+
+# Deletion at the acceptor reaching the polypyrimidine interior -> intron_variant +
+# polypyrimidine + splice_region all co-occur.
+query T
+SELECT list_aggregate(list_sort(c.consequence),'string_agg','&')
+FROM UNNEST(vep_consequence('17', 43045805, 43045807, 'NNN', 'N')) u(c)
+WHERE c.transcript_id = 'ENST00000357654';
+----
+intron_variant&splice_polypyrimidine_tract_variant&splice_region_variant
