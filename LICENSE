@@ -1,0 +1,29 @@
+duckvep — DuckDB-native variant effect prediction
+Copyright (C) 2026 Sounkou Mahamane Toure and contributors
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 2 of the License, or (at your option) any later
+version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
+
+SPDX-License-Identifier: GPL-2.0-or-later
+
+----------------------------------------------------------------------------
+
+Third-party code
+
+This project vendors portions of fastVEP (https://github.com/Huang-lab/fastVEP)
+under vendor/ — the crates fastvep-core, fastvep-genome, fastvep-cache,
+fastvep-consequence, and fastvep-hgvs. Those files are licensed under the
+Apache License, Version 2.0, and retain that license (see vendor/NOTICE.md).
+The Apache-2.0 license is one-way compatible with the GNU GPL version 3, so the
+combined work is distributed under GPL-2.0-or-later (exercising the "or later"
+option for the Apache-2.0-derived portions). Local modifications to the vendored
+crates are recorded in PATCHES.md and in this repository's git history.

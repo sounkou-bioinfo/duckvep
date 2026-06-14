@@ -163,36 +163,35 @@ FROM (VALUES ('chr1', 100, 'A', ['G']),
 
 ## Composing with duckhts
 
-duckvep is a DuckDB-native extension, so it composes with **[duckhts](https://github.com/sounkou-bioinfo/duckhts)**
-(htslib-backed format readers) by just loading both and writing a `JOIN` — no
-glue code, no shared format. duckhts brings `read_gff` (a queryable attribute
-`MAP`, tabix region scans), `read_vcf`/`read_bcf`, etc.; duckvep brings the VEP
-engine. They share nothing but the DuckDB v1.5.3 ABI and SQL:
+duckvep composes with **[duckhts](https://github.com/sounkou-bioinfo/duckhts)**
+(htslib-backed format readers, a DuckDB **community extension**) by just loading
+both and writing a `JOIN` — no glue code, no shared format. duckhts brings
+`read_gff` (a queryable attribute `MAP`, tabix region scans), `read_vcf`/
+`read_bcf`, etc.; duckvep brings the VEP engine. They share nothing but the
+DuckDB ABI and SQL. This block is **executed live** in this README — gene
+metadata comes from duckhts, consequence + HGVS from duckvep:
 
-```sql
-LOAD 'build/release/duckvep.duckdb_extension';
-LOAD 'duckhts.duckdb_extension';
-SELECT vep_load_cache('GRCh38.112.gff3.gz', 'chr17.fa');
-
--- gene metadata from duckhts read_gff, consequence + HGVS from duckvep:
+```{sql}
+INSTALL duckhts FROM community;
+LOAD duckhts;
 WITH csq AS (
-  SELECT c.gene_id, c.consequence, c.impact, c.hgvsc, c.hgvsp
+  SELECT c.gene_id, c.consequence, c.hgvsc
   FROM UNNEST(vep_consequence('17', 43124090, 'A', 'G')) AS u(c)
   WHERE c.canonical
 ), genes AS (
-  SELECT attributes_map['gene_id'] AS gene_id,
-         attributes_map['Name']    AS gene_name
-  FROM read_gff('chr17.gff3.gz', region := '17:43044295-43125483',
-                attributes_map := true)
+  SELECT attributes_map['gene_id'] AS gene_id, attributes_map['Name'] AS gene_name
+  FROM read_gff('test/data/test.gff3', attributes_map := true)
   WHERE feature = 'gene'
 )
-SELECT g.gene_name, csq.consequence, csq.hgvsc, csq.hgvsp
+SELECT g.gene_name, csq.consequence, csq.hgvsc
 FROM csq JOIN genes g USING (gene_id);
--- BRCA1 | [synonymous_variant] | ENST00000357654.9:c.7T>C | ENSP00000350283.1:p.Leu3=
 ```
 
-A runnable version is in [`scripts/duckhts_integration_demo.sh`](scripts/duckhts_integration_demo.sh).
+A FASTA-backed, tabix-region version (adding `hgvsp`) is in
+[`scripts/duckhts_integration_demo.sh`](scripts/duckhts_integration_demo.sh).
 
 ## License
 
-Apache-2.0.
+GPL-2.0-or-later. duckvep vendors parts of [fastVEP](https://github.com/Huang-lab/fastVEP)
+(Apache-2.0, compatible with GPL ≥ 2) — see [`vendor/NOTICE.md`](vendor/NOTICE.md)
+and [`PATCHES.md`](PATCHES.md) for the vendored crates and our divergences.

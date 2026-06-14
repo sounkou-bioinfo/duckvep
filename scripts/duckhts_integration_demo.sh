@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
-# Seamless duckvep <-> duckhts integration: BOTH loadable DuckDB extensions in one
-# session, composed by the optimizer. duckhts provides the rich format readers
-# (read_gff with a queryable attribute MAP, read_vcf/read_bcf, tabix region scans);
-# duckvep provides the VEP engine (vep_consequence / vep_annotate / HGVS). They are
-# independent extensions sharing nothing but the DuckDB v1.5.3 ABI and SQL — the
-# integration is just a JOIN, which is the whole point of being DuckDB-native.
+# Seamless duckvep <-> duckhts integration: BOTH DuckDB extensions in one session,
+# composed by the optimizer. duckhts (a DuckDB *community extension*) provides the
+# rich format readers (read_gff with a queryable attribute MAP, read_vcf/read_bcf,
+# tabix region scans); duckvep provides the VEP engine (vep_consequence /
+# vep_annotate / HGVS). They are independent extensions sharing nothing but the
+# DuckDB ABI and SQL — the integration is just a JOIN, the point of being
+# DuckDB-native.
 #
 # Usage: scripts/duckhts_integration_demo.sh [duckhts.duckdb_extension]
+#   no arg  -> INSTALL duckhts FROM community (needs network once)
+#   arg     -> LOAD a local duckhts.duckdb_extension build
 set -euo pipefail
 ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 DUCKDB="$ROOT/.tools/duckdb"
 DUCKVEP="$ROOT/build/release/duckvep.duckdb_extension"
-DUCKHTS="${1:-/root/duckhts/build/release/duckhts.duckdb_extension}"
+if [ $# -ge 1 ]; then
+  LOAD_DUCKHTS="LOAD '$1';"
+else
+  LOAD_DUCKHTS="INSTALL duckhts FROM community; LOAD duckhts;"
+fi
 GFF="$ROOT/data/giab/GRCh38.112.gff3.gz"
 FA="$ROOT/data/giab/chr17.fa"
 # A tabix-indexed GFF for duckhts region scans (bgzip + .tbi). Built on demand.
@@ -23,7 +30,7 @@ fi
 
 "$DUCKDB" -unsigned -c "
 LOAD '$DUCKVEP';
-LOAD '$DUCKHTS';
+$LOAD_DUCKHTS
 SELECT vep_load_cache('$GFF', '$FA');
 
 -- duckhts read_gff (rich attribute MAP, tabix region scan) JOINED to duckvep

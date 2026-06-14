@@ -278,6 +278,10 @@ impl ConsequencePredictor {
                     ref_allele, alt_allele, transcript, cds_start, cds_end,
                 );
                 if let Some((conseq, aa, cdn)) = coding_conseq {
+                    // VEP pairs incomplete_terminal_codon_variant with coding_sequence_variant.
+                    if conseq == Consequence::IncompleteTerminalCodonVariant {
+                        consequences.push(Consequence::CodingSequenceVariant);
+                    }
                     consequences.push(conseq);
                     amino_acids = aa;
                     codons = cdn;
@@ -414,6 +418,13 @@ impl ConsequencePredictor {
             let codon_offset = ((cds_pos_start - 1) % 3) as usize;
             let codon_start = codon_number * 3;
 
+            // Incomplete terminal codon (Ensembl cds_end_NF / CDS length not a
+            // multiple of 3): the last codon runs past the translateable sequence
+            // and cannot be translated. VEP reports incomplete_terminal_codon_variant.
+            if codon_start < seq_bytes.len() && codon_start + 3 > seq_bytes.len() {
+                return Some((Consequence::IncompleteTerminalCodonVariant, None, None));
+            }
+
             if codon_start + 3 <= seq_bytes.len() {
                 let ref_codon = [
                     seq_bytes[codon_start],
@@ -446,9 +457,25 @@ impl ConsequencePredictor {
                 let codon_pair = Some((ref_codon_str, alt_codon_str));
                 let aa_pair = Some((ref_aa_str.clone(), alt_aa_str.clone()));
 
-                // Check if this affects the start codon
-                if codon_number == 0 && !CodonTable::is_start(&alt_codon) {
-                    return Some((Consequence::StartLost, aa_pair, codon_pair));
+                // Start codon. `start_lost` is, per Ensembl, a change to the
+                // *canonical start codon* — so it requires the REFERENCE first codon
+                // to actually be a start (ATG) that the variant destroys. Checking
+                // only the alt codon (as upstream did) mis-fires on transcripts whose
+                // annotated CDS does not begin with ATG: incomplete 5' CDS
+                // (`cds_start_NF`, non-zero start phase), or any non-ATG annotated
+                // start. A non-zero start phase additionally means codon 0 is the
+                // incomplete leading codon (untranslatable -> coding_sequence_variant).
+                if codon_number == 0 {
+                    if transcript.codon_table_start_phase != 0 {
+                        return Some((Consequence::CodingSequenceVariant, None, None));
+                    }
+                    let incomplete_start = transcript.flags.iter().any(|f| f == "cds_start_NF");
+                    if !incomplete_start
+                        && CodonTable::is_start(&ref_codon)
+                        && !CodonTable::is_start(&alt_codon)
+                    {
+                        return Some((Consequence::StartLost, aa_pair, codon_pair));
+                    }
                 }
 
                 // Determine consequence type

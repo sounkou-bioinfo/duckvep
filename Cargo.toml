@@ -3,7 +3,10 @@ name = "duckvep"
 version = "0.1.0"
 edition = "2021"
 description = "DuckDB-native variant effect prediction: SQL readers (noodles), VEP consequence/HGVS/ACMG UDFs, Parquet annotation sources"
-license = "Apache-2.0"
+# duckvep itself is GPL-2.0-or-later. The vendored fastVEP crates under vendor/
+# remain Apache-2.0 (their workspace.package license, below) — Apache-2.0 is
+# compatible with GPL >= 2 via the "or later" (GPLv3) option. See PATCHES.md.
+license = "GPL-2.0-or-later"
 
 [lib]
 crate-type = ["cdylib"]
