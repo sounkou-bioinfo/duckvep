@@ -88,8 +88,9 @@ struct CodingContext {
     first_codon: usize,
     /// the affected codon span runs past the end of the translateable CDS.
     incomplete_terminal: bool,
-    /// reference codon sequence spanning the change (whole codons).
+    /// reference / alternate codon sequence spanning the change (whole codons).
     ref_codons: Vec<u8>,
+    alt_codons: Vec<u8>,
     /// translated reference / alternate peptides over the affected window.
     ref_pep: Vec<u8>,
     alt_pep: Vec<u8>,
@@ -121,6 +122,21 @@ fn minimal_alleles(r: &Allele, a: &Allele) -> (Vec<u8>, Vec<u8>) {
         s += 1;
     }
     (rb[p..rb.len() - s].to_vec(), ab[p..ab.len() - s].to_vec())
+}
+
+/// Trim the shared prefix and suffix of two byte slices (Ensembl `trim_sequences`),
+/// returning the differing middles. Used to test whether an inframe deletion's alt
+/// codon matches a contiguous part of the ref codon (clean deletion vs delins).
+fn trim_common<'a>(r: &'a [u8], a: &'a [u8]) -> (&'a [u8], &'a [u8]) {
+    let mut p = 0;
+    while p < r.len() && p < a.len() && r[p] == a[p] {
+        p += 1;
+    }
+    let mut s = 0;
+    while s < r.len().saturating_sub(p) && s < a.len().saturating_sub(p) && r[r.len() - 1 - s] == a[a.len() - 1 - s] {
+        s += 1;
+    }
+    (&r[p..r.len() - s], &a[p..a.len() - s])
 }
 
 /// Convert one variant into a CDS edit in transcript orientation. `cds_start`/`cds_end`
@@ -617,6 +633,7 @@ impl ConsequencePredictor {
             ref_pep: translate(&ref_codons),
             alt_pep: translate(&alt_codons),
             ref_codons,
+            alt_codons,
             ref_len: total_ref,
             alt_len: total_alt,
         })
@@ -681,11 +698,37 @@ impl ConsequencePredictor {
         if is_frameshift {
             out.push(Consequence::FrameshiftVariant);
         } else if is_indel {
-            out.push(if net > 0 {
-                Consequence::InframeInsertion
+            // Inframe (net % 3 == 0). Ensembl only calls inframe_insertion /
+            // inframe_deletion for a CLEAN insertion/deletion — the reference
+            // sequence is preserved at one end (a prefix/suffix/internal match).
+            // A delins that rearranges the sequence is protein_altering_variant.
+            let term = if net > 0 {
+                // inframe_insertion iff the alt peptide keeps the ref peptide at one end
+                // (VEP trims everything past a stop first).
+                let mut altp = ctx.alt_pep.as_slice();
+                if let Some(i) = altp.iter().position(|&b| b == b'*') {
+                    altp = &altp[..=i];
+                }
+                if altp.starts_with(&ctx.ref_pep) || altp.ends_with(&ctx.ref_pep) {
+                    Consequence::InframeInsertion
+                } else {
+                    Consequence::ProteinAlteringVariant
+                }
             } else {
-                Consequence::InframeDeletion
-            });
+                // inframe_deletion iff the alt codon is a prefix/suffix of the ref codon,
+                // or matches internally leaving a whole-codon remainder.
+                let (r, a) = (ctx.ref_codons.as_slice(), ctx.alt_codons.as_slice());
+                let clean = r.starts_with(a) || r.ends_with(a) || {
+                    let (rt, at) = trim_common(r, a);
+                    at.is_empty() && rt.len() % 3 == 0
+                };
+                if clean {
+                    Consequence::InframeDeletion
+                } else {
+                    Consequence::ProteinAlteringVariant
+                }
+            };
+            out.push(term);
         } else if !alt_stop && !ref_stop {
             // Same-length substitution (SNV / MNV / in-codon haplotype).
             if ctx.ref_pep == ctx.alt_pep {
@@ -1805,6 +1848,35 @@ mod tests {
         assert!(predictor
             .coding_consequence_terms(&ctx, &tr)
             .contains(&Consequence::MissenseVariant));
+    }
+
+    // An inframe delins that rearranges the codon sequence (alt is NOT a clean
+    // prefix/suffix/internal match of ref) is protein_altering_variant, not
+    // inframe_deletion — matching Ensembl. codon 2-3 = GCTTCA (Ala-Ser); replacing it
+    // with TTT (Phe) deletes 3 bases inframe but keeps none of the ref at either end.
+    #[test]
+    fn test_inframe_delins_is_protein_altering() {
+        let predictor = ConsequencePredictor::default();
+        let tr = make_coding_transcript();
+        let delins = vec![CdsEdit {
+            cds_idx: 3,
+            ref_bases: b"GCTTCA".to_vec(),
+            alt_bases: b"TTT".to_vec(),
+        }];
+        let ctx = predictor.build_coding_context(&tr, &delins).unwrap();
+        assert!(predictor
+            .coding_consequence_terms(&ctx, &tr)
+            .contains(&Consequence::ProteinAlteringVariant));
+        // A clean deletion of TCA (ref keeps the GCT prefix) IS inframe_deletion.
+        let clean = vec![CdsEdit {
+            cds_idx: 3,
+            ref_bases: b"GCTTCA".to_vec(),
+            alt_bases: b"GCT".to_vec(),
+        }];
+        let ctx2 = predictor.build_coding_context(&tr, &clean).unwrap();
+        assert!(predictor
+            .coding_consequence_terms(&ctx2, &tr)
+            .contains(&Consequence::InframeDeletion));
     }
 
     #[test]
