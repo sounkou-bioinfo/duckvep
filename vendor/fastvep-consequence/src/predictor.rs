@@ -209,10 +209,10 @@ impl ConsequencePredictor {
         let in_intron = intron_info.is_some();
 
         // 4. Check splice sites (always check regardless of coding status)
-        if splice::is_splice_donor(transcript, var_start) {
+        if splice::is_splice_donor(transcript, var_start, var_end) {
             consequences.push(Consequence::SpliceDonorVariant);
         }
-        if splice::is_splice_acceptor(transcript, var_start) {
+        if splice::is_splice_acceptor(transcript, var_start, var_end) {
             consequences.push(Consequence::SpliceAcceptorVariant);
         }
 
@@ -225,20 +225,20 @@ impl ConsequencePredictor {
         });
 
         if !is_essential_splice {
-            let is_donor_5th = splice::is_splice_donor_5th_base(transcript, var_start);
-            let is_donor_region = splice::is_splice_donor_region(transcript, var_start);
+            let is_donor_5th = splice::is_splice_donor_5th_base(transcript, var_start, var_end);
+            let is_donor_region = splice::is_splice_donor_region(transcript, var_start, var_end);
             if is_donor_5th {
                 consequences.push(Consequence::SpliceDonorFifthBaseVariant);
             } else if is_donor_region {
                 consequences.push(Consequence::SpliceDonorRegionVariant);
             }
-            if splice::is_splice_polypyrimidine_tract(transcript, var_start) {
+            if splice::is_splice_polypyrimidine_tract(transcript, var_start, var_end) {
                 consequences.push(Consequence::SplicePolypyrimidineTractVariant);
             }
             // VEP excludes splice_region_variant when a more specific splice term is present:
             // splice_donor_region_variant or splice_donor_5th_base_variant
             if !is_donor_5th && !is_donor_region {
-                if splice::is_splice_region(transcript, var_start) {
+                if splice::is_splice_region(transcript, var_start, var_end) {
                     consequences.push(Consequence::SpliceRegionVariant);
                 }
             }

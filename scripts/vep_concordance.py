@@ -167,28 +167,32 @@ CREATE TABLE ann AS
   {fv_union};
 COPY (SELECT * FROM ann ORDER BY pos, transcript_id, source) TO '{OUTDIR}/annotations.parquet' (FORMAT parquet);
 WITH v AS (
-  SELECT pos,alt,transcript_id,consequence,
+  SELECT pos,alt,transcript_id,consequence,impact,
          CASE WHEN length(ref)=1 AND length(alt)=1 THEN 'snv'
               WHEN length(ref)>length(alt) THEN 'del'
               WHEN length(ref)<length(alt) THEN 'ins'
               ELSE 'mnv' END AS class
   FROM ann WHERE source='vep')
-SELECT e.source AS engine, v.class, count(*) AS pairs,
+-- Always split by IMPACT x class — an aggregate hides high-impact discordances
+-- (the clinically actionable ones). Slop is not allowed: report raw counts.
+SELECT e.source AS engine, v.impact, v.class, count(*) AS pairs,
        count(*) FILTER (WHERE v.consequence=e.consequence) AS agree,
-       round(100.0*count(*) FILTER (WHERE v.consequence=e.consequence)/nullif(count(*),0),2) AS pct
+       round(100.0*count(*) FILTER (WHERE v.consequence=e.consequence)/nullif(count(*),0),4) AS pct
 FROM (SELECT * FROM ann WHERE source<>'vep') e
 JOIN v USING (pos,alt,transcript_id)
-GROUP BY e.source, v.class ORDER BY e.source, v.class;
+GROUP BY e.source, v.impact, v.class ORDER BY e.source, v.impact, v.class;
 """
 out = subprocess.run([DUCKDB, "-csv", "-c", summary_sql], capture_output=True, text=True).stdout.strip().splitlines()
 log = f"{ROOT}/data/vep_dumps/concordance_log.csv"
 new = not os.path.exists(log)
-print(f"\n=== Concordance vs Ensembl VEP ({DATE}) — by variant class ===")
+print(f"\n=== Concordance vs Ensembl VEP ({DATE}) — split by IMPACT x class ===")
 with open(log, "a") as fh:
     if new:
-        fh.write("date,engine,class,n_variants,pairs,agree,pct\n")
+        fh.write("date,engine,impact,class,n_variants,pairs,agree,pct\n")
     for row in out[1:]:  # skip header
-        engine, vclass, pairs, agree, pct = row.split(",")
-        fh.write(f"{DATE},{engine},{vclass},{len(sample)},{pairs},{agree},{pct}\n")
-        print(f"  {engine:8s} {vclass:4s} vs VEP: pairs={pairs} agree={agree} concordance={pct}%")
+        engine, impact, vclass, pairs, agree, pct = row.split(",")
+        fh.write(f"{DATE},{engine},{impact},{vclass},{len(sample)},{pairs},{agree},{pct}\n")
+        disc = int(pairs) - int(agree)
+        flag = "  <-- HIGH-impact" if impact == "HIGH" and disc > 0 else ""
+        print(f"  {engine:8s} {impact:8s} {vclass:4s}: {disc:5d} discordant in {pairs:>7} ({pct}%){flag}")
 print(f"  dump: {OUTDIR}/annotations.parquet")

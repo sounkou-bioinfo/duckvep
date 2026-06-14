@@ -18,44 +18,49 @@ use fastvep_genome::Transcript;
 ///   splice_region (exonic side): 1-3 bases into exon
 ///   splice_region (intronic side): 3-8 bases into intron
 
-/// Check if a genomic position is in a splice donor site (first 2 intronic bases at 5' of intron).
-pub fn is_splice_donor(transcript: &Transcript, genomic_pos: u64) -> bool {
+/// Interval overlap: does `[a, b]` intersect `[lo, hi]`? All splice predicates
+/// take the variant INTERVAL `[start, end]` (not a single position), so that
+/// indels / MNVs / haplotypes spanning a splice boundary are classified correctly,
+/// matching Ensembl's `overlap($r_start, $r_end, ...)`. For an SNV `start == end`.
+fn ov(a: u64, b: u64, lo: u64, hi: u64) -> bool {
+    a <= hi && b >= lo
+}
+
+/// Does the variant interval overlap a splice donor site (first 2 intronic bases at 5' of intron)?
+pub fn is_splice_donor(transcript: &Transcript, start: u64, end: u64) -> bool {
     for_each_intron_boundary(
         transcript,
-        |donor_start, donor_end, _acc_start, _acc_end| {
-            genomic_pos >= donor_start && genomic_pos <= donor_end
-        },
+        |donor_start, donor_end, _acc_start, _acc_end| ov(start, end, donor_start, donor_end),
     )
 }
 
-/// Check if a genomic position is in a splice acceptor site (last 2 intronic bases at 3' of intron).
-pub fn is_splice_acceptor(transcript: &Transcript, genomic_pos: u64) -> bool {
+/// Does the variant interval overlap a splice acceptor site (last 2 intronic bases at 3' of intron)?
+pub fn is_splice_acceptor(transcript: &Transcript, start: u64, end: u64) -> bool {
     for_each_intron_boundary(
         transcript,
-        |_donor_start, _donor_end, acc_start, acc_end| {
-            genomic_pos >= acc_start && genomic_pos <= acc_end
-        },
+        |_donor_start, _donor_end, acc_start, acc_end| ov(start, end, acc_start, acc_end),
     )
 }
 
-/// Check if position is the 5th base of the donor site.
-pub fn is_splice_donor_5th_base(transcript: &Transcript, genomic_pos: u64) -> bool {
+/// Does the variant interval overlap the 5th base of the donor site?
+pub fn is_splice_donor_5th_base(transcript: &Transcript, start: u64, end: u64) -> bool {
     for_each_intron_boundary_extended(transcript, |intron_start, intron_end, is_donor_at_start| {
-        if is_donor_at_start {
-            genomic_pos == intron_start + 4
+        let p = if is_donor_at_start {
+            intron_start + 4
         } else {
-            genomic_pos == intron_end - 4
-        }
+            intron_end - 4
+        };
+        ov(start, end, p, p)
     })
 }
 
-/// Check if position is in the splice donor region (positions 3-6 of intron).
-pub fn is_splice_donor_region(transcript: &Transcript, genomic_pos: u64) -> bool {
+/// Does the variant interval overlap the splice donor region (positions 3-6 of intron)?
+pub fn is_splice_donor_region(transcript: &Transcript, start: u64, end: u64) -> bool {
     for_each_intron_boundary_extended(transcript, |intron_start, intron_end, is_donor_at_start| {
         if is_donor_at_start {
-            genomic_pos >= intron_start + 2 && genomic_pos <= intron_start + 5
+            ov(start, end, intron_start + 2, intron_start + 5)
         } else {
-            genomic_pos >= intron_end - 5 && genomic_pos <= intron_end - 2
+            ov(start, end, intron_end - 5, intron_end - 2)
         }
     })
 }
@@ -65,129 +70,50 @@ pub fn is_splice_donor_region(transcript: &Transcript, genomic_pos: u64) -> bool
 /// VEP defines this as positions `intron_end-16` to `intron_end-2` for the forward strand
 /// (i.e., 3 to 17 bases from the 3' end of the intron), matching the Ensembl definition
 /// of acceptor -3 to acceptor -17.
-pub fn is_splice_polypyrimidine_tract(transcript: &Transcript, genomic_pos: u64) -> bool {
+pub fn is_splice_polypyrimidine_tract(transcript: &Transcript, start: u64, end: u64) -> bool {
     for_each_intron_boundary_extended(transcript, |intron_start, intron_end, is_donor_at_start| {
-        // Polypyrimidine tract is near the acceptor end
+        // Polypyrimidine tract is near the acceptor end (Ensembl: intron_end-16 ..
+        // intron_end-2 on the forward strand; mirrored on the reverse strand).
         if is_donor_at_start {
-            // Acceptor is at intron_end
             let acc_region_start = if intron_end >= 16 {
                 intron_end - 16
             } else {
                 intron_start
             };
-            genomic_pos >= acc_region_start && genomic_pos <= intron_end.saturating_sub(2)
+            ov(start, end, acc_region_start, intron_end.saturating_sub(2))
         } else {
-            // Acceptor is at intron_start
             let acc_region_end = (intron_start + 16).min(intron_end);
-            genomic_pos >= intron_start + 2 && genomic_pos <= acc_region_end
+            ov(start, end, intron_start + 2, acc_region_end)
         }
     })
 }
 
-/// Check if position is in a splice region (3-8 bases into intron from either end,
-/// or 1-3 bases into exon from the boundary).
-pub fn is_splice_region(transcript: &Transcript, genomic_pos: u64) -> bool {
-    let sorted_exons = sorted_exons(transcript);
-    let n = sorted_exons.len();
-    if n < 2 {
-        return false;
-    }
-
-    for i in 0..n - 1 {
-        // Compute intron boundaries correctly for both strands
-        let (intron_start, intron_end) = match transcript.strand {
-            Strand::Forward => (sorted_exons[i].end + 1, sorted_exons[i + 1].start - 1),
-            Strand::Reverse => (sorted_exons[i + 1].end + 1, sorted_exons[i].start - 1),
-        };
-
+/// Does the variant interval overlap a splice region (SO:0001630): within 1-3 bases
+/// of the exon or 3-8 bases of the intron, at either junction. The bands are plain
+/// genomic intervals (strand-independent for overlap), so this is correct for
+/// indels/MNVs/haplotypes spanning the boundary.
+pub fn is_splice_region(transcript: &Transcript, start: u64, end: u64) -> bool {
+    // Introns lie in the gaps between position-sorted exons (strand-agnostic).
+    let mut exons: Vec<_> = transcript.exons.iter().collect();
+    exons.sort_by_key(|e| e.start);
+    for w in exons.windows(2) {
+        let intron_start = w[0].end + 1; // first intronic base (5' boundary side)
+        let intron_end = w[1].start - 1; // last intronic base (3' boundary side)
         if intron_start > intron_end {
             continue;
         }
-
-        // Determine donor/acceptor ends based on strand
-        let (_donor_end_genomic, _acceptor_end_genomic) = match transcript.strand {
-            Strand::Forward => (intron_start, intron_end), // donor at start, acceptor at end
-            Strand::Reverse => (intron_end, intron_start), // donor at end, acceptor at start
-        };
-
-        // Intronic splice region: 3-8 bases from donor boundary
-        let donor_dist = if genomic_pos >= intron_start && genomic_pos <= intron_end {
-            if transcript.strand == Strand::Forward {
-                genomic_pos - intron_start
-            } else {
-                intron_end - genomic_pos
-            }
-        } else {
-            u64::MAX
-        };
-        if donor_dist >= 2 && donor_dist <= 7 {
+        // 3-8 bases into the intron from each boundary + 1-3 bases into each
+        // flanking exon (the left exon ends at intron_start-1, the right exon
+        // starts at intron_end+1).
+        if ov(start, end, intron_start + 2, intron_start + 7)   // intronic, 5' band
+            || ov(start, end, intron_end - 7, intron_end - 2)   // intronic, 3' band
+            || ov(start, end, intron_start.saturating_sub(3), intron_start - 1) // left exon 1-3
+            || ov(start, end, intron_end + 1, intron_end + 3)
+        // right exon 1-3
+        {
             return true;
-        }
-
-        // Intronic splice region: 3-8 bases from acceptor boundary
-        let acceptor_dist = if genomic_pos >= intron_start && genomic_pos <= intron_end {
-            if transcript.strand == Strand::Forward {
-                intron_end - genomic_pos
-            } else {
-                genomic_pos - intron_start
-            }
-        } else {
-            u64::MAX
-        };
-        if acceptor_dist >= 2 && acceptor_dist <= 7 {
-            return true;
-        }
-
-        // Exonic splice region: 1-3 bases at exon boundaries adjacent to this intron
-        // Donor-side exon boundary
-        let donor_exon = if transcript.strand == Strand::Forward {
-            sorted_exons[i]
-        } else {
-            sorted_exons[i] // for reverse, sorted[i] is the upstream exon in transcript
-        };
-        let acceptor_exon = if transcript.strand == Strand::Forward {
-            sorted_exons[i + 1]
-        } else {
-            sorted_exons[i + 1]
-        };
-
-        // Exonic: 3 bases at donor-side exon boundary (toward intron)
-        match transcript.strand {
-            Strand::Forward => {
-                // Donor exon end
-                let region_start = if donor_exon.end >= 2 {
-                    donor_exon.end - 2
-                } else {
-                    donor_exon.start
-                };
-                if genomic_pos >= region_start && genomic_pos <= donor_exon.end {
-                    return true;
-                }
-                // Acceptor exon start
-                let region_end = (acceptor_exon.start + 2).min(acceptor_exon.end);
-                if genomic_pos >= acceptor_exon.start && genomic_pos <= region_end {
-                    return true;
-                }
-            }
-            Strand::Reverse => {
-                // Donor exon start (lower genomic coord for reverse strand donor)
-                let region_end = (donor_exon.start + 2).min(donor_exon.end);
-                if genomic_pos >= donor_exon.start && genomic_pos <= region_end {
-                    return true;
-                }
-                // Acceptor exon end (higher genomic coord for reverse strand acceptor)
-                let region_start = if acceptor_exon.end >= 2 {
-                    acceptor_exon.end - 2
-                } else {
-                    acceptor_exon.start
-                };
-                if genomic_pos >= region_start && genomic_pos <= acceptor_exon.end {
-                    return true;
-                }
-            }
         }
     }
-
     false
 }
 
