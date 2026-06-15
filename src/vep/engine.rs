@@ -156,6 +156,10 @@ impl EngineContext {
         let position = GenomicPosition::new(chrom.to_string(), pos, end, Strand::Forward);
         let query_start = pos.saturating_sub(self.distance).max(1);
         let query_end = end + self.distance;
+        // JUSTIFIED default: a `get_transcripts` Err (or a contig absent from the index)
+        // means there are no candidate transcripts for THIS variant — annotation is
+        // best-effort per variant, so we yield no rows for it rather than aborting the whole
+        // scan. The empty result is then handled by the `is_empty()` early return below.
         let overlapping = self
             .transcripts
             .get_transcripts(chrom, query_start, query_end)
@@ -537,11 +541,12 @@ fn annotate_all(
 
     while reader.read_record(&mut record)? != 0 {
         let chrom = record.reference_sequence_name().to_string();
-        let pos = record
-            .variant_start()
-            .transpose()?
-            .map(usize::from)
-            .unwrap_or(0) as u64;
+        // A record with no POS is malformed; skip it rather than annotating at the invalid
+        // coordinate 0 (`unwrap_or(0)` would have masked it). The `?` propagates a parse Err.
+        let pos = match record.variant_start().transpose()? {
+            Some(p) => usize::from(p) as u64,
+            None => continue,
+        };
         let ref_str = record.reference_bases().to_string();
         let alt_raw = record.alternate_bases().as_ref().to_string();
         // INFO/END spans symbolic SVs (<DEL>/<CNV>/…) past their 1 bp ref anchor.
