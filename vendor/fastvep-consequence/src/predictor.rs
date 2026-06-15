@@ -494,62 +494,22 @@ impl ConsequencePredictor {
                 consequences.push(Consequence::ThreePrimeUtrVariant);
             }
 
-            if in_coding_region && in_exon && ref_reaches_essential {
-                // The variant reaches an essential splice site (donor/acceptor), so it
-                // straddles the exon/intron boundary and is not fully within the CDS —
-                // Ensembl cannot determine the peptide and uses the generic
-                // coding_sequence_variant (the specific in-frame/frameshift term would
-                // be unreliable). The splice term itself is already pushed above.
-                consequences.push(Consequence::CodingSequenceVariant);
-            } else if in_coding_region && in_exon {
-                // Coding exonic variant. TERMS come from the peptide-level predicate
-                // set (`coding_terms_for_variant`, collecting every applicable Ensembl
-                // overlap-consequence); the amino-acid/codon DISPLAY comes from the
-                // existing HGVS-validated computation.
+            if in_coding_region && in_exon {
+                // Coding exonic variant. TERMS = peptide predicate set + the CDS-boundary
+                // straddle rules (resolved flatly in `resolve_coding_terms`); the
+                // amino-acid/codon DISPLAY comes from the HGVS-validated computation.
                 let display = self.predict_coding_consequence(
                     ref_allele, alt_allele, transcript, cds_start, cds_end,
                 );
                 let terms = self.coding_terms_for_variant(
                     ref_allele, alt_allele, transcript, cds_start, cds_end,
                 );
-                // When the variant straddles the CDS boundary into a UTR, only the
-                // start/stop boundary terms survive (the start/stop codon is genuinely
-                // hit); the length-based terms are suppressed (Ensembl: cds bounds
-                // undefined / partial codon), and the UTR term (pushed above) carries it.
-                let keep = |t: Consequence| {
-                    !straddles_cds
-                        || matches!(
-                            t,
-                            Consequence::StartLost
-                                | Consequence::StartRetainedVariant
-                                | Consequence::StopGained
-                                | Consequence::StopLost
-                                | Consequence::StopRetainedVariant
-                        )
-                };
-                match terms {
-                    Some(ts) => {
-                        for t in ts.into_iter().filter(|t| keep(*t)) {
-                            // VEP pairs incomplete_terminal_codon_variant with coding_sequence_variant.
-                            if t == Consequence::IncompleteTerminalCodonVariant {
-                                consequences.push(Consequence::CodingSequenceVariant);
-                            }
-                            consequences.push(t);
-                        }
-                    }
-                    None => {
-                        // No coding context (e.g. no translateable sequence): fall back
-                        // to the legacy single-term path.
-                        if let Some((conseq, _, _)) = &display {
-                            if *conseq == Consequence::IncompleteTerminalCodonVariant {
-                                consequences.push(Consequence::CodingSequenceVariant);
-                            }
-                            consequences.push(*conseq);
-                        } else {
-                            consequences.push(Consequence::CodingSequenceVariant);
-                        }
-                    }
-                }
+                consequences.extend(Self::resolve_coding_terms(
+                    terms,
+                    display.as_ref().map(|(c, _, _)| *c),
+                    straddles_cds,
+                    ref_reaches_essential,
+                ));
                 if let Some((_, aa, cdn)) = display {
                     amino_acids = aa;
                     codons = cdn;
@@ -642,6 +602,54 @@ impl ConsequencePredictor {
         let edit = variant_to_cds_edit(ref_allele, alt_allele, cds_start, cds_end, transcript.strand)?;
         let ctx = self.build_coding_context(transcript, &[edit])?;
         Some(self.coding_consequence_terms(&ctx, transcript))
+    }
+
+    /// Resolve the coding TERMS for an exonic-coding variant, applying the CDS-boundary
+    /// straddle rules flatly (no nesting in the caller). `raw` is the peptide predicate
+    /// set; `legacy` is the single-term fallback when no coding context could be built.
+    ///   - reaching an essential splice site -> the peptide is undeterminable (part is
+    ///     intronic) -> the generic coding_sequence_variant;
+    ///   - straddling a UTR -> only the start/stop boundary terms survive;
+    ///   - otherwise -> all terms, pairing incomplete_terminal with coding_sequence.
+    fn resolve_coding_terms(
+        raw: Option<Vec<Consequence>>,
+        legacy: Option<Consequence>,
+        straddles_cds: bool,
+        ref_reaches_essential: bool,
+    ) -> Vec<Consequence> {
+        let mut out = Vec::new();
+        if ref_reaches_essential {
+            out.push(Consequence::CodingSequenceVariant);
+            return out;
+        }
+        let terms = match raw.or_else(|| legacy.map(|c| vec![c])) {
+            Some(ts) => ts,
+            None => {
+                out.push(Consequence::CodingSequenceVariant);
+                return out;
+            }
+        };
+        let is_boundary = |t: Consequence| {
+            matches!(
+                t,
+                Consequence::StartLost
+                    | Consequence::StartRetainedVariant
+                    | Consequence::StopGained
+                    | Consequence::StopLost
+                    | Consequence::StopRetainedVariant
+            )
+        };
+        for t in terms {
+            if straddles_cds && !is_boundary(t) {
+                continue;
+            }
+            // VEP pairs incomplete_terminal_codon_variant with coding_sequence_variant.
+            if t == Consequence::IncompleteTerminalCodonVariant {
+                out.push(Consequence::CodingSequenceVariant);
+            }
+            out.push(t);
+        }
+        out
     }
 
     /// Build the peptide/codon view of a set of edits applied to the transcript CDS.
