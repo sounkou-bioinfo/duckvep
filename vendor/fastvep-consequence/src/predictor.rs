@@ -138,6 +138,48 @@ struct CodingContext {
     stop_altered: bool,
 }
 
+/// Ensembl-style coordinate/protein projection of one variant onto one transcript — the
+/// home for BOUNDARY predicates (start/stop), which need cDNA / CDS / protein coordinates
+/// and the start/stop-codon windows, NOT the CDS-codon-index peptide window of
+/// `CodingContext`. (pi review: boundary semantics belong here, phase-correct and
+/// circular/codon-table-aware, so they stop fighting the codon-index/N-padding model.)
+/// `cil_stop_term` + the SNV start path are its first members; future straddle / insertion
+/// `consider_ins_len` / MNV-at-start work builds out from here.
+struct VepAlleleContext {
+    cds_start_nf: bool,
+    cdna_start: Option<u64>,
+    cdna_end: Option<u64>,
+    cdna_coding_start: Option<u64>,
+    protein_start: Option<u64>,
+}
+
+impl VepAlleleContext {
+    /// Ensembl `_overlaps_start_codon`: the variant's cDNA interval overlaps the start
+    /// codon `[cdna_coding_start, +2]` of a transcript that is NOT cds_start_NF. cDNA-based
+    /// => phase-correct (a non-ATG / non-zero-phase 5'-incomplete start is still caught).
+    fn overlaps_start_codon(&self) -> bool {
+        if self.cds_start_nf {
+            return false;
+        }
+        match (self.cdna_start, self.cdna_end, self.cdna_coding_start) {
+            (Some(s), Some(e), Some(cc)) => s.min(e) <= cc + 2 && cc <= s.max(e),
+            _ => false,
+        }
+    }
+
+    /// Ensembl `translation_start == 1` — the variant's protein position is the initiator
+    /// residue. VEP requires this SEPARATELY from `_overlaps_start_codon` (the missing
+    /// discriminator that made the codon-index `at_start` patches over-fire).
+    fn translation_start_is_one(&self) -> bool {
+        self.protein_start == Some(1)
+    }
+
+    /// Both facts VEP's SNV `start_lost` needs before the peptide residue-change check.
+    fn start_codon_change_eligible(&self) -> bool {
+        self.overlaps_start_codon() && self.translation_start_is_one()
+    }
+}
+
 /// Trim the shared prefix/suffix of two alleles to their minimal changed bytes
 /// (genomic orientation). Matches VEP's minimal representation; e.g. GAATTT/G -> (AATTT, "").
 fn minimal_alleles(r: &Allele, a: &Allele) -> (Vec<u8>, Vec<u8>) {
@@ -642,24 +684,24 @@ impl ConsequencePredictor {
                 let display = self.predict_coding_consequence(
                     ref_allele, alt_allele, transcript, cds_start, cds_end,
                 );
-                // VEP `start_lost` (SNV) needs TWO separate facts (pi review): the variant's
-                // cDNA overlaps the start codon [cdna_coding_start, +2] of a non-cds_start_NF
-                // transcript (`_overlaps_start_codon`, phase-correct), AND translation_start
-                // == 1 (protein position 1). Passed as predicate-specific inputs; the strict
+                // VEP `start_lost` (SNV) needs TWO separate facts (pi review): the variant
+                // overlaps the start codon (`_overlaps_start_codon`, phase-correct) AND
+                // translation_start == 1 — both live on `VepAlleleContext`. The strict
                 // ATG/mito `at_start` path is left intact (so mito + the baseline are safe).
-                let overlaps_start_codon = !transcript.flags.iter().any(|f| f == "cds_start_NF")
-                    && match (cdna_start, cdna_end, transcript.cdna_coding_start) {
-                        (Some(cs), Some(ce), Some(cc)) => cs.min(ce) <= cc + 2 && cc <= cs.max(ce),
-                        _ => false,
-                    };
-                let translation_start_one = protein_start == Some(1);
+                let vep_ctx = VepAlleleContext {
+                    cds_start_nf: transcript.flags.iter().any(|f| f == "cds_start_NF"),
+                    cdna_start,
+                    cdna_end,
+                    cdna_coding_start: transcript.cdna_coding_start,
+                    protein_start,
+                };
                 let terms = self.coding_terms_for_variant(
                     ref_allele,
                     alt_allele,
                     transcript,
                     cds_start,
                     cds_end,
-                    overlaps_start_codon && translation_start_one,
+                    vep_ctx.start_codon_change_eligible(),
                 );
                 // When the variant reaches an essential splice site, the windowed peptide
                 // is undeterminable EXCEPT the stop term, which Ensembl derives from the
