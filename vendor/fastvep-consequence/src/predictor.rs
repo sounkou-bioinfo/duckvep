@@ -554,9 +554,11 @@ impl ConsequencePredictor {
                 }
             }
 
-            if consequences.is_empty() {
-                consequences.push(Consequence::IntergenicVariant);
-            }
+            // A candidate transcript beyond the up/downstream distance yields no term.
+            // Ensembl OMITS such a transcript entirely (intergenic_variant is a GLOBAL term
+            // for a variant with NO transcript in range, never attached to a transcript) —
+            // so we leave the consequence set empty and the engine drops the row, rather
+            // than emitting a spurious per-transcript intergenic_variant.
 
             let impact = Consequence::worst_impact(&consequences).unwrap_or(Impact::Modifier);
             return AlleleConsequenceResult {
@@ -1982,8 +1984,11 @@ mod tests {
             None,
         );
 
+        // Far beyond the up/downstream distance: Ensembl reports NO per-transcript term
+        // (intergenic_variant is a global, transcript-less consequence), so the set is
+        // empty and the engine omits the row.
         let ac = &result.transcript_consequences[0].allele_consequences[0];
-        assert!(ac.consequences.contains(&Consequence::IntergenicVariant));
+        assert!(ac.consequences.is_empty());
     }
 
     #[test]
@@ -2470,10 +2475,12 @@ mod tests {
         assert!(result.transcript_consequences[0].allele_consequences[0]
             .consequences
             .contains(&Consequence::IntronVariant));
-        // tr2: 8500bp away (>5000), so intergenic
+        // tr2: 8500bp away (>5000) — beyond the up/downstream distance, so Ensembl OMITS
+        // it (no per-transcript intergenic_variant); the consequence set is empty and the
+        // engine drops the row.
         assert!(result.transcript_consequences[1].allele_consequences[0]
             .consequences
-            .contains(&Consequence::IntergenicVariant));
+            .is_empty());
     }
 
     #[test]

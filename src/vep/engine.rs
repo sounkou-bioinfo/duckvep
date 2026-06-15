@@ -202,6 +202,12 @@ impl EngineContext {
         for tc in &transcript_consequences {
             let tr = tmap.get(&*tc.transcript_id).copied();
             for ac in &tc.allele_consequences {
+                // Ensembl omits a (variant, transcript) pair that yields no consequence
+                // (e.g. a candidate transcript beyond the up/downstream distance) — emit no
+                // row rather than an empty one.
+                if ac.consequences.is_empty() {
+                    continue;
+                }
                 let (hgvsg, hgvsc, hgvsp) = match tr {
                     // SV/breakend HGVS (del/dup/ins ranges) is its own spec and not
                     // yet validated, so we leave it empty rather than emit guesses.
