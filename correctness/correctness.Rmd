@@ -30,6 +30,17 @@ hides *where* the misses are. fastVEP's headline "99.99%" concealed highly
 significant discordances concentrated in HIGH-impact sites. So every figure is
 split by **IMPACT × variant class**, and HIGH-impact discordances are surfaced.
 
+**Scale vs the fastVEP paper.** The fastVEP manuscript validates accuracy as
+"100% concordance across 23 annotation fields on **2,340 shared transcript-allele
+pairs**" (GIAB HG002 chr22) against Ensembl VEP **115.1**. That is a small, mostly-SNV
+slice — concordance on a few thousand SNVs is the *easy* regime. This harness instead
+runs **~1.4M `(variant, transcript)` pairs** (50,000 biallelic ClinVar variants, indels
+and MNVs included) and scores the **consequence** SO-term set for *both* duckvep and
+fastVEP against the **same** offline VEP 116 oracle. That is where the divergences a
+2,340-pair set never surfaces appear — concentrated, for fastVEP, in HIGH-impact indels
+and MNVs (table below). Reporting both engines against one oracle keeps the head-to-head
+honest in both directions.
+
 ## Concordance vs Ensembl VEP — split by IMPACT × class
 
 `discordant / pairs` (lower discordant is better). duckvep is the same engine as
@@ -139,7 +150,32 @@ knitr::kable(head(et, 16), col.names = c("type", "impact", "VEP calls", "duckvep
              row.names = FALSE, format.args = list(big.mark = ","))
 ```
 
-**duckvep-specific regressions: `r format(reg_pairs, big.mark=",")` pairs** (a
+### Split by SO term (fair to fastVEP)
+
+The table above keys on the **whole** consequence string, so a one-term difference is
+hidden inside shared co-occurring terms (`NMD_transcript_variant`, 5′/3′ UTR). This
+strips each discordance to the **symmetric difference** — only the SO terms VEP and
+duckvep disagree on — and judges fastVEP **term-by-term**: a `regression` here means
+fastVEP is correct on *exactly* the terms duckvep gets wrong (has every term duckvep
+missed, adds none duckvep added), so a shared `c1&c2` gap is never mis-blamed on duckvep
+and a genuine single-term fastVEP win is not masked by the rest of its string. Generated
+from `correctness/data/so_term_transitions.csv`.
+
+```{r echo=FALSE, message=FALSE}
+st <- csv("correctness/data/so_term_transitions.csv")
+st$type <- ifelse(as.logical(st$duckvep_specific_regression), "regression", "shared")
+st <- st[order(-st$n), c("type", "impact", "vep_terms", "duckvep_terms", "n")]
+st_reg <- sum(st$n[st$type == "regression"])
+knitr::kable(head(st, 16), col.names = c("type", "impact", "VEP term(s)", "duckvep term(s)", "n"),
+             row.names = FALSE, format.args = list(big.mark = ","))
+```
+
+At the SO-term level, **`r format(st_reg, big.mark=",")` pairs** are duckvep-specific
+(fastVEP right on the exact differing term) — these are the only places duckvep is worse
+than upstream on a term; everything else is a shared engine gap or a term fastVEP also
+misses.
+
+**duckvep-specific regressions (whole-string): `r format(reg_pairs, big.mark=",")` pairs** (a
 `regression` is a discordance where fastVEP *matches* VEP, so our patches — not the
 inherited engine — are responsible). The interval-aware splice rewrite originally
 introduced ~1,900 such pairs; root-causing them against Ensembl

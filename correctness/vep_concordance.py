@@ -231,6 +231,39 @@ COPY (
   WHERE v.vc <> dd.dc GROUP BY ALL ORDER BY n DESC LIMIT 60
 ) TO '{ROOT}/correctness/data/error_transitions.csv' (HEADER, FORMAT csv);
 
+-- (d) recorded: error transitions split to the DIFFERING SO TERMS. The full-string
+-- transition (c) is dominated by SHARED terms (NMD_transcript_variant, UTR co-occurrence)
+-- that both engines get right; this strips them to the symmetric difference so the real
+-- divergence is visible. The regression flag is computed TERM-FAIRLY: it is a
+-- duckvep-specific regression only when fastVEP is correct on EXACTLY the terms duckvep is
+-- wrong on (has every term duckvep missed, and none duckvep spuriously added) — so a
+-- shared c1&c2 gap is never mis-blamed on duckvep, and a single-term fastVEP win is not
+-- hidden by the rest of its string matching or not.
+COPY (
+  WITH v AS (SELECT pos,ref,alt,transcript_id,consequence vc,impact FROM ann WHERE source='vep'),
+       dd AS (SELECT pos,ref,alt,transcript_id,consequence dc FROM ann WHERE source='duckvep'),
+       ff AS (SELECT pos,ref,alt,transcript_id,consequence fc FROM ann WHERE source='fastvep'),
+    j AS (
+      SELECT v.impact, string_split(v.vc,'&') AS vt, string_split(dd.dc,'&') AS dt,
+             coalesce(string_split(ff.fc,'&'), []) AS ft
+      FROM v JOIN dd USING(pos,ref,alt,transcript_id) LEFT JOIN ff USING(pos,ref,alt,transcript_id)
+      WHERE v.vc <> dd.dc
+    ),
+    t AS (
+      SELECT impact,
+             list_filter(vt, x -> NOT list_contains(dt,x)) AS vep_only,
+             list_filter(dt, x -> NOT list_contains(vt,x)) AS dv_only, ft
+      FROM j
+    )
+  SELECT '{DATE}' AS date, impact,
+         coalesce(list_aggregate(list_sort(vep_only),'string_agg','&'),'(none)') AS vep_terms,
+         coalesce(list_aggregate(list_sort(dv_only),'string_agg','&'),'(none)') AS duckvep_terms,
+         (len(list_filter(vep_only, x -> NOT list_contains(ft,x)))=0
+          AND len(list_filter(dv_only, x -> list_contains(ft,x)))=0) AS duckvep_specific_regression,
+         count(*) AS n
+  FROM t GROUP BY ALL ORDER BY n DESC LIMIT 60
+) TO '{ROOT}/correctness/data/so_term_transitions.csv' (HEADER, FORMAT csv);
+
 -- printed summary (impact x class)
 SELECT engine, impact, class, count(*) AS pairs,
        count(*) FILTER (WHERE vep_csq=eng_csq) AS agree,
