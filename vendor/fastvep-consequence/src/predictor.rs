@@ -1150,12 +1150,18 @@ impl ConsequencePredictor {
         // `vep_start_overlap`) and the start residue changes to a determinable non-X.
         // This is predicate-specific (does NOT touch `coding_ok`), so it adds the 19 missed
         // non-ATG cases without removing the missense escape hatch from anything else.
-        let ref_first = ctx.ref_pep.first().copied().unwrap_or(b'X');
+        // VEP's start_lost peptide test (VariationEffect.pm:874-881) is WHOLE-STRING: the
+        // alt peptide neither starts with nor ends with the ref peptide, and is present &
+        // not "X". For a same-length MNV spanning the start codon into the next codon the
+        // first residue can be unchanged (e.g. a non-ATG CGG start: R) while a later residue
+        // flips — `alt_first != ref_first` misses that, the whole-string rule catches it.
         let vep_start_lost = vep_start_overlap
             && !is_indel
-            && ref_first != b'X'
-            && alt_first != b'X'
-            && alt_first != ref_first;
+            && !ctx.ref_pep.is_empty()
+            && !ctx.alt_pep.is_empty()
+            && ctx.alt_pep.as_slice() != b"X"
+            && !ctx.alt_pep.ends_with(&ctx.ref_pep)
+            && !ctx.alt_pep.starts_with(&ctx.ref_pep);
         let p_start_lost = (at_start && alt_first != b'M') || vep_start_lost;
         let p_start_retained = at_start && alt_first == b'M';
         let p_stop_gained = coding_ok && alt_stop && !ref_stop;
