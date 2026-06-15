@@ -731,3 +731,4 @@ date,engine,impact,class,n_variants,pairs,agree,pct
 2026-06-15,fastvep,MODIFIER,ins,50000,17711,17672,99.7798
 2026-06-15,fastvep,MODIFIER,mnv,50000,2995,2989,99.7997
 2026-06-15,fastvep,MODIFIER,snv,50000,654709,654689,99.9969
+2026-06-15,[00mengine,impact,class,50000,pairs,agree,pct

@@ -22,20 +22,23 @@ TSV=$ROOT/test/data/regression_cases.tsv
 
 out=$("$DUCKDB" -unsigned -noheader -list -c "
 LOAD '$EXT'; SELECT vep_load_cache('$GFF3','$FASTA');
-WITH got AS (
-  -- correlated subquery => EXACTLY one row per corpus case: if duckvep emits no
-  -- consequence for that transcript (a dropped/missing transcript), actual is
-  -- '(no output)' and the case FAILS rather than silently vanishing from the
-  -- denominator (reward-hacking hole flagged by the pi audit).
-  SELECT c.category, c.chrom, c.pos, c.transcript_id, c.expected,
-         coalesce((SELECT list_aggregate(list_sort(x.consequence),'string_agg','&')
-                   FROM UNNEST(vep_consequence(c.chrom, c.pos, c.ref, c.alt)) u(x)
-                   WHERE x.transcript_id = c.transcript_id), '(no output)') AS actual
-  FROM read_csv('$TSV', delim='\t', header=true) c
+WITH cases AS (
+  SELECT row_number() OVER () AS rn, * FROM read_csv('$TSV', delim='\t', header=true)
+),
+-- consequence for the matched transcript, one row per case (grouped by rn). A LEFT JOIN
+-- below keeps EVERY case even when duckvep emits no row for its transcript, so a
+-- dropped/missing transcript FAILS instead of silently vanishing from the denominator
+-- (reward-hacking hole flagged by the pi audit). Correlated UNNEST subqueries can't bind
+-- vep_consequence, hence the join form.
+ann AS (
+  SELECT c.rn, list_aggregate(list_sort(x.consequence),'string_agg','&') AS actual
+  FROM cases c, UNNEST(vep_consequence(c.chrom::VARCHAR, c.pos::BIGINT, c.ref::VARCHAR, c.alt::VARCHAR)) u(x)
+  WHERE x.transcript_id = c.transcript_id
 )
-SELECT CASE WHEN expected = actual THEN 'PASS' ELSE 'FAIL' END AS status,
-       category, chrom||':'||pos AS locus, transcript_id, expected, actual
-FROM got ORDER BY status DESC, category;")
+SELECT CASE WHEN c.expected = coalesce(ann.actual,'(no output)') THEN 'PASS' ELSE 'FAIL' END AS status,
+       c.category, c.chrom||':'||c.pos AS locus, c.transcript_id, c.expected,
+       coalesce(ann.actual,'(no output)') AS actual
+FROM cases c LEFT JOIN ann USING (rn) ORDER BY status DESC, c.category;")
 
 echo "$out"
 fails=$(printf '%s\n' "$out" | grep -c '^FAIL' || true)

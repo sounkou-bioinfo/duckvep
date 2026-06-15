@@ -11,10 +11,14 @@ Changelog, most recent first. (R-package style.)
   **every HIGH-impact SO term**. Percentages use enough precision that a non-zero
   discordance never reads as 100%.
 * **The consequence engine was rebuilt to mirror Ensembl's own structure**, taking
-  N=50000 ClinVar discordance vs offline Ensembl VEP 116 from **~3,876 → 35 (a 99%
-  reduction) with ZERO duckvep-specific regressions** at every step (every remaining
-  discordance is a *shared* gap fastVEP has too — fastVEP itself is discordant on
-  thousands of the same calls). The VEP-faithful abstractions:
+  N=50000 ClinVar discordance vs **controlled** Ensembl VEP 116 (VEP run with `--gff` on
+  the *same* gene model the engines read — so only the engine differs) from **~3,876 → 40
+  consequence discordances (a 99% reduction)**, **70 total divergence** counting emission
+  misses/extras first-class, vs fastVEP's **6,340**. Almost every remaining discordance is
+  a *shared* gap fastVEP has too; just **1** is duckvep-specific (a start-codon MNV edge).
+  (The earlier cache-oracle "35" was an undercount — the controlled `--gff` oracle, run on
+  the identical transcript set, surfaced ~23 discordances the cache had hidden. See
+  `correctness/correctness.md`.) The VEP-faithful abstractions:
   * **`CodingContext` (haplotype-ready):** coding consequences are a predicate SET
     over a peptide/codon context built from `CdsEdit`s applied to the reference CDS.
     One variant = one edit; a phased haplotype = many edits on the same CDS before

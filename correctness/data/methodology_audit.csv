@@ -1,8 +1,8 @@
 metric,value
-duckvep_discordant_on_shared,58
+duckvep_discordant_on_shared,40
 duckvep_only_pairs_emission,27
 duckvep_missing_pairs_emission,3
-duckvep_total_divergence,88
+duckvep_total_divergence,70
 fastvep_discordant_on_shared,6314
 fastvep_only_pairs_emission,23
 fastvep_missing_pairs_emission,3

@@ -114,7 +114,7 @@ def vep_offline(sample):
     # VEP is the harness bottleneck), --buffer_size sets the variants-per-chunk vector.
     # Both env-overridable; default fork to most cores (leave headroom), buffer 10k.
     fork = os.environ.get("VEP_FORK") or str(max(1, (os.cpu_count() or 4) - 4))
-    buffer_size = os.environ.get("VEP_BUFFER", "10000")
+    buffer_size = os.environ.get("VEP_BUFFER", "25000")
     if VEP_ORACLE == "gff":
         # CONTROLLED: same gene model (GFF3 + FASTA) as the engines.
         gene_model = ["--gff", MODEL_GFF, "--fasta", FASTA]
