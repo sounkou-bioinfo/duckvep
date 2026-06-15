@@ -751,122 +751,94 @@ impl ConsequencePredictor {
         ctx: &CodingContext,
         transcript: &Transcript,
     ) -> Vec<Consequence> {
-        let mut out = Vec::new();
+        // --- shared facts about the peptide change (computed once) ---
         let net = ctx.alt_len as i64 - ctx.ref_len as i64;
         let is_indel = net != 0;
-        let is_frameshift = is_indel && (net % 3 != 0);
+        let frameshift_len = is_indel && (net % 3 != 0);
         let ref_stop = ctx.ref_pep.contains(&b'*');
         let alt_stop = ctx.alt_pep.contains(&b'*');
+        let incomplete = ctx.incomplete_terminal;
 
-        // Incomplete terminal codon: the affected codon runs past the CDS; VEP cannot
-        // translate it. Pair with coding_sequence_variant (handled by caller).
-        if ctx.incomplete_terminal {
-            out.push(Consequence::IncompleteTerminalCodonVariant);
-            return out;
-        }
-
-        // Start codon: only when the variant touches codon 0 of a complete CDS whose
-        // reference first codon is a real initiator (table-aware). The initiator always
-        // encodes Met, so start_lost iff the alt no longer yields Met, else start_retained.
-        if ctx.first_codon == 0
+        // The reference first codon is a real initiator (table-aware) of a complete CDS.
+        let at_start = ctx.first_codon == 0
             && transcript.codon_table_start_phase == 0
             && !transcript.flags.iter().any(|f| f == "cds_start_NF")
             && ctx.ref_codons.len() >= 3
             && self
                 .ct(transcript)
-                .is_start(&[ctx.ref_codons[0], ctx.ref_codons[1], ctx.ref_codons[2]])
-        {
-            let alt_first = ctx.alt_pep.first().copied().unwrap_or(b'X');
-            out.push(if alt_first == b'M' {
-                Consequence::StartRetainedVariant
-            } else {
-                Consequence::StartLost
-            });
-            // A frameshift that also disrupts the start codon co-occurs with
-            // frameshift_variant (Ensembl runs both predicates); the inframe terms are
-            // suppressed by start_lost (`inframe_insertion: return 0 if start_lost`), so
-            // an inframe indel or SNV/MNV at the start stays start_lost only.
-            if is_frameshift {
-                out.push(Consequence::FrameshiftVariant);
-            }
-            return out;
-        }
+                .is_start(&[ctx.ref_codons[0], ctx.ref_codons[1], ctx.ref_codons[2]]);
+        let alt_first = ctx.alt_pep.first().copied().unwrap_or(b'X');
 
-        // Stop gained / lost (peptide-level, on the normalized/reconstructed sequence).
-        // The alt window now matches Ensembl's exactly for insertions too (a boundary
-        // insertion's window is ONLY the inserted bases — no downstream base pulled in),
-        // so insertion stop_gained is no longer an over-call: a stop is reported iff the
-        // inserted/changed codons themselves translate to one.
-        if alt_stop && !ref_stop {
-            out.push(Consequence::StopGained);
-        }
-        if ref_stop && !alt_stop {
-            out.push(Consequence::StopLost);
-        }
+        // Codon-level peptide terms are unavailable for an incomplete terminal codon,
+        // and the start-codon terms pre-empt the rest of the peptide change (Ensembl runs
+        // them, then the other peptide predicates `return 0 if start_lost`). `frameshift`
+        // is the one length term that co-occurs with start_lost.
+        let coding_ok = !incomplete && !at_start;
 
-        if is_frameshift {
-            out.push(Consequence::FrameshiftVariant);
-        } else if is_indel {
-            // Inframe (net % 3 == 0). Ensembl only calls inframe_insertion /
-            // inframe_deletion for a CLEAN insertion/deletion — the reference
-            // sequence is preserved at one end (a prefix/suffix/internal match).
-            // A delins that rearranges the sequence is protein_altering_variant.
-            // Ensembl's protein_altering_variant exclusions (VariationEffect.pm):
-            //   return 0 if $ref_pep =~ /^\*/ || $alt_pep =~ /^\*/          (a stop term)
-            //   return 0 if $alt_pep =~ /^\Q$ref_pep\E | \Q$ref_pep\E$/     (inframe-like)
-            // The inframe-like check uses the UNTRIMMED alt peptide (everything past the
-            // stop included) — e.g. alt "LITF*IQ...SDNH" ends with ref "H" -> NOT
-            // protein_altering, just stop_gained. inframe_insertion, in contrast, trims at
-            // the first stop before its prefix/suffix check.
-            let stop_starts =
-                ctx.alt_pep.first() == Some(&b'*') || ctx.ref_pep.first() == Some(&b'*');
-            let pa_excluded = stop_starts
-                || ctx.alt_pep.starts_with(&ctx.ref_pep)
-                || ctx.alt_pep.ends_with(&ctx.ref_pep);
-            let term: Option<Consequence> = if net > 0 {
-                // inframe_insertion iff the alt peptide (trimmed at the first stop) keeps
-                // the ref peptide at one end.
-                let mut altp = ctx.alt_pep.as_slice();
-                if let Some(i) = altp.iter().position(|&b| b == b'*') {
-                    altp = &altp[..=i];
-                }
-                if altp.starts_with(&ctx.ref_pep) || altp.ends_with(&ctx.ref_pep) {
-                    Some(Consequence::InframeInsertion)
-                } else if !pa_excluded {
-                    Some(Consequence::ProteinAlteringVariant)
-                } else {
-                    None
-                }
-            } else {
-                // inframe_deletion iff the alt codon is a prefix/suffix of the ref codon,
-                // or matches internally leaving a whole-codon remainder.
-                let (r, a) = (ctx.ref_codons.as_slice(), ctx.alt_codons.as_slice());
-                let clean = r.starts_with(a) || r.ends_with(a) || {
-                    let (rt, at) = trim_common(r, a);
-                    at.is_empty() && rt.len() % 3 == 0
-                };
-                if clean {
-                    Some(Consequence::InframeDeletion)
-                } else if !pa_excluded {
-                    Some(Consequence::ProteinAlteringVariant)
-                } else {
-                    None
-                }
-            };
-            if let Some(t) = term {
-                out.push(t);
+        // --- protein_altering_variant exclusions (VariationEffect.pm), shared ---
+        let stop_starts =
+            ctx.alt_pep.first() == Some(&b'*') || ctx.ref_pep.first() == Some(&b'*');
+        // inframe-like check on the UNTRIMMED alt peptide (everything past the stop).
+        let pa_excluded =
+            stop_starts || ctx.alt_pep.starts_with(&ctx.ref_pep) || ctx.alt_pep.ends_with(&ctx.ref_pep);
+        // inframe_insertion trims at the first stop before its prefix/suffix check.
+        let altp_trimmed = {
+            let s = ctx.alt_pep.as_slice();
+            match s.iter().position(|&b| b == b'*') {
+                Some(i) => &s[..=i],
+                None => s,
             }
-        } else if !alt_stop && !ref_stop {
-            // Same-length substitution (SNV / MNV / in-codon haplotype).
-            if ctx.ref_pep == ctx.alt_pep {
-                out.push(Consequence::SynonymousVariant);
-            } else {
-                out.push(Consequence::MissenseVariant);
+        };
+        let inframe_ins = altp_trimmed.starts_with(&ctx.ref_pep) || altp_trimmed.ends_with(&ctx.ref_pep);
+        let inframe_del = {
+            let (r, a) = (ctx.ref_codons.as_slice(), ctx.alt_codons.as_slice());
+            r.starts_with(a) || r.ends_with(a) || {
+                let (rt, at) = trim_common(r, a);
+                at.is_empty() && rt.len() % 3 == 0
             }
-        } else if ref_stop && alt_stop && ctx.ref_pep == ctx.alt_pep {
-            out.push(Consequence::StopRetainedVariant);
-        }
+        };
 
+        // --- independent predicates: each carries its own exclusions, none nested ---
+        let p_start_lost = at_start && alt_first != b'M';
+        let p_start_retained = at_start && alt_first == b'M';
+        let p_frameshift = !incomplete && frameshift_len;
+        let p_stop_gained = coding_ok && alt_stop && !ref_stop;
+        let p_stop_lost = coding_ok && ref_stop && !alt_stop;
+        let p_stop_retained =
+            coding_ok && !is_indel && ref_stop && alt_stop && ctx.ref_pep == ctx.alt_pep;
+        let inframe = is_indel && !frameshift_len;
+        let p_inframe_insertion = coding_ok && inframe && net > 0 && inframe_ins;
+        let p_inframe_deletion = coding_ok && inframe && net < 0 && inframe_del;
+        let p_protein_altering = coding_ok
+            && inframe
+            && !(net > 0 && inframe_ins)
+            && !(net < 0 && inframe_del)
+            && !pa_excluded;
+        let p_missense =
+            coding_ok && !is_indel && !alt_stop && !ref_stop && ctx.ref_pep != ctx.alt_pep;
+        let p_synonymous =
+            coding_ok && !is_indel && !alt_stop && !ref_stop && ctx.ref_pep == ctx.alt_pep;
+
+        // --- flat collection (filter-style); order is cosmetic, terms re-ranked later ---
+        let mut out = Vec::new();
+        for (fired, term) in [
+            (incomplete, Consequence::IncompleteTerminalCodonVariant),
+            (p_start_lost, Consequence::StartLost),
+            (p_start_retained, Consequence::StartRetainedVariant),
+            (p_stop_gained, Consequence::StopGained),
+            (p_stop_lost, Consequence::StopLost),
+            (p_stop_retained, Consequence::StopRetainedVariant),
+            (p_frameshift, Consequence::FrameshiftVariant),
+            (p_inframe_insertion, Consequence::InframeInsertion),
+            (p_inframe_deletion, Consequence::InframeDeletion),
+            (p_protein_altering, Consequence::ProteinAlteringVariant),
+            (p_missense, Consequence::MissenseVariant),
+            (p_synonymous, Consequence::SynonymousVariant),
+        ] {
+            if fired {
+                out.push(term);
+            }
+        }
         if out.is_empty() {
             out.push(Consequence::CodingSequenceVariant);
         }
