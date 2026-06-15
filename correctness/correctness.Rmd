@@ -188,6 +188,46 @@ introducing a premature stop (`frameshift_variant&stop_gained` → `frameshift_v
 and MNV codon edges — real engine accuracy work vs Ensembl, not something our patches
 broke.
 
+## Auditing the fastVEP paper's "100% concordance" claim
+
+The fastVEP manuscript reports *"100% concordance across 23 annotation fields on 2,340
+shared (allele, transcript) pairs"* vs Ensembl VEP 115.1. We reproduced its exact
+protocol — the VEP example dataset (`examples/homo_sapiens_GRCh38.vcf`) with
+`--symbol --canonical --hgvs` — and audited two words doing the heavy lifting.
+
+**"example dataset" → all SNVs.** The 173 example variants are **173/173 SNVs, zero
+indels, zero MNVs** (71% are synonymous+missense). duckvep — the *same* engine plus our
+patches — is **also 100%** on it (5,044/5,044 shared pairs). 100% concordance on a few
+thousand SNVs is the easy regime; it says nothing about the classes where the engine
+diverges.
+
+**"shared pairs" → the disagreements are excluded from the denominator.** "Shared" counts
+only (allele, transcript) pairs *both* tools emit; transcript-set divergence is dropped
+(the paper notes fastVEP adds 35 lncRNA transcripts VEP doesn't). Run at scale on 50,000
+ClinVar variants (indels + MNVs included), the numbers below are read from
+`correctness/data/methodology_audit.csv`:
+
+```{r echo=FALSE, message=FALSE}
+ma <- csv("correctness/data/methodology_audit.csv")
+mv <- function(k) as.integer(ma$value[ma$metric == k])
+audit <- data.frame(
+  metric = c("fastVEP (variant,transcript) pairs VEP never emits (dropped by \"shared\")",
+             "VEP pairs fastVEP misses (dropped by \"shared\")",
+             "fastVEP consequence discordances ON shared pairs",
+             "duckvep consequence discordances ON shared pairs"),
+  pairs = c(mv("fastvep_only_pairs_excluded_by_shared"), mv("vep_only_pairs_excluded_by_shared"),
+            mv("fastvep_discordant_on_shared"), mv("duckvep_discordant_on_shared")))
+knitr::kable(audit, col.names = c("at scale (50K ClinVar)", "pairs"),
+             row.names = FALSE, format.args = list(big.mark = ","))
+```
+
+So even using fastVEP's own **"shared pairs"** measure, fastVEP diverges from VEP on
+**`r format(mv("fastvep_discordant_on_shared"), big.mark=",")`** consequence calls once
+indels/MNVs are included — vs duckvep's **`r mv("duckvep_discordant_on_shared")`** — and a
+further **`r format(mv("fastvep_only_pairs_excluded_by_shared"), big.mark=",")`** pairs
+fastVEP emits that VEP never does are silently excluded from any "shared" denominator.
+The 100% holds only because the validation set is 173 SNVs.
+
 ## Synthetic hard-variant corpus
 
 Random ClinVar sampling almost never places an indel *exactly* on a splice

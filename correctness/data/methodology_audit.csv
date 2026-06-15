@@ -1,0 +1,7 @@
+metric,value
+vep_pairs_emitted,1425039
+fastvep_pairs_emitted,1431646
+fastvep_only_pairs_excluded_by_shared,7009
+vep_only_pairs_excluded_by_shared,402
+fastvep_discordant_on_shared,6318
+duckvep_discordant_on_shared,35

@@ -185,6 +185,40 @@ frameshift introducing a premature stop
 edges — real engine accuracy work vs Ensembl, not something our patches
 broke.
 
+## Auditing the fastVEP paper’s “100% concordance” claim
+
+The fastVEP manuscript reports *“100% concordance across 23 annotation
+fields on 2,340 shared (allele, transcript) pairs”* vs Ensembl VEP
+115.1. We reproduced its exact protocol — the VEP example dataset
+(`examples/homo_sapiens_GRCh38.vcf`) with `--symbol --canonical --hgvs`
+— and audited two words doing the heavy lifting.
+
+**“example dataset” → all SNVs.** The 173 example variants are **173/173
+SNVs, zero indels, zero MNVs** (71% are synonymous+missense). duckvep —
+the *same* engine plus our patches — is **also 100%** on it (5,044/5,044
+shared pairs). 100% concordance on a few thousand SNVs is the easy
+regime; it says nothing about the classes where the engine diverges.
+
+**“shared pairs” → the disagreements are excluded from the
+denominator.** “Shared” counts only (allele, transcript) pairs *both*
+tools emit; transcript-set divergence is dropped (the paper notes
+fastVEP adds 35 lncRNA transcripts VEP doesn’t). Run at scale on 50,000
+ClinVar variants (indels + MNVs included), the numbers below are read
+from `correctness/data/methodology_audit.csv`:
+
+| at scale (50K ClinVar)                                                   | pairs |
+|:-------------------------------------------------------------------------|------:|
+| fastVEP (variant,transcript) pairs VEP never emits (dropped by “shared”) | 7,009 |
+| VEP pairs fastVEP misses (dropped by “shared”)                           |   402 |
+| fastVEP consequence discordances ON shared pairs                         | 6,318 |
+| duckvep consequence discordances ON shared pairs                         |    35 |
+
+So even using fastVEP’s own **“shared pairs”** measure, fastVEP diverges
+from VEP on **6,318** consequence calls once indels/MNVs are included —
+vs duckvep’s **35** — and a further **7,009** pairs fastVEP emits that
+VEP never does are silently excluded from any “shared” denominator. The
+100% holds only because the validation set is 173 SNVs.
+
 ## Synthetic hard-variant corpus
 
 Random ClinVar sampling almost never places an indel *exactly* on a
