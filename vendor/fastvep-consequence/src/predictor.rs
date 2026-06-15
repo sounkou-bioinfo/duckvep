@@ -130,12 +130,6 @@ struct CodingContext {
     /// total reference / alternate bases changed (summed over edits).
     ref_len: usize,
     alt_len: usize,
-    /// the edits overlap the CDS stop codon (the last 3 CDS bases).
-    overlaps_stop: bool,
-    /// for an indel overlapping the stop: Ensembl `_ins_del_stop_altered` — applying the
-    /// edit to CDS+3'UTR leaves NO stop at the old stop position (or shortens the CDS),
-    /// so the stop is altered (-> stop_lost). `false` with `overlaps_stop` -> stop_retained.
-    stop_altered: bool,
 }
 
 /// Ensembl-style coordinate/protein projection of one variant onto one transcript — the
@@ -803,6 +797,14 @@ impl ConsequencePredictor {
                 // down; the predicate ANDs it with is_indel and the inframe-ins/del suppression.
                 let vep_indel_start_altered = vep_ctx.overlaps_start_codon()
                     && self.ins_del_start_altered(transcript, var_start, var_end, ref_allele, alt_allele);
+                // Single genomic `_ins_del_stop_altered` port for ALL stop-overlapping indels
+                // (returns None when there is no genomic stop overlap / it cannot reconstruct).
+                // This is the one authority for the deletion stop term — both the essential-splice
+                // fallback AND the in-CDS deletion predicate read it, so the duplicate
+                // CDS-coordinate stop reconstruction in build_coding_context no longer drives the
+                // predicate (the two disagreed for deletions straddling the stop codon).
+                let indel_stop_term =
+                    self.cil_stop_term(transcript, var_start, var_end, ref_allele, alt_allele);
                 let terms = self.coding_terms_for_variant(
                     ref_allele,
                     alt_allele,
@@ -811,12 +813,13 @@ impl ConsequencePredictor {
                     cds_end,
                     vep_ctx.start_codon_change_eligible(),
                     vep_indel_start_altered,
+                    indel_stop_term,
                 );
                 // When the variant reaches an essential splice site, the windowed peptide
                 // is undeterminable EXCEPT the stop term, which Ensembl derives from the
                 // genomic stop-codon overlap (consider_ins_len model).
                 let essential_stop = if ref_reaches_essential {
-                    self.cil_stop_term(transcript, var_start, var_end, ref_allele, alt_allele)
+                    indel_stop_term
                 } else {
                     None
                 };
@@ -941,6 +944,7 @@ impl ConsequencePredictor {
         cds_end: Option<u64>,
         vep_start_overlap: bool,
         vep_indel_start_altered: bool,
+        indel_stop_term: Option<Consequence>,
     ) -> Option<Vec<Consequence>> {
         let edit = variant_to_cds_edit(
             ref_allele,
@@ -950,7 +954,13 @@ impl ConsequencePredictor {
             transcript.strand,
         )?;
         let ctx = self.build_coding_context(transcript, &[edit])?;
-        Some(self.coding_consequence_terms(&ctx, transcript, vep_start_overlap, vep_indel_start_altered))
+        Some(self.coding_consequence_terms(
+            &ctx,
+            transcript,
+            vep_start_overlap,
+            vep_indel_start_altered,
+            indel_stop_term,
+        ))
     }
 
     /// Haplotype-aware coding consequence: a set of PHASED variants on ONE transcript is
@@ -1001,7 +1011,7 @@ impl ConsequencePredictor {
         // build_coding_context sorts the edits and applies them to the reference CDS
         // before translating once -> the combined peptide.
         let ctx = self.build_coding_context(transcript, &edits)?;
-        Some(self.coding_consequence_terms(&ctx, transcript, false, false))
+        Some(self.coding_consequence_terms(&ctx, transcript, false, false, None))
     }
 
     /// Resolve the coding TERMS for an exonic-coding variant, applying the CDS-boundary
@@ -1154,45 +1164,10 @@ impl ConsequencePredictor {
                 .collect()
         };
 
-        // Ensembl `_overlaps_stop_codon` / `_ins_del_stop_altered` over CDS+3'UTR — the
-        // primitive behind indel stop_lost vs stop_retained. The stop codon is the last
-        // 3 CDS bases [seq.len()-3, seq.len()).
-        let stop_lo = seq.len().saturating_sub(3);
-        let span_lo = first_idx;
-        let span_hi = last_ref_end.max(first_idx + 1); // half-open; insertion = a point
-                                                       // There must BE a terminal stop codon to overlap. A cds_end_NF transcript (the GFF3
-                                                       // may not tag it) ends in a non-stop codon, so Ensembl's `_overlaps_stop_codon`
-                                                       // returns 0 — no stop_lost/retained. Checking the last codon is the robust proxy.
-        let has_terminal_stop = seq.len() >= 3
-            && ct.translate(&[seq[stop_lo], seq[stop_lo + 1], seq[stop_lo + 2]]) == b'*';
-        let overlaps_stop = has_terminal_stop && span_lo < seq.len() && span_hi > stop_lo;
-        let stop_altered = if overlaps_stop && total_ref != total_alt {
-            // CDS + 3'UTR (utr = the spliced cDNA after the CDS end).
-            let mut cds_utr = seq.to_vec();
-            if let (Some(spliced), Some(cend)) =
-                (transcript.spliced_seq.as_ref(), transcript.cdna_coding_end)
-            {
-                let sb = spliced.as_bytes();
-                let u = (cend as usize).min(sb.len());
-                cds_utr.extend_from_slice(&sb[u..]);
-            }
-            // Apply every edit to the CDS+3'UTR (clipped to the available sequence).
-            for e in edits.iter().rev() {
-                if e.cds_idx <= cds_utr.len() {
-                    let end = (e.cds_idx + e.ref_bases.len()).min(cds_utr.len());
-                    cds_utr.splice(e.cds_idx..end, e.alt_bases.iter().copied());
-                }
-            }
-            if cds_utr.len() < seq.len() {
-                true // shortened past the CDS -> stop altered
-            } else {
-                // codon at the OLD stop position in the edited sequence — still a stop?
-                let c = &cds_utr[stop_lo..stop_lo + 3];
-                ct.translate(&[c[0], c[1], c[2]]) != b'*'
-            }
-        } else {
-            false
-        };
+        // NOTE: the indel stop_lost/stop_retained call is no longer derived here. It is the
+        // single genomic `_ins_del_stop_altered` port (`cil_stop_term`), threaded in as
+        // `indel_stop_term`, so there is ONE stop reconstruction (this used to carry a second,
+        // CDS-coordinate one in `overlaps_stop`/`stop_altered`).
 
         Some(CodingContext {
             first_codon,
@@ -1203,8 +1178,6 @@ impl ConsequencePredictor {
             alt_codons,
             ref_len: total_ref,
             alt_len: total_alt,
-            overlaps_stop,
-            stop_altered,
         })
     }
 
@@ -1217,6 +1190,7 @@ impl ConsequencePredictor {
         transcript: &Transcript,
         vep_start_overlap: bool,
         vep_indel_start_altered: bool,
+        indel_stop_term: Option<Consequence>,
     ) -> Vec<Consequence> {
         // --- shared facts about the peptide change (computed once) ---
         let net = ctx.alt_len as i64 - ctx.ref_len as i64;
@@ -1308,18 +1282,21 @@ impl ConsequencePredictor {
         let p_stop_gained = coding_ok && alt_stop && !ref_stop;
         // DELETION at the stop codon: Ensembl uses `_ins_del_stop_altered` over CDS+3'UTR
         // (stop_altered -> stop_lost, !stop_altered -> stop_retained), NOT the windowed
-        // peptide. Insertions use a genomic `consider_ins_len` overlap (not yet ported),
-        // so they keep the windowed peptide behavior; substitutions use the peptide.
+        // peptide. `indel_stop_term` is the SINGLE genomic port (`cil_stop_term`) for this —
+        // the same authority the essential-splice path uses — so the in-CDS deletion stop call
+        // no longer relies on the duplicate CDS-coordinate reconstruction in build_coding_context
+        // (the two disagreed for deletions straddling the stop codon). Insertions/substitutions
+        // keep the windowed/peptide behavior (`ref_stop`/`alt_stop`).
         let del = is_indel && net < 0;
         let p_stop_lost = coding_ok
             && if del {
-                ctx.overlaps_stop && ctx.stop_altered
+                indel_stop_term == Some(Consequence::StopLost)
             } else {
                 ref_stop && !alt_stop
             };
         let p_stop_retained = coding_ok
             && if del {
-                ctx.overlaps_stop && !ctx.stop_altered
+                indel_stop_term == Some(Consequence::StopRetainedVariant)
             } else {
                 !is_indel && ref_stop && alt_stop && ctx.ref_pep == ctx.alt_pep
             };
@@ -2483,7 +2460,7 @@ mod tests {
             "combined edits give TCA = Ser (proves edits applied together, not independently)"
         );
         assert!(predictor
-            .coding_consequence_terms(&ctx, &tr, false, false)
+            .coding_consequence_terms(&ctx, &tr, false, false, None)
             .contains(&Consequence::MissenseVariant));
     }
 
@@ -2542,7 +2519,7 @@ mod tests {
         }];
         let ctx = predictor.build_coding_context(&tr, &delins).unwrap();
         assert!(predictor
-            .coding_consequence_terms(&ctx, &tr, false, false)
+            .coding_consequence_terms(&ctx, &tr, false, false, None)
             .contains(&Consequence::ProteinAlteringVariant));
         // A clean deletion of TCA (ref keeps the GCT prefix) IS inframe_deletion.
         let clean = vec![CdsEdit {
@@ -2552,7 +2529,7 @@ mod tests {
         }];
         let ctx2 = predictor.build_coding_context(&tr, &clean).unwrap();
         assert!(predictor
-            .coding_consequence_terms(&ctx2, &tr, false, false)
+            .coding_consequence_terms(&ctx2, &tr, false, false, None)
             .contains(&Consequence::InframeDeletion));
     }
 
@@ -2571,7 +2548,7 @@ mod tests {
             alt_bases: b"TAATT".to_vec(),
         }];
         let ctx = predictor.build_coding_context(&tr, &with_stop).unwrap();
-        let terms = predictor.coding_consequence_terms(&ctx, &tr, false, false);
+        let terms = predictor.coding_consequence_terms(&ctx, &tr, false, false, None);
         assert!(
             terms.contains(&Consequence::StopGained),
             "TAATT inserts a stop codon"
@@ -2584,7 +2561,7 @@ mod tests {
             alt_bases: b"TT".to_vec(),
         }];
         let ctx2 = predictor.build_coding_context(&tr, &no_stop).unwrap();
-        let terms2 = predictor.coding_consequence_terms(&ctx2, &tr, false, false);
+        let terms2 = predictor.coding_consequence_terms(&ctx2, &tr, false, false, None);
         assert!(
             !terms2.contains(&Consequence::StopGained),
             "TT alone is not a stop"
@@ -2609,12 +2586,12 @@ mod tests {
         }];
         let ctx = predictor.build_coding_context(&tr, &del).unwrap();
         // Reconstruction verdict TRUE -> start_lost co-occurs with frameshift_variant.
-        let lost = predictor.coding_consequence_terms(&ctx, &tr, false, true);
+        let lost = predictor.coding_consequence_terms(&ctx, &tr, false, true, None);
         assert!(lost.contains(&Consequence::StartLost), "altered start -> start_lost");
         assert!(lost.contains(&Consequence::FrameshiftVariant));
         // Reconstruction verdict FALSE -> no start_lost (the strict at_start path no longer
         // fires for indels), just the frameshift.
-        let kept = predictor.coding_consequence_terms(&ctx, &tr, false, false);
+        let kept = predictor.coding_consequence_terms(&ctx, &tr, false, false, None);
         assert!(!kept.contains(&Consequence::StartLost), "preserved start -> no start_lost");
         assert!(kept.contains(&Consequence::FrameshiftVariant));
     }
