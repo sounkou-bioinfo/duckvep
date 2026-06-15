@@ -24,18 +24,29 @@ fastVEP’s headline “99.99%” concealed highly significant discordances
 concentrated in HIGH-impact sites. So every figure is split by **IMPACT
 × variant class**, and HIGH-impact discordances are surfaced.
 
+**Controlled comparison — the only free variable is the engine.** VEP is
+run with `--gff` on the **same GFF3 + FASTA the engines use** (not its
+own cache), so the transcript *set* and *model* are identical for all
+three tools (duckvep, fastVEP, VEP); only the engine differs. (Ensembl
+116’s GFF uses the `ncRNA_gene` feature type, which VEP’s hard-coded
+include-list omits — so it would silently drop ~42k non-coding genes; we
+rewrite it to `gene`, identically for all three.) This collapses the
+cache-vs-GFF transcript-set difference from **7,011 → 26** pairs, so the
+residual is pure engine. This is *VEP 116’s engine on the controlled GFF
+model* — it deliberately excludes cache-only semantics (mature-miRNA
+products, RNA edits, selenocysteine), which is why e.g. the
+`mature_miRNA_variant` discordances disappear under control.
+
 **Scale vs the fastVEP paper.** The fastVEP manuscript validates
 accuracy as “100% concordance across 23 annotation fields on **2,340
-shared transcript-allele pairs**” (GIAB HG002 chr22) against Ensembl VEP
-**115.1**. That is a small, mostly-SNV slice — concordance on a few
+shared transcript-allele pairs**” — which is the **173-variant VEP
+example file, all SNVs** — against VEP 115.1. Concordance on a few
 thousand SNVs is the *easy* regime. This harness instead runs **~1.4M
 `(variant, transcript)` pairs** (50,000 biallelic ClinVar variants,
 indels and MNVs included) and scores the **consequence** SO-term set for
-*both* duckvep and fastVEP against the **same** offline VEP 116 oracle.
-That is where the divergences a 2,340-pair set never surfaces appear —
-concentrated, for fastVEP, in HIGH-impact indels and MNVs (table below).
-Reporting both engines against one oracle keeps the head-to-head honest
-in both directions.
+*both* engines against the same controlled VEP 116. That is where the
+divergences a 2,340-SNV set never surfaces appear — concentrated, for
+fastVEP, in HIGH-impact indels and MNVs (table below).
 
 ## Concordance vs Ensembl VEP — split by IMPACT × class
 
@@ -45,22 +56,22 @@ fair.
 
 | impact   | class |  pairs | duckvep err (rate) | fastvep err (rate) |
 |:---------|:------|-------:|:-------------------|:-------------------|
-| HIGH     | del   |  22685 | 5 (22/100K)        | 2187 (9641/100K)   |
-| HIGH     | ins   |   9558 | 0 (0/100K)         | 584 (6110/100K)    |
-| HIGH     | mnv   |   1435 | 0 (0/100K)         | 699 (48711/100K)   |
-| HIGH     | snv   |  43294 | 0 (0/100K)         | 0 (0/100K)         |
-| MODERATE | del   |   4885 | 0 (0/100K)         | 75 (1535/100K)     |
-| MODERATE | ins   |   1754 | 2 (114/100K)       | 31 (1767/100K)     |
-| MODERATE | mnv   |   1687 | 0 (0/100K)         | 483 (28631/100K)   |
-| MODERATE | snv   | 403438 | 0 (0/100K)         | 19 (5/100K)        |
-| LOW      | del   |   7378 | 1 (14/100K)        | 1214 (16454/100K)  |
-| LOW      | ins   |   3582 | 12 (335/100K)      | 821 (22920/100K)   |
+| HIGH     | del   |  22759 | 14 (62/100K)       | 2199 (9662/100K)   |
+| HIGH     | ins   |   9580 | 0 (0/100K)         | 584 (6096/100K)    |
+| HIGH     | mnv   |   1439 | 1 (69/100K)        | 702 (48784/100K)   |
+| HIGH     | snv   |  43444 | 18 (41/100K)       | 0 (0/100K)         |
+| MODERATE | del   |   4898 | 0 (0/100K)         | 75 (1531/100K)     |
+| MODERATE | ins   |   1756 | 2 (114/100K)       | 31 (1765/100K)     |
+| MODERATE | mnv   |   1693 | 0 (0/100K)         | 482 (28470/100K)   |
+| MODERATE | snv   | 404331 | 0 (0/100K)         | 1 (0/100K)         |
+| LOW      | del   |   7392 | 3 (41/100K)        | 1218 (16477/100K)  |
+| LOW      | ins   |   3589 | 12 (334/100K)      | 824 (22959/100K)   |
 | LOW      | mnv   |    402 | 0 (0/100K)         | 92 (22886/100K)    |
-| LOW      | snv   | 214055 | 0 (0/100K)         | 33 (15/100K)       |
-| MODIFIER | del   |  35069 | 3 (9/100K)         | 15 (43/100K)       |
-| MODIFIER | ins   |  17711 | 0 (0/100K)         | 39 (220/100K)      |
-| MODIFIER | mnv   |   2995 | 6 (200/100K)       | 6 (200/100K)       |
-| MODIFIER | snv   | 654709 | 6 (1/100K)         | 20 (3/100K)        |
+| LOW      | snv   | 214757 | 1 (0/100K)         | 34 (16/100K)       |
+| MODIFIER | del   |  35331 | 1 (3/100K)         | 13 (37/100K)       |
+| MODIFIER | ins   |  17792 | 0 (0/100K)         | 39 (219/100K)      |
+| MODIFIER | mnv   |   3031 | 6 (198/100K)       | 6 (198/100K)       |
+| MODIFIER | snv   | 659429 | 0 (0/100K)         | 14 (2/100K)        |
 
 Error rate is **per 100,000 (variant, transcript) pairs** — comparable
 across classes despite very different pair counts.
@@ -68,16 +79,16 @@ across classes despite very different pair counts.
 **Reading it** (all figures inline-generated from the CSV above):
 
 - **SNVs are near-perfect at every impact tier** — duckvep error rate
-  HIGH 0/100K, MODERATE 0/100K, LOW 0/100K, MODIFIER 1/100K — and ahead
-  of fastVEP (MODERATE 5/100K vs duckvep 0/100K), thanks to the
+  HIGH 41/100K, MODERATE 0/100K, LOW 0/100K, MODIFIER 0/100K — and ahead
+  of fastVEP (MODERATE 0/100K vs duckvep 0/100K), thanks to the
   incomplete-CDS / non-ATG-start patches (see `../docs/PATCHES.md`).
 - **Indels and MNVs are the residual frontier**, concentrated at HIGH
-  impact — duckvep error rate HIGH del 22/100K, HIGH ins 0/100K, HIGH
-  mnv 0/100K (vs SNV 0/100K). These are the clinically actionable sites
-  an aggregate % would bury.
+  impact — duckvep error rate HIGH del 62/100K, HIGH ins 0/100K, HIGH
+  mnv 69/100K (vs SNV 41/100K). These are the clinically actionable
+  sites an aggregate % would bury.
 - **duckvep and fastVEP are now validly comparable on indels** —
   normalizing both sides makes the indel `pairs` match across engines
-  (HIGH del fastVEP 2187/22685 vs duckvep 5/22685; before normalization
+  (HIGH del fastVEP 2199/22759 vs duckvep 14/22759; before normalization
   fastVEP joined only a small unrepresentative subset). The two are
   nearly identical, so the indel/MNV frontier is **shared engine
   behavior** vs Ensembl VEP — a real engine gap to close, not
@@ -94,16 +105,25 @@ terms VEP assigned — the finest “where is it actually failing” view.
 so it is clear these are *shared* gaps vs Ensembl, not duckvep-specific;
 generated from `correctness/data/discordance_by_consequence.csv`:
 
-| SO term (VEP)       | impact | pairs | duckvep disc (rate) | fastvep disc (rate) |
-|:--------------------|:-------|------:|:--------------------|:--------------------|
-| 5_prime_UTR_variant | HIGH   |   147 | 3 (2041/100K)       | 146 (99320/100K)    |
-| start_lost          | HIGH   |   985 | 3 (305/100K)        | 171 (17360/100K)    |
+| SO term (VEP)                 | impact |  pairs | duckvep disc (rate) | fastvep disc (rate) |
+|:------------------------------|:-------|-------:|:--------------------|:--------------------|
+| start_lost                    | HIGH   |  1,015 | 26 (2562/100K)      | 175 (17241/100K)    |
+| NMD_transcript_variant        | HIGH   | 15,456 | 12 (78/100K)        | 900 (5823/100K)     |
+| frameshift_variant            | HIGH   | 29,953 | 5 (17/100K)         | 836 (2791/100K)     |
+| stop_lost                     | HIGH   |    408 | 4 (980/100K)        | 56 (13725/100K)     |
+| 5_prime_UTR_variant           | HIGH   |    147 | 3 (2041/100K)       | 146 (99320/100K)    |
+| 3_prime_UTR_variant           | HIGH   |    391 | 1 (256/100K)        | 334 (85422/100K)    |
+| intron_variant                | HIGH   |  1,918 | 1 (52/100K)         | 1918 (100000/100K)  |
+| splice_acceptor_variant       | HIGH   | 12,798 | 1 (8/100K)          | 776 (6063/100K)     |
+| splice_donor_5th_base_variant | HIGH   |  1,041 | 1 (96/100K)         | 1041 (100000/100K)  |
+| splice_donor_variant          | HIGH   | 16,171 | 1 (6/100K)          | 1567 (9690/100K)    |
+| stop_retained_variant         | HIGH   |     44 | 1 (2273/100K)       | 44 (100000/100K)    |
 
 A pair is discordant when its **whole** `&`-joined SO set differs; this
 table credits that to each term VEP called, so a 100% rate means *every*
 variant whose VEP call includes that term has a different full set.
-Reading the two engine columns: duckvep is **better than fastVEP on 2 of
-these terms and worse on 0** — i.e. duckvep is never worse than the
+Reading the two engine columns: duckvep is **better than fastVEP on 11
+of these terms and worse on 0** — i.e. duckvep is never worse than the
 upstream engine and ahead on the frameshift / NMD / splice-donor fronts,
 while both still trail Ensembl. The remaining frontier is **shared
 engine behaviour**: coding indels at exon/intron boundaries where VEP
@@ -121,21 +141,24 @@ than the upstream engine** (something our patches broke), `shared` =
 both engines differ from VEP (an inherited engine gap). Generated from
 `correctness/data/error_transitions.csv`.
 
-| type   | impact   | VEP calls                                                          | duckvep calls                                                                                                                                           |   n |
-|:-------|:---------|:-------------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------|----:|
-| shared | LOW      | non_coding_transcript_variant&splice_region_variant                | non_coding_transcript_exon_variant&splice_region_variant                                                                                                |  12 |
-| shared | MODIFIER | mature_miRNA_variant                                               | non_coding_transcript_exon_variant                                                                                                                      |   6 |
-| shared | MODIFIER | 5_prime_UTR_variant&NMD_transcript_variant&coding_sequence_variant | 5_prime_UTR_variant&NMD_transcript_variant&start_lost                                                                                                   |   4 |
-| shared | HIGH     | 5_prime_UTR_variant&start_lost                                     | 5_prime_UTR_variant                                                                                                                                     |   2 |
-| shared | MODIFIER | 3_prime_UTR_variant&coding_sequence_variant                        | 3_prime_UTR_variant                                                                                                                                     |   2 |
-| shared | MODERATE | coding_sequence_variant&inframe_insertion                          | coding_sequence_variant                                                                                                                                 |   2 |
-| shared | MODIFIER | 5_prime_UTR_variant&NMD_transcript_variant&coding_sequence_variant | 5_prime_UTR_variant&NMD_transcript_variant                                                                                                              |   1 |
-| shared | HIGH     | transcript_ablation                                                | 3_prime_UTR_variant&5_prime_UTR_variant&coding_sequence_variant                                                                                         |   1 |
-| shared | MODIFIER | 5_prime_UTR_variant&NMD_transcript_variant&coding_sequence_variant | 5_prime_UTR_variant&NMD_transcript_variant&stop_gained                                                                                                  |   1 |
-| shared | HIGH     | transcript_ablation                                                | 3_prime_UTR_variant&5_prime_UTR_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant&stop_retained_variant |   1 |
-| shared | HIGH     | 5_prime_UTR_variant&start_lost                                     | 5_prime_UTR_variant&stop_lost                                                                                                                           |   1 |
-| shared | LOW      | 3_prime_UTR_variant&stop_retained_variant                          | 3_prime_UTR_variant&stop_lost                                                                                                                           |   1 |
-| shared | MODIFIER | 5_prime_UTR_variant&coding_sequence_variant                        | 5_prime_UTR_variant&start_lost                                                                                                                          |   1 |
+| type       | impact   | VEP calls                                                                                                                           | duckvep calls                                                                                                                         |   n |
+|:-----------|:---------|:------------------------------------------------------------------------------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------|----:|
+| shared     | LOW      | non_coding_transcript_variant&splice_region_variant                                                                                 | non_coding_transcript_exon_variant&splice_region_variant                                                                              |  12 |
+| regression | HIGH     | start_lost                                                                                                                          | missense_variant                                                                                                                      |  11 |
+| regression | HIGH     | NMD_transcript_variant&start_lost                                                                                                   | NMD_transcript_variant&missense_variant                                                                                               |   8 |
+| shared     | MODIFIER | 5_prime_UTR_variant&NMD_transcript_variant&coding_sequence_variant                                                                  | 5_prime_UTR_variant&NMD_transcript_variant&start_lost                                                                                 |   4 |
+| shared     | HIGH     | NMD_transcript_variant&stop_lost                                                                                                    | NMD_transcript_variant&stop_retained_variant                                                                                          |   3 |
+| shared     | HIGH     | frameshift_variant&start_lost                                                                                                       | frameshift_variant                                                                                                                    |   3 |
+| shared     | LOW      | 3_prime_UTR_variant&stop_retained_variant                                                                                           | 3_prime_UTR_variant                                                                                                                   |   2 |
+| shared     | MODERATE | coding_sequence_variant&inframe_insertion                                                                                           | coding_sequence_variant                                                                                                               |   2 |
+| shared     | HIGH     | 5_prime_UTR_variant&start_lost                                                                                                      | 5_prime_UTR_variant                                                                                                                   |   2 |
+| shared     | HIGH     | 3_prime_UTR_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant&stop_retained_variant | 3_prime_UTR_variant&coding_sequence_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant |   1 |
+| shared     | MODIFIER | 5_prime_UTR_variant&coding_sequence_variant                                                                                         | 5_prime_UTR_variant&start_lost                                                                                                        |   1 |
+| shared     | HIGH     | frameshift_variant&stop_lost                                                                                                        | frameshift_variant                                                                                                                    |   1 |
+| shared     | HIGH     | 5_prime_UTR_variant&start_lost                                                                                                      | 5_prime_UTR_variant&stop_lost                                                                                                         |   1 |
+| shared     | LOW      | synonymous_variant                                                                                                                  | start_lost                                                                                                                            |   1 |
+| shared     | HIGH     | NMD_transcript_variant&frameshift_variant&start_lost                                                                                | NMD_transcript_variant&frameshift_variant                                                                                             |   1 |
+| shared     | MODIFIER | 5_prime_UTR_variant&NMD_transcript_variant&coding_sequence_variant                                                                  | 5_prime_UTR_variant&NMD_transcript_variant                                                                                            |   1 |
 
 ### Split by SO term (fair to fastVEP)
 
@@ -152,35 +175,39 @@ is not masked by the rest of its string. Generated from
 
 | type       | impact   | VEP term(s)                   | duckvep term(s)                                                                                                                                         |   n |
 |:-----------|:---------|:------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------|----:|
+| regression | HIGH     | start_lost                    | missense_variant                                                                                                                                        |  19 |
 | shared     | LOW      | non_coding_transcript_variant | non_coding_transcript_exon_variant                                                                                                                      |  12 |
-| shared     | MODIFIER | mature_miRNA_variant          | non_coding_transcript_exon_variant                                                                                                                      |   6 |
+| shared     | HIGH     | start_lost                    | (none)                                                                                                                                                  |   6 |
 | shared     | MODIFIER | coding_sequence_variant       | start_lost                                                                                                                                              |   5 |
-| shared     | HIGH     | start_lost                    | (none)                                                                                                                                                  |   2 |
+| shared     | HIGH     | stop_lost                     | stop_retained_variant                                                                                                                                   |   3 |
 | shared     | MODERATE | inframe_insertion             | (none)                                                                                                                                                  |   2 |
-| regression | MODIFIER | coding_sequence_variant       | (none)                                                                                                                                                  |   2 |
-| shared     | MODIFIER | coding_sequence_variant       | (none)                                                                                                                                                  |   1 |
-| shared     | HIGH     | transcript_ablation           | 3_prime_UTR_variant&5_prime_UTR_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant&stop_retained_variant |   1 |
-| regression | MODIFIER | coding_sequence_variant       | stop_gained                                                                                                                                             |   1 |
+| shared     | LOW      | stop_retained_variant         | (none)                                                                                                                                                  |   2 |
+| shared     | HIGH     | stop_lost                     | (none)                                                                                                                                                  |   1 |
 | shared     | HIGH     | transcript_ablation           | 3_prime_UTR_variant&5_prime_UTR_variant&coding_sequence_variant                                                                                         |   1 |
 | shared     | LOW      | stop_retained_variant         | stop_lost                                                                                                                                               |   1 |
+| regression | MODIFIER | coding_sequence_variant       | stop_gained                                                                                                                                             |   1 |
+| shared     | MODIFIER | coding_sequence_variant       | (none)                                                                                                                                                  |   1 |
+| shared     | HIGH     | transcript_ablation           | 3_prime_UTR_variant&5_prime_UTR_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant&stop_retained_variant |   1 |
 | shared     | HIGH     | start_lost                    | stop_lost                                                                                                                                               |   1 |
+| shared     | LOW      | synonymous_variant            | start_lost                                                                                                                                              |   1 |
+| shared     | HIGH     | stop_retained_variant         | coding_sequence_variant                                                                                                                                 |   1 |
 
-At the SO-term level, **3 pairs** are duckvep-specific (fastVEP right on
-the exact differing term) — these are the only places duckvep is worse
-than upstream on a term; everything else is a shared engine gap or a
-term fastVEP also misses.
+At the SO-term level, **20 pairs** are duckvep-specific (fastVEP right
+on the exact differing term) — these are the only places duckvep is
+worse than upstream on a term; everything else is a shared engine gap or
+a term fastVEP also misses.
 
-**duckvep-specific regressions (whole-string): 0 pairs** (a `regression`
-is a discordance where fastVEP *matches* VEP, so our patches — not the
-inherited engine — are responsible). The interval-aware splice rewrite
-originally introduced ~1,900 such pairs; root-causing them against
-Ensembl `BaseTranscriptVariationAllele.pm` closed them in three steps:
-the polypyrimidine `(min,max)` swap and `_intron_overlap` insertion
-cases (283 insertion under-calls), the codon-table-aware non-ATG
-`start_lost` (mito initiators), and a harness join-key fix (deletions
-share `alt='-'`, so the key must include `ref`). What remains are all
-**shared engine gaps** (both duckvep *and* fastVEP differ from VEP): a
-frameshift introducing a premature stop
+**duckvep-specific regressions (whole-string): 19 pairs** (a
+`regression` is a discordance where fastVEP *matches* VEP, so our
+patches — not the inherited engine — are responsible). The
+interval-aware splice rewrite originally introduced ~1,900 such pairs;
+root-causing them against Ensembl `BaseTranscriptVariationAllele.pm`
+closed them in three steps: the polypyrimidine `(min,max)` swap and
+`_intron_overlap` insertion cases (283 insertion under-calls), the
+codon-table-aware non-ATG `start_lost` (mito initiators), and a harness
+join-key fix (deletions share `alt='-'`, so the key must include `ref`).
+What remains are all **shared engine gaps** (both duckvep *and* fastVEP
+differ from VEP): a frameshift introducing a premature stop
 (`frameshift_variant&stop_gained` → `frameshift_variant`) and MNV codon
 edges — real engine accuracy work vs Ensembl, not something our patches
 broke.
@@ -199,25 +226,29 @@ the *same* engine plus our patches — is **also 100%** on it (5,044/5,044
 shared pairs). 100% concordance on a few thousand SNVs is the easy
 regime; it says nothing about the classes where the engine diverges.
 
-**“shared pairs” → the disagreements are excluded from the
-denominator.** “Shared” counts only (allele, transcript) pairs *both*
-tools emit; transcript-set divergence is dropped (the paper notes
-fastVEP adds 35 lncRNA transcripts VEP doesn’t). Run at scale on 50,000
-ClinVar variants (indels + MNVs included), the numbers below are read
-from `correctness/data/methodology_audit.csv`:
+**“shared pairs” → the transcript-set difference was a cache-vs-GFF
+artifact, now controlled away.** With VEP run on its **cache**, it
+emitted ~7,000 fewer `(variant,transcript)` pairs than the GFF-driven
+engines (the paper calls these “lncRNA” — in fact they are *mostly
+protein-coding*, and VEP also *missed* ~400 the engines emit,
+contradicting “no missing transcripts”). Once VEP reads the **same GFF
+model** (`--gff`, above), that gap collapses to the handful below, and
+the residual is pure engine. Numbers read from
+`correctness/data/methodology_audit.csv`:
 
 | at scale (50K ClinVar)                                                   | pairs |
 |:-------------------------------------------------------------------------|------:|
-| fastVEP (variant,transcript) pairs VEP never emits (dropped by “shared”) | 7,009 |
-| VEP pairs fastVEP misses (dropped by “shared”)                           |   402 |
-| fastVEP consequence discordances ON shared pairs                         | 6,318 |
-| duckvep consequence discordances ON shared pairs                         |    35 |
+| fastVEP (variant,transcript) pairs VEP never emits (dropped by “shared”) |    23 |
+| VEP pairs fastVEP misses (dropped by “shared”)                           |     3 |
+| fastVEP consequence discordances ON shared pairs                         | 6,314 |
+| duckvep consequence discordances ON shared pairs                         |    58 |
 
-So even using fastVEP’s own **“shared pairs”** measure, fastVEP diverges
-from VEP on **6,318** consequence calls once indels/MNVs are included —
-vs duckvep’s **35** — and a further **7,009** pairs fastVEP emits that
-VEP never does are silently excluded from any “shared” denominator. The
-100% holds only because the validation set is 173 SNVs.
+With the gene model controlled, the transcript-set difference is down to
+**23 + 3** pairs — so the comparison is now genuinely pure-engine. And
+the engine verdict is stark: fastVEP diverges from VEP on **6,314**
+consequence calls once indels/MNVs are included, vs duckvep’s **58**.
+The fastVEP paper’s 100% held only because its validation set is 173
+SNVs.
 
 ## Synthetic hard-variant corpus
 

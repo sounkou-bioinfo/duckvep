@@ -78,6 +78,32 @@ VEP_CACHE = os.environ.get("VEP_CACHE", f"{ROOT}/data/vep_cache")
 VEP_REL = os.environ.get("VEP_CACHE_VERSION", "116")
 VEP_RUN = os.environ.get("VEP_CMD", "conda run -n vep vep").split()
 
+# CONTROLLED oracle: run VEP off the SAME GFF3 + FASTA the engines use (--gff), not its
+# own cache, so the transcript SET and MODEL are identical for all three tools and the only
+# free variable is the engine. Ensembl 116 GFF3 uses the `ncRNA_gene` feature type, which
+# VEP's hardcoded include-list omits (it would silently drop ~42k non-coding genes), so we
+# rewrite it to `gene`; then sort + bgzip + tabix as VEP --gff requires. Set
+# VEP_ORACLE=cache to fall back to the (uncontrolled) cache oracle.
+VEP_ORACLE = os.environ.get("VEP_ORACLE", "gff")
+
+def build_controlled_gff():
+    out = f"{ROOT}/data/giab/GRCh38.{VEP_REL}.controlled.gff3.gz"
+    if os.path.exists(out + ".tbi") and os.path.getmtime(out) >= os.path.getmtime(GFF3):
+        return out
+    print(f"building controlled VEP --gff input -> {out}", file=sys.stderr)
+    # set -o pipefail so a failure anywhere in the pipe aborts (not just tabix).
+    sh = (f"set -euo pipefail; zcat '{GFF3}' | grep -v '^#' | "
+          f"awk -F'\\t' 'BEGIN{{OFS=\"\\t\"}} $3==\"ncRNA_gene\"{{$3=\"gene\"}} {{print}}' | "
+          f"sort -k1,1 -k4,4n -S1G | bgzip > '{out}' && tabix -p gff '{out}'")
+    subprocess.run(["bash", "-c", sh], check=True)
+    return out
+
+# The SINGLE gene model every engine reads (pi review #2: feed the identical file to all
+# three, not the rewritten GFF to VEP and the original to duckvep/fastVEP). duckvep is
+# verified GFF-invariant (same 1,431,650 pairs on original vs controlled), so this only
+# makes the symmetry explicit. In cache mode the engines keep the plain GFF3.
+MODEL_GFF = build_controlled_gff() if VEP_ORACLE == "gff" else GFF3
+
 def vep_offline(sample):
     # JSON output, and we key on VEP's OWN canonical normalized form
     # (rec.start + allele_string ref / tc.variant_allele) — the minimal,
@@ -89,9 +115,15 @@ def vep_offline(sample):
     # Both env-overridable; default fork to most cores (leave headroom), buffer 10k.
     fork = os.environ.get("VEP_FORK") or str(max(1, (os.cpu_count() or 4) - 4))
     buffer_size = os.environ.get("VEP_BUFFER", "10000")
-    subprocess.run(VEP_RUN + ["-i", SAMPLE_VCF, "--offline", "--cache",
-        "--dir_cache", VEP_CACHE, "--cache_version", VEP_REL, "--species", "homo_sapiens",
-        "--assembly", "GRCh38", "--fasta", FASTA, "--symbol", "--json", "-o", "/tmp/vep_off.json",
+    if VEP_ORACLE == "gff":
+        # CONTROLLED: same gene model (GFF3 + FASTA) as the engines.
+        gene_model = ["--gff", MODEL_GFF, "--fasta", FASTA]
+    else:
+        gene_model = ["--offline", "--cache", "--dir_cache", VEP_CACHE,
+                      "--cache_version", VEP_REL, "--species", "homo_sapiens",
+                      "--assembly", "GRCh38", "--fasta", FASTA]
+    subprocess.run(VEP_RUN + ["-i", SAMPLE_VCF, *gene_model,
+        "--distance", "5000", "--symbol", "--json", "-o", "/tmp/vep_off.json",
         "--fork", fork, "--buffer_size", buffer_size,
         "--force_overwrite", "--no_stats"], check=True, capture_output=True, text=True)
     rows = []
@@ -105,10 +137,10 @@ def vep_offline(sample):
                 consequence="&".join(sorted(tc["consequence_terms"])), impact=tc.get("impact", "")))
     return rows
 
-USE_OFFLINE = os.path.isdir(f"{VEP_CACHE}/homo_sapiens/{VEP_REL}_GRCh38")
+USE_OFFLINE = VEP_ORACLE == "gff" or os.path.isdir(f"{VEP_CACHE}/homo_sapiens/{VEP_REL}_GRCh38")
 if USE_OFFLINE:
     vep_rows = vep_offline(sample)
-    print(f"VEP offline ({VEP_REL} GRCh38): {len(vep_rows)} (variant,transcript) rows", file=sys.stderr)
+    print(f"VEP {VEP_ORACLE} ({VEP_REL} GRCh38): {len(vep_rows)} (variant,transcript) rows", file=sys.stderr)
 else:
     vep_rows = []
     for i in range(0, len(sample), 100):
@@ -131,7 +163,7 @@ with open("/tmp/vep_raw.json", "w") as fh:
 # 3. duckvep (one session).
 # duckvep reads the sample VCF (chunked streaming path), not a giant VALUES.
 sql = f"""LOAD '{EXT}';
-SELECT vep_load_cache('{GFF3}', '{FASTA}');
+SELECT vep_load_cache('{MODEL_GFF}', '{FASTA}');
 COPY (
   WITH dv AS (
     SELECT normalize_variant(v.pos, v.ref, a.alt) AS nv, c.transcript_id, c.gene_symbol,
@@ -155,7 +187,7 @@ if os.path.exists(FASTVEP):
     # JSON (array): fastVEP reports its own canonical normalized form
     # (start + allele_string), the SAME minimal key as VEP/duckvep -> valid join
     # for every class incl. indels (the tab path's trimmed Allele did not join).
-    fv = subprocess.run([FASTVEP, "annotate", "-i", SAMPLE_VCF, "--gff3", GFF3,
+    fv = subprocess.run([FASTVEP, "annotate", "-i", SAMPLE_VCF, "--gff3", MODEL_GFF,
                          "--fasta", FASTA, "--output-format", "json"], capture_output=True, text=True)
     try:
         arr = json.loads(fv.stdout)
@@ -278,7 +310,10 @@ with open(log, "a") as fh:
     if new:
         fh.write("date,engine,impact,class,n_variants,pairs,agree,pct\n")
     for row in out[1:]:  # skip header
-        engine, impact, vclass, pairs, agree, pct = row.split(",")
+        parts = row.split(",")
+        if len(parts) != 6:
+            continue  # skip any stray/blank line (robust to duckdb output quirks)
+        engine, impact, vclass, pairs, agree, pct = parts
         fh.write(f"{DATE},{engine},{impact},{vclass},{len(sample)},{pairs},{agree},{pct}\n")
         disc = int(pairs) - int(agree)
         flag = "  <-- HIGH-impact" if impact == "HIGH" and disc > 0 else ""
