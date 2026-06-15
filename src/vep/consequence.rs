@@ -58,7 +58,11 @@ impl VScalar for VepLoadCache {
         // `vep_load_cache(gff3, fasta, distance)` sets it.
         let distance = if input.num_columns() >= 3 {
             let d = batch.column(2).as_primitive::<Int64Type>();
-            if d.is_null(0) { DEFAULT_DISTANCE } else { d.value(0).max(0) as u64 }
+            if d.is_null(0) {
+                DEFAULT_DISTANCE
+            } else {
+                d.value(0).max(0) as u64
+            }
         } else {
             DEFAULT_DISTANCE
         };

@@ -172,7 +172,10 @@ fn trim_common<'a>(r: &'a [u8], a: &'a [u8]) -> (&'a [u8], &'a [u8]) {
         p += 1;
     }
     let mut s = 0;
-    while s < r.len().saturating_sub(p) && s < a.len().saturating_sub(p) && r[r.len() - 1 - s] == a[a.len() - 1 - s] {
+    while s < r.len().saturating_sub(p)
+        && s < a.len().saturating_sub(p)
+        && r[r.len() - 1 - s] == a[a.len() - 1 - s]
+    {
         s += 1;
     }
     (&r[p..r.len() - s], &a[p..a.len() - s])
@@ -372,8 +375,9 @@ impl ConsequencePredictor {
         let splice_any = |f: fn(&Transcript, u64, u64) -> bool| {
             splice_regions.iter().any(|&(s, e)| f(transcript, s, e))
         };
-        let ref_any =
-            |f: fn(&Transcript, u64, u64) -> bool| ref_regions.iter().any(|&(s, e)| f(transcript, s, e));
+        let ref_any = |f: fn(&Transcript, u64, u64) -> bool| {
+            ref_regions.iter().any(|&(s, e)| f(transcript, s, e))
+        };
 
         let tr_start = transcript.start;
         let tr_end = transcript.end;
@@ -478,11 +482,10 @@ impl ConsequencePredictor {
         // boundary so the peptide is undeterminable (-> coding_sequence_variant). A delins
         // whose alt merely extends to the donor still has a determinable coding effect
         // (the ref is in-exon -> keep frameshift/missense).
-        let ref_reaches_essential = ref_any(splice::is_splice_donor)
-            || ref_any(splice::is_splice_acceptor);
+        let ref_reaches_essential =
+            ref_any(splice::is_splice_donor) || ref_any(splice::is_splice_acceptor);
         let is_donor_5th = splice_any(splice::is_splice_donor_5th_base);
-        let is_donor_region =
-            !is_donor_5th && splice_any(splice::is_splice_donor_region);
+        let is_donor_region = !is_donor_5th && splice_any(splice::is_splice_donor_region);
         if is_donor_5th {
             consequences.push(Consequence::SpliceDonorFifthBaseVariant);
         }
@@ -578,9 +581,7 @@ impl ConsequencePredictor {
         // intron_variant (a union, not an exclusive branch). The essential-splice
         // dinucleotides are excluded by `is_intronic`, so a variant only at the
         // donor/acceptor is not called intron_variant.
-        if splice_any(splice::is_intronic)
-            && !consequences.contains(&Consequence::IntronVariant)
-        {
+        if splice_any(splice::is_intronic) && !consequences.contains(&Consequence::IntronVariant) {
             consequences.push(Consequence::IntronVariant);
         }
 
@@ -654,7 +655,13 @@ impl ConsequencePredictor {
         cds_start: Option<u64>,
         cds_end: Option<u64>,
     ) -> Option<Vec<Consequence>> {
-        let edit = variant_to_cds_edit(ref_allele, alt_allele, cds_start, cds_end, transcript.strand)?;
+        let edit = variant_to_cds_edit(
+            ref_allele,
+            alt_allele,
+            cds_start,
+            cds_end,
+            transcript.strand,
+        )?;
         let ctx = self.build_coding_context(transcript, &[edit])?;
         Some(self.coding_consequence_terms(&ctx, transcript))
     }
@@ -672,6 +679,14 @@ impl ConsequencePredictor {
     /// space, so the same phased set yields the correct — possibly different — effect on
     /// each overlapping transcript. Returns the combined coding term set, or `None` if no
     /// variant maps into this transcript's CDS.
+    ///
+    /// EXPERIMENTAL. Validated for same-codon / contiguous SNV+MNV haplotypes (concordant
+    /// with the MNV-equivalent through the proven single-variant kernel — see
+    /// `correctness/haplotype_concordance.sh`). Known gaps, tracked, not yet ported:
+    /// 1. no bcftools-`hap_finalize` compound-block *flush* — all edits are applied as one
+    ///    event, which over-merges independent codon changes far apart in the CDS;
+    /// 2. a net-zero indel haplotype (a deletion + a restoring insertion) currently reads
+    ///    as non-indel (`is_indel = net != 0`); bcftools calls that `inframe_altering`.
     pub fn haplotype_coding_terms(
         &self,
         transcript: &Transcript,
@@ -680,11 +695,15 @@ impl ConsequencePredictor {
         let edits: Vec<CdsEdit> = variants
             .iter()
             .filter_map(|(s, e, r, a)| {
+                // Map the NORMALIZED (anchor-trimmed) changed interval — the same
+                // representation the single-variant path uses — so an anchored VCF
+                // deletion (pos P, CT>C deletes P+1) anchors at the correct CDS base.
+                let (vs, ve) = normalized_interval(*s, *e, r, a);
                 let cs = transcript
-                    .genomic_to_cdna(*s)
+                    .genomic_to_cdna(vs)
                     .and_then(|c| transcript.cdna_to_cds(c));
                 let ce = transcript
-                    .genomic_to_cdna(*e)
+                    .genomic_to_cdna(ve)
                     .and_then(|c| transcript.cdna_to_cds(c));
                 variant_to_cds_edit(r, a, cs, ce, transcript.strand)
             })
@@ -798,8 +817,7 @@ impl ConsequencePredictor {
         let (total_ref, total_alt) = edits.iter().fold((0usize, 0usize), |(r, a), e| {
             (r + e.ref_bases.len(), a + e.alt_bases.len())
         });
-        let window_len =
-            (codon_len as i64 + total_alt as i64 - total_ref as i64).max(0) as usize;
+        let window_len = (codon_len as i64 + total_alt as i64 - total_ref as i64).max(0) as usize;
 
         // Reconstruct only the first `window_len` bases of the alternate sequence from
         // codon_start, applying every edit; `push` truncates each slice to what is still
@@ -840,9 +858,9 @@ impl ConsequencePredictor {
         let stop_lo = seq.len().saturating_sub(3);
         let span_lo = first_idx;
         let span_hi = last_ref_end.max(first_idx + 1); // half-open; insertion = a point
-        // There must BE a terminal stop codon to overlap. A cds_end_NF transcript (the GFF3
-        // may not tag it) ends in a non-stop codon, so Ensembl's `_overlaps_stop_codon`
-        // returns 0 — no stop_lost/retained. Checking the last codon is the robust proxy.
+                                                       // There must BE a terminal stop codon to overlap. A cds_end_NF transcript (the GFF3
+                                                       // may not tag it) ends in a non-stop codon, so Ensembl's `_overlaps_stop_codon`
+                                                       // returns 0 — no stop_lost/retained. Checking the last codon is the robust proxy.
         let has_terminal_stop = seq.len() >= 3
             && ct.translate(&[seq[stop_lo], seq[stop_lo + 1], seq[stop_lo + 2]]) == b'*';
         let overlaps_stop = has_terminal_stop && span_lo < seq.len() && span_hi > stop_lo;
@@ -909,9 +927,11 @@ impl ConsequencePredictor {
             && transcript.codon_table_start_phase == 0
             && !transcript.flags.iter().any(|f| f == "cds_start_NF")
             && ctx.ref_codons.len() >= 3
-            && self
-                .ct(transcript)
-                .is_start(&[ctx.ref_codons[0], ctx.ref_codons[1], ctx.ref_codons[2]]);
+            && self.ct(transcript).is_start(&[
+                ctx.ref_codons[0],
+                ctx.ref_codons[1],
+                ctx.ref_codons[2],
+            ]);
         let alt_first = ctx.alt_pep.first().copied().unwrap_or(b'X');
 
         // Codon-level peptide terms are unavailable for an incomplete terminal codon,
@@ -921,11 +941,11 @@ impl ConsequencePredictor {
         let coding_ok = !incomplete && !at_start;
 
         // --- protein_altering_variant exclusions (VariationEffect.pm), shared ---
-        let stop_starts =
-            ctx.alt_pep.first() == Some(&b'*') || ctx.ref_pep.first() == Some(&b'*');
+        let stop_starts = ctx.alt_pep.first() == Some(&b'*') || ctx.ref_pep.first() == Some(&b'*');
         // inframe-like check on the UNTRIMMED alt peptide (everything past the stop).
-        let pa_excluded =
-            stop_starts || ctx.alt_pep.starts_with(&ctx.ref_pep) || ctx.alt_pep.ends_with(&ctx.ref_pep);
+        let pa_excluded = stop_starts
+            || ctx.alt_pep.starts_with(&ctx.ref_pep)
+            || ctx.alt_pep.ends_with(&ctx.ref_pep);
         // inframe_insertion trims at the first stop before its prefix/suffix check.
         let altp_trimmed = {
             let s = ctx.alt_pep.as_slice();
@@ -934,7 +954,8 @@ impl ConsequencePredictor {
                 None => s,
             }
         };
-        let inframe_ins = altp_trimmed.starts_with(&ctx.ref_pep) || altp_trimmed.ends_with(&ctx.ref_pep);
+        let inframe_ins =
+            altp_trimmed.starts_with(&ctx.ref_pep) || altp_trimmed.ends_with(&ctx.ref_pep);
         let inframe_del = {
             let (r, a) = (ctx.ref_codons.as_slice(), ctx.alt_codons.as_slice());
             r.starts_with(a) || r.ends_with(a) || {
@@ -968,10 +989,8 @@ impl ConsequencePredictor {
         // reference peptide starts with the stop (`$ref_pep =~ /^\*/` — the stop codon is
         // the first residue hit, so the frame past it is moot) or when the stop is
         // retained. Then it's stop_lost/stop_retained alone, never frameshift.
-        let p_frameshift = !incomplete
-            && frameshift_len
-            && ctx.ref_pep.first() != Some(&b'*')
-            && !p_stop_retained;
+        let p_frameshift =
+            !incomplete && frameshift_len && ctx.ref_pep.first() != Some(&b'*') && !p_stop_retained;
         let inframe = is_indel && !frameshift_len;
         let p_inframe_insertion = coding_ok && inframe && net > 0 && inframe_ins;
         let p_inframe_deletion = coding_ok && inframe && net < 0 && inframe_del;
@@ -1523,8 +1542,6 @@ impl ConsequencePredictor {
             Strand::Reverse => s <= cs.saturating_sub(1) && e >= transcript.start,
         }
     }
-
-
 }
 
 fn complement(base: u8) -> u8 {
@@ -2090,8 +2107,7 @@ mod tests {
         );
         let ac = &result.transcript_consequences[0].allele_consequences[0];
         assert!(
-            ac.consequences
-                .contains(&Consequence::StartRetainedVariant),
+            ac.consequences.contains(&Consequence::StartRetainedVariant),
             "ATT->ATA (still Met in mito) should be start_retained, got: {:?}",
             ac.consequences
         );
@@ -2107,8 +2123,16 @@ mod tests {
         let predictor = ConsequencePredictor::default();
         let tr = make_coding_transcript();
         let edits = vec![
-            CdsEdit { cds_idx: 3, ref_bases: vec![b'G'], alt_bases: vec![b'T'] },
-            CdsEdit { cds_idx: 5, ref_bases: vec![b'T'], alt_bases: vec![b'A'] },
+            CdsEdit {
+                cds_idx: 3,
+                ref_bases: vec![b'G'],
+                alt_bases: vec![b'T'],
+            },
+            CdsEdit {
+                cds_idx: 5,
+                ref_bases: vec![b'T'],
+                alt_bases: vec![b'A'],
+            },
         ];
         let ctx = predictor.build_coding_context(&tr, &edits).unwrap();
         assert_eq!(ctx.ref_pep, b"A", "reference codon GCT = Ala");
@@ -2131,8 +2155,18 @@ mod tests {
     fn test_haplotype_genomic_flips_silent_to_missense() {
         let predictor = ConsequencePredictor::default();
         let tr = make_coding_transcript();
-        let v_silent = (1055u64, 1055u64, Allele::from_str("T"), Allele::from_str("A"));
-        let v_other = (1053u64, 1053u64, Allele::from_str("G"), Allele::from_str("T"));
+        let v_silent = (
+            1055u64,
+            1055u64,
+            Allele::from_str("T"),
+            Allele::from_str("A"),
+        );
+        let v_other = (
+            1053u64,
+            1053u64,
+            Allele::from_str("G"),
+            Allele::from_str("T"),
+        );
 
         let solo = predictor
             .haplotype_coding_terms(&tr, std::slice::from_ref(&v_silent))
@@ -2189,16 +2223,30 @@ mod tests {
         let predictor = ConsequencePredictor::default();
         let tr = make_coding_transcript();
         // Boundary insertion (cds_idx 6) of TAATT: first whole codon TAA = stop.
-        let with_stop = vec![CdsEdit { cds_idx: 6, ref_bases: vec![], alt_bases: b"TAATT".to_vec() }];
+        let with_stop = vec![CdsEdit {
+            cds_idx: 6,
+            ref_bases: vec![],
+            alt_bases: b"TAATT".to_vec(),
+        }];
         let ctx = predictor.build_coding_context(&tr, &with_stop).unwrap();
         let terms = predictor.coding_consequence_terms(&ctx, &tr);
-        assert!(terms.contains(&Consequence::StopGained), "TAATT inserts a stop codon");
+        assert!(
+            terms.contains(&Consequence::StopGained),
+            "TAATT inserts a stop codon"
+        );
         assert!(terms.contains(&Consequence::FrameshiftVariant));
         // Inserting TT (no whole codon) must NOT pull in a downstream base to form a stop.
-        let no_stop = vec![CdsEdit { cds_idx: 6, ref_bases: vec![], alt_bases: b"TT".to_vec() }];
+        let no_stop = vec![CdsEdit {
+            cds_idx: 6,
+            ref_bases: vec![],
+            alt_bases: b"TT".to_vec(),
+        }];
         let ctx2 = predictor.build_coding_context(&tr, &no_stop).unwrap();
         let terms2 = predictor.coding_consequence_terms(&ctx2, &tr);
-        assert!(!terms2.contains(&Consequence::StopGained), "TT alone is not a stop");
+        assert!(
+            !terms2.contains(&Consequence::StopGained),
+            "TT alone is not a stop"
+        );
         assert!(terms2.contains(&Consequence::FrameshiftVariant));
     }
 

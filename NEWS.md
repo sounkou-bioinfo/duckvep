@@ -48,6 +48,26 @@ Changelog, most recent first. (R-package style.)
   already shipped); stop_retained-at-essential-splice (acceptor vs donor); and
   3′-shifting.
 
+### Haplotype-aware consequence (experimental)
+
+* **`vep_haplotype_consequence(chrom, transcript_id, 'pos:ref:alt;…') → VARCHAR`** —
+  combines a set of PHASED variants on one transcript into a single consequence by
+  applying them together to the reference CDS before translating once (the
+  bcftools-`csq` / Haplosaurus model). Co-located variants merge — an in-codon SNV pair
+  becomes one MNV, so e.g. a *silent* SNV flips to *missense* when phased with its
+  neighbour — the capability fastVEP lacks. The kernel is the existing multi-edit
+  `CodingContext`; merging is in transcript/CDS coordinates (strand-aware,
+  intron-collapsed), and grouping by `(sample, haplotype, transcript)` stays in SQL.
+* **Hill-climb harness:** `correctness/haplotype_concordance.sh` validates the multi-edit
+  path against the *proven* single-variant kernel with no new oracle — a same-length MNV
+  is exactly a phased SNV set, so the haplotype of its split components must equal the
+  whole MNV's coding terms. Currently **98.8% (1740/1761)** on the ClinVar sample; the
+  21 divergences are the `coding_unknown`/X-guard interaction with the multi-edit window.
+* **Marked experimental** — known gaps tracked in code: no bcftools-`hap_finalize`
+  compound-block *flush* (independent codon edits far apart are over-merged); a net-zero
+  indel haplotype (deletion + restoring insertion) reads as non-indel; the string input
+  and `VARCHAR` output will become a typed `LIST<STRUCT>` / structured row.
+
 ### New SQL functions
 
 * `normalize_variant(pos, ref, alt) → STRUCT(pos, ref, alt)` — canonical minimal
