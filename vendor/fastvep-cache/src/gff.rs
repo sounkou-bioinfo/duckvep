@@ -592,6 +592,11 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
                 Strand::Reverse => (cds_end, cds_start),
             };
 
+            // JUSTIFIED defaults (build-time GFF parser robustness): for a valid Ensembl
+            // GFF the translation start/end always lies within an exon, so these `find`s
+            // succeed and the fallbacks (rank 1 / offset 0) are unreachable. They keep the
+            // parser from panicking on a malformed/edge transcript, producing a best-effort
+            // model rather than aborting the whole cache build. NOT accuracy-hot-path.
             let start_exon_rank = tr_exons
                 .iter()
                 .find(|e| tl_start_pos >= e.start && tl_start_pos <= e.end)
