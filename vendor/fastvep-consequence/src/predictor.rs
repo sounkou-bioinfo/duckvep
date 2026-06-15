@@ -726,10 +726,24 @@ impl ConsequencePredictor {
             // intron_variant is added below as a UNION (it co-occurs with the coding
             // term for boundary-spanning indels), not in this exclusive chain.
         } else {
-            // Non-coding transcript
-            if in_exon {
+            // Non-coding transcript. Ensembl `non_coding_exon_variant` double-checks the
+            // exon membership with `overlap($bvf->{start}, $bvf->{end}, exon)` on the RAW
+            // (unsorted) variant bounds. For an insertion Ensembl sets start = P+1 > end = P,
+            // so that overlap requires the exon to contain BOTH flanks (strict interior) —
+            // an insertion at the exon's 5' edge is therefore INTRONIC, not exonic. The
+            // generic `in_exon` sorts the bounds and loses this, over-calling the exon term.
+            let in_exon_vep = transcript
+                .exons
+                .iter()
+                .any(|e| var_start <= e.end && e.start <= var_end);
+            // Ensembl `within_non_coding_gene` = within_transcript && !non_coding_exon: a
+            // variant inside the transcript span that is NOT exonic (incl. a boundary
+            // insertion) is `non_coding_transcript_variant`, not gated on the intron flag.
+            let within_transcript = var_start.min(var_end) <= transcript.end
+                && transcript.start <= var_start.max(var_end);
+            if in_exon_vep {
                 consequences.push(Consequence::NonCodingTranscriptExonVariant);
-            } else if in_intron {
+            } else if within_transcript {
                 consequences.push(Consequence::NonCodingTranscriptVariant);
             }
         }
