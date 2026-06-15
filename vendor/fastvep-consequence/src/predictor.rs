@@ -560,6 +560,9 @@ impl ConsequencePredictor {
             // so we leave the consequence set empty and the engine drops the row, rather
             // than emitting a spurious per-transcript intergenic_variant.
 
+            // `worst_impact` is None ONLY for an empty consequence set, which the engine drops
+            // (no row emitted), so the Modifier default is never surfaced — it is the lowest
+            // impact, a safe placeholder for that unreachable-downstream case.
             let impact = Consequence::worst_impact(&consequences).unwrap_or(Impact::Modifier);
             return AlleleConsequenceResult {
                 allele: alt_allele.clone(),
@@ -643,9 +646,6 @@ impl ConsequencePredictor {
 
         // 5. Coding vs non-coding transcript
         if transcript.is_coding() {
-            let coding_start = transcript.coding_region_start.unwrap_or(0);
-            let coding_end = transcript.coding_region_end.unwrap_or(0);
-
             // Map to CDS coordinates
             if let Some(cs) = cdna_start {
                 cds_start = transcript.cdna_to_cds(cs);
@@ -660,8 +660,14 @@ impl ConsequencePredictor {
                 protein_end = Some(Transcript::cds_to_protein(cds_e));
             }
 
-            let in_coding_region =
-                self.is_in_coding_region(var_start, var_end, coding_start, coding_end);
+            // `is_coding()` only means the transcript has a translation, NOT that its
+            // coding-region bounds are populated; if a data gap leaves them unset we cannot
+            // locate the CDS, so the variant is explicitly NOT in the coding region (no
+            // coding term) — rather than silently using coordinate 0 (`unwrap_or(0)`).
+            let in_coding_region = matches!(
+                (transcript.coding_region_start, transcript.coding_region_end),
+                (Some(cs), Some(ce)) if self.is_in_coding_region(var_start, var_end, cs, ce)
+            );
             // Interval-overlap UTR flags (for the co-occurrence union). A variant
             // spanning a UTR into the CDS is BOTH the UTR term AND the coding term.
             let ov_5utr = self.overlaps_5utr(var_start, var_end, transcript);
@@ -797,6 +803,9 @@ impl ConsequencePredictor {
         consequences.sort_by_key(|c| c.rank());
         consequences.dedup();
 
+        // `worst_impact` is None ONLY for an empty consequence set, which the engine drops
+        // (no row emitted), so the Modifier default is never surfaced — it is the lowest
+        // impact, a safe placeholder for that unreachable-downstream case.
         let impact = Consequence::worst_impact(&consequences).unwrap_or(Impact::Modifier);
 
         AlleleConsequenceResult {
@@ -912,6 +921,10 @@ impl ConsequencePredictor {
             // The peptide of the spliced-away portion is undeterminable, so the generic
             // coding_sequence_variant — EXCEPT a stop_retained/stop_lost that Ensembl can
             // still determine from the GENOMIC stop-codon overlap (`cil_stop_term`).
+            // JUSTIFIED default: reaching an essential splice site makes the peptide
+            // undeterminable, so Ensembl's generic `coding_sequence_variant` is the correct
+            // fallback when no determinable cil stop term was produced (the whole point of
+            // this branch). Not error-masking — it is the modelled outcome.
             out.push(essential_stop.unwrap_or(Consequence::CodingSequenceVariant));
             return out;
         }
@@ -1113,6 +1126,9 @@ impl ConsequencePredictor {
                 ctx.ref_codons[1],
                 ctx.ref_codons[2],
             ]);
+        // JUSTIFIED default: an empty alt peptide means the residue is undeterminable, and
+        // `X` is exactly Ensembl's unknown-amino-acid sentinel (the start/stop predicates
+        // already exclude `X`). Not error-masking — it is the VEP-faithful "unknown" value.
         let alt_first = ctx.alt_pep.first().copied().unwrap_or(b'X');
 
         // Codon-level peptide terms are unavailable for an incomplete terminal codon,
