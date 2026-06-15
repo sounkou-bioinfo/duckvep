@@ -245,6 +245,98 @@ impl ConsequencePredictor {
 
     /// The codon table to translate a given transcript with — mitochondrial
     /// (NCBI table 2) for chrM/MT transcripts, the standard table otherwise.
+    /// Ensembl `stop_retained`/`stop_lost` for a variant that reaches an essential splice
+    /// site, ported verbatim from `_overlaps_stop_codon_cil` + `_ins_del_stop_altered_cil`
+    /// (VariationEffect.pm) — the consider-insertion-length GENOMIC model, NOT a CDS-index
+    /// reconstruction (which double-counts intronic bases for a splice-straddling
+    /// deletion). Returns `Some(StopRetainedVariant)` / `Some(StopLost)` when the variant
+    /// genomically overlaps the terminal stop codon, else `None` (no stop term).
+    fn cil_stop_term(
+        &self,
+        transcript: &Transcript,
+        var_start: u64,
+        var_end: u64,
+        ref_allele: &Allele,
+        alt_allele: &Allele,
+    ) -> Option<Consequence> {
+        let cr_start = transcript.coding_region_start?;
+        let cr_end = transcript.coding_region_end?;
+        let seq = transcript.translateable_seq.as_ref()?.as_bytes();
+        if seq.len() < 3 {
+            return None;
+        }
+        // cds_end_NF guard: there must BE a terminal stop codon to overlap (the GFF3 flags
+        // don't carry cds_end_NF, so check the last codon translates to '*' directly).
+        let ct = self.ct(transcript);
+        let tc = &seq[seq.len() - 3..];
+        if ct.translate(&[tc[0], tc[1], tc[2]]) != b'*' {
+            return None;
+        }
+        let (mref, malt) = minimal_alleles(ref_allele, alt_allele);
+        // _overlaps_stop_codon_cil: genomic overlap with the stop codon's GENOMIC span
+        // (coding_region_end-2..end on +, coding_region_start..+2 on -). Insertions shift
+        // the start point by the inserted length (strand-aware) to "see" the overlap.
+        let (stop_lo, stop_hi) = match transcript.strand {
+            Strand::Forward => (cr_end.saturating_sub(2), cr_end),
+            Strand::Reverse => (cr_start, cr_start + 2),
+        };
+        let (mut v_lo, mut v_hi) = (var_start.min(var_end), var_start.max(var_end));
+        if mref.is_empty() && !malt.is_empty() {
+            match transcript.strand {
+                Strand::Forward => v_hi += malt.len() as u64,
+                Strand::Reverse => v_lo = v_lo.saturating_sub(malt.len() as u64),
+            }
+        }
+        if !(v_lo <= stop_hi && stop_lo <= v_hi) {
+            return None; // no genomic overlap with the stop codon
+        }
+        // _ins_del_stop_altered_cil: `return 0 unless cdna_start && cdna_end && cds_start`
+        // — when an endpoint is intronic (no cDNA coord) or the start is past the CDS, VEP
+        // cannot reconstruct, so the stop is NOT altered (-> stop_retained). This is the
+        // common case for a deletion straddling the acceptor. Only a fully-exonic-in-CDS
+        // deletion reaches the reconstruction below.
+        let (cdna_start, cdna_end) = match (
+            transcript.genomic_to_cdna(var_start.min(var_end)),
+            transcript.genomic_to_cdna(var_start.max(var_end)),
+        ) {
+            (Some(a), Some(b)) => (a.min(b), a.max(b)),
+            _ => return Some(Consequence::StopRetainedVariant),
+        };
+        let Some(cds_start) = transcript.cdna_to_cds(cdna_start) else {
+            return Some(Consequence::StopRetainedVariant);
+        };
+        // CDS + 3'UTR (the spliced cDNA after the CDS end).
+        let mut utr_and_cds = seq.to_vec();
+        if let (Some(spliced), Some(cend)) =
+            (transcript.spliced_seq.as_ref(), transcript.cdna_coding_end)
+        {
+            let sb = spliced.as_bytes();
+            let u = (cend as usize).min(sb.len());
+            utr_and_cds.extend_from_slice(&sb[u..]);
+        }
+        // alt feature seq (forward CDS orientation): empty for a deletion.
+        let alt_feat: Vec<u8> = match transcript.strand {
+            Strand::Forward => malt.clone(),
+            Strand::Reverse => fastvep_genome::codon::reverse_complement(&malt),
+        };
+        let anchor = (cds_start as usize).saturating_sub(1);
+        let span = (cdna_end - cdna_start + 1) as usize;
+        if anchor > utr_and_cds.len() {
+            return Some(Consequence::StopRetainedVariant);
+        }
+        let end = (anchor + span).min(utr_and_cds.len());
+        utr_and_cds.splice(anchor..end, alt_feat.iter().copied());
+        if utr_and_cds.len() < seq.len() {
+            return Some(Consequence::StopLost); // shortened past the CDS -> stop altered
+        }
+        let c = &utr_and_cds[seq.len() - 3..seq.len()];
+        if ct.translate(&[c[0], c[1], c[2]]) == b'*' {
+            Some(Consequence::StopRetainedVariant)
+        } else {
+            Some(Consequence::StopLost)
+        }
+    }
+
     fn ct(&self, transcript: &Transcript) -> &CodonTable {
         if matches!(&*transcript.chromosome, "MT" | "chrM" | "M" | "chrMT") {
             &self.mito_codon_table
@@ -553,11 +645,20 @@ impl ConsequencePredictor {
                 let terms = self.coding_terms_for_variant(
                     ref_allele, alt_allele, transcript, cds_start, cds_end,
                 );
+                // When the variant reaches an essential splice site, the windowed peptide
+                // is undeterminable EXCEPT the stop term, which Ensembl derives from the
+                // genomic stop-codon overlap (consider_ins_len model).
+                let essential_stop = if ref_reaches_essential {
+                    self.cil_stop_term(transcript, var_start, var_end, ref_allele, alt_allele)
+                } else {
+                    None
+                };
                 consequences.extend(Self::resolve_coding_terms(
                     terms,
                     display.as_ref().map(|(c, _, _)| *c),
                     straddles_cds,
                     ref_reaches_essential,
+                    essential_stop,
                 ));
                 if let Some((_, aa, cdn)) = display {
                     amino_acids = aa;
@@ -729,10 +830,14 @@ impl ConsequencePredictor {
         legacy: Option<Consequence>,
         straddles_cds: bool,
         ref_reaches_essential: bool,
+        essential_stop: Option<Consequence>,
     ) -> Vec<Consequence> {
         let mut out = Vec::new();
         if ref_reaches_essential {
-            out.push(Consequence::CodingSequenceVariant);
+            // The peptide of the spliced-away portion is undeterminable, so the generic
+            // coding_sequence_variant — EXCEPT a stop_retained/stop_lost that Ensembl can
+            // still determine from the GENOMIC stop-codon overlap (`cil_stop_term`).
+            out.push(essential_stop.unwrap_or(Consequence::CodingSequenceVariant));
             return out;
         }
         let terms = match raw.or_else(|| legacy.map(|c| vec![c])) {

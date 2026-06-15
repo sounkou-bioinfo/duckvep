@@ -37,6 +37,7 @@ COPY (
         WHEN dd.dc LIKE '%intron_variant%splice_donor_variant%' AND k.nalt='-' THEN 'boundary_del_intron_cooccur'
         WHEN dd.dc LIKE '%splice_donor_region_variant%' AND length(k.oref)=length(k.oalt) AND length(k.oref)>1 THEN 'mnv_splice_differing_regions'
         WHEN dd.dc LIKE '%stop_lost%' AND dd.dc NOT LIKE '%frameshift%' AND k.nalt='-' THEN 'stop_del_frameshift_suppressed'
+        WHEN dd.dc LIKE '%stop_retained_variant%' AND (dd.dc LIKE '%splice_acceptor_variant%' OR dd.dc LIKE '%splice_donor_variant%') AND k.nalt='-' THEN 'stop_retained_essential_splice_cil'
         WHEN dd.dc LIKE '%coding_sequence_variant%' AND dd.dc NOT LIKE '%synonym%' AND dd.dc NOT LIKE '%missense%' AND dd.dc NOT LIKE '%splice%' AND dd.dc NOT LIKE '%intron%' AND length(k.nref)=1 AND length(k.nalt)=1 THEN 'cds_start_nf_coding_unknown'
         WHEN dd.dc = 'intron_variant&splice_region_variant' AND length(k.nref)=1 AND length(k.nalt)=1 THEN 'splice_region_intronic_no_ppt'
         WHEN dd.dc LIKE '%splice_polypyrimidine%' AND length(k.oref)<length(k.oalt) THEN 'insertion_polypyrimidine'
