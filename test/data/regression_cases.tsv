@@ -10,6 +10,8 @@ chrom	pos	ref	alt	transcript_id	expected	category
 16	2110410	TCA	T	ENST00000423118	frameshift_variant&stop_gained	insertion_stop_gained
 16	2110410	TCA	T	ENST00000262304	frameshift_variant&stop_gained	insertion_stop_gained
 MT	4472	T	C	ENST00000361453	start_lost	mito_start_lost
+17	68541978	AACTC	GACCA	ENST00000590074	NMD_transcript_variant&intron_variant&splice_donor_region_variant	mnv_splice_differing_regions
+17	68541978	AACTC	GACCA	ENST00000226094	intron_variant&non_coding_transcript_variant&splice_donor_region_variant	mnv_splice_differing_regions
 16	176718	T	C	ENST00000875767	start_lost	nuclear_start_lost
 16	176718	T	C	ENST00000320868	start_lost	nuclear_start_lost
 16	88804	G	A	ENST00000611875	stop_gained	snv_stop_gained

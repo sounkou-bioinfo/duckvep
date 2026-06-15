@@ -11,9 +11,10 @@ Changelog, most recent first. (R-package style.)
   **every HIGH-impact SO term**. Percentages use enough precision that a non-zero
   discordance never reads as 100%.
 * **The consequence engine was rebuilt to mirror Ensembl's own structure**, taking
-  N=50000 ClinVar discordance vs offline Ensembl VEP 116 from **~3,876 → 222 (a 94%
+  N=50000 ClinVar discordance vs offline Ensembl VEP 116 from **~3,876 → 117 (a 97%
   reduction) with ZERO duckvep-specific regressions** at every step (every remaining
-  discordance is a *shared* gap fastVEP has too). Two VEP-faithful abstractions:
+  discordance is a *shared* gap fastVEP has too — fastVEP itself is discordant on
+  6,318 of the same calls). Three VEP-faithful abstractions:
   * **`CodingContext` (haplotype-ready):** coding consequences are a predicate SET
     over a peptide/codon context built from `CdsEdit`s applied to the reference CDS.
     One variant = one edit; a phased haplotype = many edits on the same CDS before
@@ -23,6 +24,10 @@ Changelog, most recent first. (R-package style.)
     `FeatureOverlap{exon,intron,intron_boundary}` flag set + an `include_satisfied`
     table from Ensembl `Constants.pm`), not scattered `if` guards — e.g.
     `splice_polypyrimidine` needs `exon=0,intron=1`.
+  * **`_get_differing_regions` (genomic analog of `CdsEdit`):** a same-length MNV is
+    split at its internal *matching* bases, so every splice/intron predicate is
+    evaluated over only the actually-changed sub-intervals — e.g. `AACTC/GACCA` hits
+    `splice_donor_region` but not the donor 5th base. SNVs/indels stay one region.
 * **Root-caused fixes** (each verified against VEP — several by *instrumenting* VEP),
   all locked by a generated regression corpus: mitochondrial codon table + non-ATG
   `start_lost`; splice precedence and insertion handling (`(min,max)` swap, exact
@@ -33,9 +38,10 @@ Changelog, most recent first. (R-package style.)
   tests + `test/sql/vep_splice.test` + `test/data/regression_cases.tsv` (generated
   from the concordance dump by `correctness/gen-regression-cases.sh`, run by
   `test/run-regression-cases.sh`). See `docs/PATCHES.md`.
-* **Open frontier (tracked):** `_get_differing_regions` decomposition (delins →
-  minimal del+ins sub-regions, the genomic analog of `CdsEdit`) for MNV/delins
-  splice calls; and 3′-shifting.
+* **Open frontier (tracked):** `_get_differing_regions` for the alt-longer *delins*
+  case (split into minimal del+ins sub-regions, not just the same-length MNV split
+  already shipped); stop_retained-at-essential-splice (acceptor vs donor); and
+  3′-shifting.
 
 ### New SQL functions
 
