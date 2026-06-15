@@ -41,6 +41,7 @@ VCF
 
 conda run -n vep vep -i "$SVVCF" --gff "$CTRL" --fasta "$FASTA" --symbol --json \
   -o /tmp/sv_vep.json --force_overwrite --no_stats 2>/dev/null
+[[ -s /tmp/sv_vep.json ]] || { echo "FAIL: VEP produced no output" >&2; exit 1; }
 python3 - "$TR" <<'PY' > /tmp/sv_vep.tsv
 import json,sys
 tr=sys.argv[1]
@@ -51,13 +52,15 @@ for l in open('/tmp/sv_vep.json'):
             print(r.get('id','?'), '&'.join(sorted(t['consequence_terms'])), sep='\t')
 PY
 
+# duckvep reads the SAME controlled GFF as VEP (so the only free variable is the engine).
 "$DUCKDB" -unsigned -noheader -list -c "
-LOAD '$EXT'; SELECT vep_load_cache('$GFF3','$FASTA');
+LOAD '$EXT'; SELECT vep_load_cache('$CTRL','$FASTA');
 SELECT id||chr(9)||list_aggregate(list_sort(c.consequence),'string_agg','&')
 FROM (VALUES ('del_whole',7668000,7688000,'<DEL>'),('del_part',7676000,7676500,'<DEL>'),
              ('dup_whole',7668000,7688000,'<DUP>'),('inv',7670000,7680000,'<INV>')) t(id,pos,e,alt),
      UNNEST(vep_consequence('17',pos,e,'N',alt)) u(c)
 WHERE c.transcript_id='$TR';" 2>/dev/null | grep -E "^(del|dup|inv)" > /tmp/sv_dv.tsv
+[[ $(wc -l < /tmp/sv_dv.tsv) -eq 4 ]] || { echo "FAIL: duckvep did not annotate all 4 SVs ($(wc -l < /tmp/sv_dv.tsv)/4)" >&2; exit 1; }
 
 echo "SV concordance vs Ensembl VEP ($TR):"
 match=0; total=0
