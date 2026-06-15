@@ -270,6 +270,9 @@ impl EngineContext {
             .unwrap_or(lo);
         let q_start = lo.saturating_sub(self.distance).max(1);
         let q_end = hi + self.distance;
+        // JUSTIFIED default (same as annotate_variant_spanned): a lookup Err / absent contig
+        // means no candidate transcripts, so the haplotype has no coding context here — we
+        // return no terms rather than aborting. The `find` below then yields None.
         let overlapping = self
             .transcripts
             .get_transcripts(chrom, q_start, q_end)

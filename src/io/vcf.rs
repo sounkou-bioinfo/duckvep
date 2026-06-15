@@ -384,11 +384,12 @@ fn record_to_row(
     region: Option<&Region>,
 ) -> Result<Option<VcfRow>, Box<dyn Error>> {
     let chrom = record.reference_sequence_name().to_string();
-    let pos = record
-        .variant_start()
-        .transpose()?
-        .map(usize::from)
-        .unwrap_or(0) as i64;
+    // A record with no POS is malformed; skip it (Ok(None)) rather than surfacing it at the
+    // invalid coordinate 0 (`unwrap_or(0)` would have masked it). `?` propagates a parse Err.
+    let pos = match record.variant_start().transpose()? {
+        Some(p) => usize::from(p) as i64,
+        None => return Ok(None),
+    };
     let reference = record.reference_bases().to_string();
     let info = record.info().as_ref().to_string();
     let end = compute_end(pos, &reference, &info);
