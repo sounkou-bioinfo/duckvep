@@ -258,3 +258,80 @@ impl VScalar for VepConsequence {
         ]
     }
 }
+
+/// `vep_haplotype_consequence(chrom, transcript_id, variants) -> VARCHAR`
+///
+/// Combine a set of PHASED variants on ONE transcript into a single haplotype coding
+/// consequence (the bcftools-csq / haplosaurus model: co-located variants are merged in
+/// transcript/CDS coordinates and translated together, so an in-codon SNV pair becomes
+/// one MNV and a frameshift + restoring indel cancel — the capability fastVEP lacks).
+///
+/// `variants` is a `;`-delimited list of `pos:ref:alt` (e.g. `'1053:G:T;1055:T:A'`),
+/// built in SQL with `string_agg(pos||':'||ref||':'||alt, ';')` after
+/// `GROUP BY sample, haplotype, transcript_id` — the grouping layer stays in SQL.
+/// Returns the `&`-joined sorted SO terms (empty string if the transcript is out of
+/// range or no variant is coding).
+pub struct VepHaplotypeConsequence;
+
+impl VScalar for VepHaplotypeConsequence {
+    type State = ();
+
+    unsafe fn invoke(
+        _: &Self::State,
+        input: &mut DataChunkHandle,
+        output: &mut dyn WritableVector,
+    ) -> Result<(), Box<dyn Error>> {
+        let batch = data_chunk_to_arrow(input)?;
+        let chrom = batch.column(0).as_string::<i32>();
+        let tid = batch.column(1).as_string::<i32>();
+        let vars = batch.column(2).as_string::<i32>();
+        let nrows = input.len();
+
+        let mut out_strings: Vec<String> = Vec::with_capacity(nrows);
+        {
+            let ctx = cache()
+                .load_full()
+                .ok_or("vep_haplotype_consequence: call vep_load_cache(gff3, fasta) first")?;
+            for i in 0..nrows {
+                if chrom.is_null(i) || tid.is_null(i) || vars.is_null(i) {
+                    out_strings.push(String::new());
+                    continue;
+                }
+                let variants = parse_haplotype_variants(vars.value(i));
+                let terms = ctx.haplotype_consequence(chrom.value(i), tid.value(i), &variants);
+                out_strings.push(terms.join("&"));
+            }
+        }
+
+        let v = output.flat_vector();
+        for (i, s) in out_strings.iter().enumerate() {
+            v.insert(i, s.as_str());
+        }
+        Ok(())
+    }
+
+    fn signatures() -> Vec<ScalarFunctionSignature> {
+        vec![ScalarFunctionSignature::exact(
+            vec![varchar(), varchar(), varchar()],
+            varchar(),
+        )]
+    }
+}
+
+/// Parse a `;`-delimited `pos:ref:alt` list into `(pos, ref, alt)` triples. Tokens that
+/// don't have all three colon-separated fields (or a non-numeric pos) are skipped.
+fn parse_haplotype_variants(s: &str) -> Vec<(u64, String, String)> {
+    s.split(';')
+        .filter_map(|tok| {
+            let tok = tok.trim();
+            if tok.is_empty() {
+                return None;
+            }
+            let mut it = tok.split(':');
+            let pos = it.next()?.trim().parse::<u64>().ok()?;
+            let r = it.next()?.trim().to_string();
+            let a = it.next()?.trim().to_string();
+            Some((pos, r, a))
+        })
+        .collect()
+}

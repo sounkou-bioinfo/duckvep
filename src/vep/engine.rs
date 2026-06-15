@@ -237,6 +237,52 @@ impl EngineContext {
         }
         rows
     }
+
+    /// Combine a set of PHASED variants on ONE transcript into a single haplotype coding
+    /// consequence (the bcftools-csq / haplosaurus model — co-located variants merged in
+    /// transcript/CDS coordinates and translated once). `variants` are `(pos, ref, alt)`;
+    /// returns the sorted SO terms, or empty if the transcript isn't found in range or no
+    /// variant is coding. The grouping by (sample, haplotype, transcript) is left to SQL.
+    pub(crate) fn haplotype_consequence(
+        &self,
+        chrom: &str,
+        transcript_id: &str,
+        variants: &[(u64, String, String)],
+    ) -> Vec<String> {
+        if variants.is_empty() {
+            return Vec::new();
+        }
+        let lo = variants.iter().map(|(p, _, _)| *p).min().unwrap_or(1);
+        let hi = variants
+            .iter()
+            .map(|(p, r, _)| p + (r.len() as u64).saturating_sub(1))
+            .max()
+            .unwrap_or(lo);
+        let q_start = lo.saturating_sub(self.distance).max(1);
+        let q_end = hi + self.distance;
+        let overlapping = self
+            .transcripts
+            .get_transcripts(chrom, q_start, q_end)
+            .unwrap_or_default();
+        let Some(tr) = overlapping.iter().find(|t| &*t.stable_id == transcript_id) else {
+            return Vec::new();
+        };
+        let edits: Vec<(u64, u64, Allele, Allele)> = variants
+            .iter()
+            .map(|(p, r, a)| {
+                let end = p + (r.len() as u64).saturating_sub(1);
+                (*p, end, Allele::from_str(r), Allele::from_str(a))
+            })
+            .collect();
+        match self.predictor.haplotype_coding_terms(tr, &edits) {
+            Some(mut terms) => {
+                terms.sort_by_key(|c| c.rank());
+                terms.dedup();
+                terms.iter().map(|c| c.so_term().to_string()).collect()
+            }
+            None => Vec::new(),
+        }
+    }
 }
 
 /// One annotated (variant, transcript, allele) row. Plain owned data so it can

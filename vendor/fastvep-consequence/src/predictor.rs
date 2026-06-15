@@ -659,6 +659,45 @@ impl ConsequencePredictor {
         Some(self.coding_consequence_terms(&ctx, transcript))
     }
 
+    /// Haplotype-aware coding consequence: a set of PHASED variants on ONE transcript is
+    /// projected to transcript CDS edits and applied TOGETHER before translation — the
+    /// bcftools-csq / haplosaurus model. Co-located variants therefore combine into one
+    /// peptide effect (an in-codon SNV pair becomes a single MNV; a frameshift + a
+    /// downstream restoring indel cancel) instead of independent per-variant calls — the
+    /// capability fastVEP lacks. The kernel is the existing multi-edit `CodingContext`;
+    /// this just stops calling it with a single edit.
+    ///
+    /// `variants` are `(genomic var_start, var_end, ref, alt)`; merging happens in CDS
+    /// coordinates (per-transcript, strand-aware, intron-collapsed), NOT in genomic
+    /// space, so the same phased set yields the correct — possibly different — effect on
+    /// each overlapping transcript. Returns the combined coding term set, or `None` if no
+    /// variant maps into this transcript's CDS.
+    pub fn haplotype_coding_terms(
+        &self,
+        transcript: &Transcript,
+        variants: &[(u64, u64, Allele, Allele)],
+    ) -> Option<Vec<Consequence>> {
+        let edits: Vec<CdsEdit> = variants
+            .iter()
+            .filter_map(|(s, e, r, a)| {
+                let cs = transcript
+                    .genomic_to_cdna(*s)
+                    .and_then(|c| transcript.cdna_to_cds(c));
+                let ce = transcript
+                    .genomic_to_cdna(*e)
+                    .and_then(|c| transcript.cdna_to_cds(c));
+                variant_to_cds_edit(r, a, cs, ce, transcript.strand)
+            })
+            .collect();
+        if edits.is_empty() {
+            return None;
+        }
+        // build_coding_context sorts the edits and applies them to the reference CDS
+        // before translating once -> the combined peptide.
+        let ctx = self.build_coding_context(transcript, &edits)?;
+        Some(self.coding_consequence_terms(&ctx, transcript))
+    }
+
     /// Resolve the coding TERMS for an exonic-coding variant, applying the CDS-boundary
     /// straddle rules flatly (no nesting in the caller). `raw` is the peptide predicate
     /// set; `legacy` is the single-term fallback when no coding context could be built.
@@ -2080,6 +2119,36 @@ mod tests {
         assert!(predictor
             .coding_consequence_terms(&ctx, &tr)
             .contains(&Consequence::MissenseVariant));
+    }
+
+    // The PUBLIC haplotype path from GENOMIC coordinates (what vep_haplotype_consequence
+    // calls): two phased SNVs are projected to CDS edits and applied together. Codon 2 =
+    // GCT (Ala) at CDS 4-6 = genomic 1053,1054,1055. `1055 T->A` ALONE is GCT->GCA
+    // (Ala->Ala) = synonymous; phased with `1053 G->T` the codon becomes TCA (Ser) =
+    // missense. Haplotype-awareness flips a silent call to a damaging one — the exact
+    // capability fastVEP lacks.
+    #[test]
+    fn test_haplotype_genomic_flips_silent_to_missense() {
+        let predictor = ConsequencePredictor::default();
+        let tr = make_coding_transcript();
+        let v_silent = (1055u64, 1055u64, Allele::from_str("T"), Allele::from_str("A"));
+        let v_other = (1053u64, 1053u64, Allele::from_str("G"), Allele::from_str("T"));
+
+        let solo = predictor
+            .haplotype_coding_terms(&tr, std::slice::from_ref(&v_silent))
+            .unwrap();
+        assert!(
+            solo.contains(&Consequence::SynonymousVariant),
+            "1055 T->A alone is synonymous (GCT->GCA, Ala->Ala)"
+        );
+
+        let hap = predictor
+            .haplotype_coding_terms(&tr, &[v_silent, v_other])
+            .unwrap();
+        assert!(
+            hap.contains(&Consequence::MissenseVariant),
+            "phased together the codon is TCA (Ser) -> missense, not two independent calls"
+        );
     }
 
     // An inframe delins that rearranges the codon sequence (alt is NOT a clean
