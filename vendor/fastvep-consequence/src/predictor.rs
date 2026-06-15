@@ -402,16 +402,31 @@ impl ConsequencePredictor {
         let Some(cdna_coding_start) = transcript.cdna_coding_start else {
             return false;
         };
-        let Some(spliced) = transcript.spliced_seq.as_ref().map(|s| s.as_bytes()) else {
+        // VEP `_ins_del_start_altered` returns 0 unless `seq_is_unambiguous_dna` — an ambiguous
+        // (N/IUPAC) alt cannot be reconstructed faithfully, so we do not call start_lost on it.
+        let (_mref, malt) = minimal_alleles(ref_allele, alt_allele);
+        if malt.iter().any(|b| !matches!(b, b'A' | b'C' | b'G' | b'T')) {
             return false;
-        };
+        }
         // utr_and_translateable = 5'UTR (spliced cDNA before the CDS) ++ CDS. cdna_coding_start
-        // is 1-based, so the UTR is `spliced[0 .. cdna_coding_start-1]`.
-        let utr_len = (cdna_coding_start as usize).saturating_sub(1).min(spliced.len());
-        let utr = &spliced[..utr_len];
-        let mut seq: Vec<u8> = Vec::with_capacity(utr.len() + translateable.len());
-        seq.extend_from_slice(utr);
+        // is 1-based, so the UTR is `spliced[0 .. cdna_coding_start-1]`. VEP allows NO 5'UTR
+        // (`$utr ? $utr->seq : ''`) — only when there IS a UTR do we need its bases from the
+        // spliced cDNA; absent them we cannot reconstruct and (like VEP's empty-seq paths)
+        // return "not altered".
+        let utr_len_full = (cdna_coding_start as usize).saturating_sub(1);
+        let mut seq: Vec<u8> = Vec::with_capacity(utr_len_full + translateable.len());
+        let utr_len = if utr_len_full == 0 {
+            0
+        } else {
+            let Some(spliced) = transcript.spliced_seq.as_ref().map(|s| s.as_bytes()) else {
+                return false;
+            };
+            let n = utr_len_full.min(spliced.len());
+            seq.extend_from_slice(&spliced[..n]);
+            n
+        };
         seq.extend_from_slice(translateable);
+        let utr = seq[..utr_len].to_vec();
 
         // cDNA coords of the variant (unshifted — we do not 3'-shift, matching cil_stop_term).
         // VEP: `return 0 unless cdna_start && cdna_end` (an intronic endpoint cannot reconstruct).
@@ -424,7 +439,6 @@ impl ConsequencePredictor {
         };
 
         // alt in feature (transcript) orientation; empty for a deletion ('-').
-        let (_mref, malt) = minimal_alleles(ref_allele, alt_allele);
         let alt_feat: Vec<u8> = match transcript.strand {
             Strand::Forward => malt.clone(),
             Strand::Reverse => fastvep_genome::codon::reverse_complement(&malt),
@@ -444,7 +458,7 @@ impl ConsequencePredictor {
         // non-ATG initiator falls through to the prefix/length comparison below.)
         if utr_len > 0 {
             let new_utr = &seq[..utr_len.min(seq.len())];
-            if new_utr == utr && seq.len() >= utr_len + 3 && &seq[utr_len..utr_len + 3] == b"ATG" {
+            if new_utr == utr.as_slice() && seq.len() >= utr_len + 3 && &seq[utr_len..utr_len + 3] == b"ATG" {
                 return false;
             }
         }
@@ -2603,6 +2617,34 @@ mod tests {
         let kept = predictor.coding_consequence_terms(&ctx, &tr, false, false);
         assert!(!kept.contains(&Consequence::StartLost), "preserved start -> no start_lost");
         assert!(kept.contains(&Consequence::FrameshiftVariant));
+    }
+
+    // Exercise the `_ins_del_start_altered` reconstruction itself (not just the gating): a
+    // genomic deletion of the start-codon 'A' alters the start, while a deletion deep in the
+    // 5'UTR (away from the start codon) does not. Forward strand; Exon1 1000-1200 has 5'UTR
+    // 1000-1049 and CDS from 1050 (cDNA 51) = "ATG…". The fixture leaves spliced_seq unset,
+    // so we complete it here (5'UTR ++ CDS) to drive the UTR reconstruction path.
+    #[test]
+    fn test_ins_del_start_altered_reconstruction() {
+        let predictor = ConsequencePredictor::default();
+        let mut tr = make_coding_transcript();
+        let cds = tr.translateable_seq.clone().unwrap();
+        tr.spliced_seq = Some("C".repeat(50) + &cds); // 50 nt 5'UTR ++ CDS
+        // Deletion of genomic 1050 (cDNA 51 = the A of ATG) -> start codon becomes TGG -> altered.
+        assert!(
+            predictor.ins_del_start_altered(&tr, 1050, 1050, &Allele::from_str("A"), &Allele::from_str("")),
+            "deleting the A of ATG alters the start codon"
+        );
+        // Deletion of 3 nt at genomic 1010-1012 (well inside the 5'UTR) leaves the start intact.
+        assert!(
+            !predictor.ins_del_start_altered(&tr, 1010, 1012, &Allele::from_str("CCC"), &Allele::from_str("")),
+            "a 5'UTR deletion away from the start codon does not alter it"
+        );
+        // Ambiguous (N) alt is not reconstructable -> not altered (VEP seq_is_unambiguous_dna).
+        assert!(
+            !predictor.ins_del_start_altered(&tr, 1050, 1050, &Allele::from_str("A"), &Allele::from_str("N")),
+            "ambiguous alt -> not altered"
+        );
     }
 
     #[test]
