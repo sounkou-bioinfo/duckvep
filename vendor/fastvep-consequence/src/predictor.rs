@@ -642,8 +642,24 @@ impl ConsequencePredictor {
                 let display = self.predict_coding_consequence(
                     ref_allele, alt_allele, transcript, cds_start, cds_end,
                 );
+                // VEP `start_lost` (SNV) needs TWO separate facts (pi review): the variant's
+                // cDNA overlaps the start codon [cdna_coding_start, +2] of a non-cds_start_NF
+                // transcript (`_overlaps_start_codon`, phase-correct), AND translation_start
+                // == 1 (protein position 1). Passed as predicate-specific inputs; the strict
+                // ATG/mito `at_start` path is left intact (so mito + the baseline are safe).
+                let overlaps_start_codon = !transcript.flags.iter().any(|f| f == "cds_start_NF")
+                    && match (cdna_start, cdna_end, transcript.cdna_coding_start) {
+                        (Some(cs), Some(ce), Some(cc)) => cs.min(ce) <= cc + 2 && cc <= cs.max(ce),
+                        _ => false,
+                    };
+                let translation_start_one = protein_start == Some(1);
                 let terms = self.coding_terms_for_variant(
-                    ref_allele, alt_allele, transcript, cds_start, cds_end,
+                    ref_allele,
+                    alt_allele,
+                    transcript,
+                    cds_start,
+                    cds_end,
+                    overlaps_start_codon && translation_start_one,
                 );
                 // When the variant reaches an essential splice site, the windowed peptide
                 // is undeterminable EXCEPT the stop term, which Ensembl derives from the
@@ -755,6 +771,7 @@ impl ConsequencePredictor {
         transcript: &Transcript,
         cds_start: Option<u64>,
         cds_end: Option<u64>,
+        vep_start_overlap: bool,
     ) -> Option<Vec<Consequence>> {
         let edit = variant_to_cds_edit(
             ref_allele,
@@ -764,7 +781,7 @@ impl ConsequencePredictor {
             transcript.strand,
         )?;
         let ctx = self.build_coding_context(transcript, &[edit])?;
-        Some(self.coding_consequence_terms(&ctx, transcript))
+        Some(self.coding_consequence_terms(&ctx, transcript, vep_start_overlap))
     }
 
     /// Haplotype-aware coding consequence: a set of PHASED variants on ONE transcript is
@@ -815,7 +832,7 @@ impl ConsequencePredictor {
         // build_coding_context sorts the edits and applies them to the reference CDS
         // before translating once -> the combined peptide.
         let ctx = self.build_coding_context(transcript, &edits)?;
-        Some(self.coding_consequence_terms(&ctx, transcript))
+        Some(self.coding_consequence_terms(&ctx, transcript, false))
     }
 
     /// Resolve the coding TERMS for an exonic-coding variant, applying the CDS-boundary
@@ -1018,6 +1035,7 @@ impl ConsequencePredictor {
         &self,
         ctx: &CodingContext,
         transcript: &Transcript,
+        vep_start_overlap: bool,
     ) -> Vec<Consequence> {
         // --- shared facts about the peptide change (computed once) ---
         let net = ctx.alt_len as i64 - ctx.ref_len as i64;
@@ -1070,7 +1088,19 @@ impl ConsequencePredictor {
         };
 
         // --- independent predicates: each carries its own exclusions, none nested ---
-        let p_start_lost = at_start && alt_first != b'M';
+        // The strict ATG/mito `at_start` path (unchanged), PLUS the VEP-faithful SNV path
+        // (pi review): a NON-ATG annotated start still gets start_lost when the variant
+        // overlaps the start codon AND translation_start==1 (both folded into
+        // `vep_start_overlap`) and the start residue changes to a determinable non-X.
+        // This is predicate-specific (does NOT touch `coding_ok`), so it adds the 19 missed
+        // non-ATG cases without removing the missense escape hatch from anything else.
+        let ref_first = ctx.ref_pep.first().copied().unwrap_or(b'X');
+        let vep_start_lost = vep_start_overlap
+            && !is_indel
+            && ref_first != b'X'
+            && alt_first != b'X'
+            && alt_first != ref_first;
+        let p_start_lost = (at_start && alt_first != b'M') || vep_start_lost;
         let p_start_retained = at_start && alt_first == b'M';
         let p_stop_gained = coding_ok && alt_stop && !ref_stop;
         // DELETION at the stop codon: Ensembl uses `_ins_del_stop_altered` over CDS+3'UTR
@@ -1104,8 +1134,12 @@ impl ConsequencePredictor {
             && !(net > 0 && inframe_ins)
             && !(net < 0 && inframe_del)
             && !pa_excluded;
-        let p_missense =
-            coding_ok && !is_indel && !alt_stop && !ref_stop && ctx.ref_pep != ctx.alt_pep;
+        let p_missense = coding_ok
+            && !is_indel
+            && !alt_stop
+            && !ref_stop
+            && ctx.ref_pep != ctx.alt_pep
+            && !vep_start_lost;
         // VEP `synonymous_variant` excludes `X` (an undeterminable residue, e.g. the
         // N-padded first codon of a cds_start_NF transcript): `$ref_pep !~ /X/ and
         // $alt_pep !~ /X/`. Without it an N-codon reads ref_pep==alt_pep=="X" and is
@@ -2244,7 +2278,7 @@ mod tests {
             "combined edits give TCA = Ser (proves edits applied together, not independently)"
         );
         assert!(predictor
-            .coding_consequence_terms(&ctx, &tr)
+            .coding_consequence_terms(&ctx, &tr, false)
             .contains(&Consequence::MissenseVariant));
     }
 
@@ -2303,7 +2337,7 @@ mod tests {
         }];
         let ctx = predictor.build_coding_context(&tr, &delins).unwrap();
         assert!(predictor
-            .coding_consequence_terms(&ctx, &tr)
+            .coding_consequence_terms(&ctx, &tr, false)
             .contains(&Consequence::ProteinAlteringVariant));
         // A clean deletion of TCA (ref keeps the GCT prefix) IS inframe_deletion.
         let clean = vec![CdsEdit {
@@ -2313,7 +2347,7 @@ mod tests {
         }];
         let ctx2 = predictor.build_coding_context(&tr, &clean).unwrap();
         assert!(predictor
-            .coding_consequence_terms(&ctx2, &tr)
+            .coding_consequence_terms(&ctx2, &tr, false)
             .contains(&Consequence::InframeDeletion));
     }
 
@@ -2332,7 +2366,7 @@ mod tests {
             alt_bases: b"TAATT".to_vec(),
         }];
         let ctx = predictor.build_coding_context(&tr, &with_stop).unwrap();
-        let terms = predictor.coding_consequence_terms(&ctx, &tr);
+        let terms = predictor.coding_consequence_terms(&ctx, &tr, false);
         assert!(
             terms.contains(&Consequence::StopGained),
             "TAATT inserts a stop codon"
@@ -2345,7 +2379,7 @@ mod tests {
             alt_bases: b"TT".to_vec(),
         }];
         let ctx2 = predictor.build_coding_context(&tr, &no_stop).unwrap();
-        let terms2 = predictor.coding_consequence_terms(&ctx2, &tr);
+        let terms2 = predictor.coding_consequence_terms(&ctx2, &tr, false);
         assert!(
             !terms2.contains(&Consequence::StopGained),
             "TT alone is not a stop"

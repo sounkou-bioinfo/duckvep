@@ -13,7 +13,7 @@ diff -ruN a/fastvep-consequence/src/lib.rs b/fastvep-consequence/src/lib.rs
 +};
 diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predictor.rs
 --- a/fastvep-consequence/src/predictor.rs	2026-06-13 21:22:56.605706543 +0200
-+++ b/fastvep-consequence/src/predictor.rs	2026-06-15 18:21:25.721830020 +0200
++++ b/fastvep-consequence/src/predictor.rs	2026-06-15 19:02:35.804844229 +0200
 @@ -43,11 +43,192 @@
      pub most_severe: Option<Consequence>,
  }
@@ -508,7 +508,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
          }
  
          // 5. Coding vs non-coding transcript
-@@ -251,42 +616,95 @@
+@@ -251,42 +616,111 @@
                  protein_end = Some(Transcript::cds_to_protein(cds_e));
              }
  
@@ -544,13 +544,29 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
 +                // straddle rules (resolved flatly in `resolve_coding_terms`); the
 +                // amino-acid/codon DISPLAY comes from the HGVS-validated computation.
 +                let display = self.predict_coding_consequence(
-+                    ref_allele, alt_allele, transcript, cds_start, cds_end,
-+                );
-+                let terms = self.coding_terms_for_variant(
                      ref_allele, alt_allele, transcript, cds_start, cds_end,
                  );
 -                if let Some((conseq, aa, cdn)) = coding_conseq {
 -                    consequences.push(conseq);
++                // VEP `start_lost` (SNV) needs TWO separate facts (pi review): the variant's
++                // cDNA overlaps the start codon [cdna_coding_start, +2] of a non-cds_start_NF
++                // transcript (`_overlaps_start_codon`, phase-correct), AND translation_start
++                // == 1 (protein position 1). Passed as predicate-specific inputs; the strict
++                // ATG/mito `at_start` path is left intact (so mito + the baseline are safe).
++                let overlaps_start_codon = !transcript.flags.iter().any(|f| f == "cds_start_NF")
++                    && match (cdna_start, cdna_end, transcript.cdna_coding_start) {
++                        (Some(cs), Some(ce), Some(cc)) => cs.min(ce) <= cc + 2 && cc <= cs.max(ce),
++                        _ => false,
++                    };
++                let translation_start_one = protein_start == Some(1);
++                let terms = self.coding_terms_for_variant(
++                    ref_allele,
++                    alt_allele,
++                    transcript,
++                    cds_start,
++                    cds_end,
++                    overlaps_start_codon && translation_start_one,
++                );
 +                // When the variant reaches an essential splice site, the windowed peptide
 +                // is undeterminable EXCEPT the stop term, which Ensembl derives from the
 +                // genomic stop-codon overlap (consider_ins_len model).
@@ -622,7 +638,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
          // If still no consequences, add catch-all
          if consequences.is_empty() {
              if transcript.is_coding() {
-@@ -311,15 +729,422 @@
+@@ -311,15 +745,440 @@
              allele: alt_allele.clone(),
              consequences,
              impact,
@@ -657,6 +673,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
 +        transcript: &Transcript,
 +        cds_start: Option<u64>,
 +        cds_end: Option<u64>,
++        vep_start_overlap: bool,
 +    ) -> Option<Vec<Consequence>> {
 +        let edit = variant_to_cds_edit(
 +            ref_allele,
@@ -666,7 +683,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
 +            transcript.strand,
 +        )?;
 +        let ctx = self.build_coding_context(transcript, &[edit])?;
-+        Some(self.coding_consequence_terms(&ctx, transcript))
++        Some(self.coding_consequence_terms(&ctx, transcript, vep_start_overlap))
 +    }
 +
 +    /// Haplotype-aware coding consequence: a set of PHASED variants on ONE transcript is
@@ -717,7 +734,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
 +        // build_coding_context sorts the edits and applies them to the reference CDS
 +        // before translating once -> the combined peptide.
 +        let ctx = self.build_coding_context(transcript, &edits)?;
-+        Some(self.coding_consequence_terms(&ctx, transcript))
++        Some(self.coding_consequence_terms(&ctx, transcript, false))
 +    }
 +
 +    /// Resolve the coding TERMS for an exonic-coding variant, applying the CDS-boundary
@@ -920,6 +937,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
 +        &self,
 +        ctx: &CodingContext,
 +        transcript: &Transcript,
++        vep_start_overlap: bool,
 +    ) -> Vec<Consequence> {
 +        // --- shared facts about the peptide change (computed once) ---
 +        let net = ctx.alt_len as i64 - ctx.ref_len as i64;
@@ -972,7 +990,19 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
 +        };
 +
 +        // --- independent predicates: each carries its own exclusions, none nested ---
-+        let p_start_lost = at_start && alt_first != b'M';
++        // The strict ATG/mito `at_start` path (unchanged), PLUS the VEP-faithful SNV path
++        // (pi review): a NON-ATG annotated start still gets start_lost when the variant
++        // overlaps the start codon AND translation_start==1 (both folded into
++        // `vep_start_overlap`) and the start residue changes to a determinable non-X.
++        // This is predicate-specific (does NOT touch `coding_ok`), so it adds the 19 missed
++        // non-ATG cases without removing the missense escape hatch from anything else.
++        let ref_first = ctx.ref_pep.first().copied().unwrap_or(b'X');
++        let vep_start_lost = vep_start_overlap
++            && !is_indel
++            && ref_first != b'X'
++            && alt_first != b'X'
++            && alt_first != ref_first;
++        let p_start_lost = (at_start && alt_first != b'M') || vep_start_lost;
 +        let p_start_retained = at_start && alt_first == b'M';
 +        let p_stop_gained = coding_ok && alt_stop && !ref_stop;
 +        // DELETION at the stop codon: Ensembl uses `_ins_del_stop_altered` over CDS+3'UTR
@@ -1006,8 +1036,12 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
 +            && !(net > 0 && inframe_ins)
 +            && !(net < 0 && inframe_del)
 +            && !pa_excluded;
-+        let p_missense =
-+            coding_ok && !is_indel && !alt_stop && !ref_stop && ctx.ref_pep != ctx.alt_pep;
++        let p_missense = coding_ok
++            && !is_indel
++            && !alt_stop
++            && !ref_stop
++            && ctx.ref_pep != ctx.alt_pep
++            && !vep_start_lost;
 +        // VEP `synonymous_variant` excludes `X` (an undeterminable residue, e.g. the
 +        // N-padded first codon of a cds_start_NF transcript): `$ref_pep !~ /X/ and
 +        // $alt_pep !~ /X/`. Without it an N-codon reads ref_pep==alt_pep=="X" and is
@@ -1050,7 +1084,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
      /// Predict the coding consequence (missense, synonymous, frameshift, etc.)
      fn predict_coding_consequence(
          &self,
-@@ -328,7 +1153,11 @@
+@@ -328,7 +1187,11 @@
          transcript: &Transcript,
          cds_start: Option<u64>,
          cds_end: Option<u64>,
@@ -1063,7 +1097,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
          let cds_pos_start = cds_start?;
  
          let ref_len = ref_allele.len();
-@@ -351,7 +1180,7 @@
+@@ -351,7 +1214,7 @@
                  }
              } else {
                  let len_diff = (ref_len as i64 - alt_len as i64).unsigned_abs() as usize;
@@ -1072,7 +1106,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
                      (Consequence::FrameshiftVariant, true)
                  } else if ref_len > alt_len {
                      (Consequence::InframeDeletion, false)
-@@ -373,7 +1202,11 @@
+@@ -373,7 +1236,11 @@
  
              // Try to compute amino acids and codons from translateable_seq
              let (aa_pair, codon_pair) = self.compute_indel_amino_acids(
@@ -1085,7 +1119,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
              );
  
              return Some((consequence, aa_pair, codon_pair));
-@@ -388,8 +1221,19 @@
+@@ -388,8 +1255,19 @@
              let codon_offset = ((cds_pos_start - 1) % 3) as usize;
              let codon_start = codon_number * 3;
  
@@ -1106,7 +1140,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
                  let mut alt_codon = ref_codon;
  
                  // Apply the substitution
-@@ -405,8 +1249,8 @@
+@@ -405,8 +1283,8 @@
                      }
                  }
  
@@ -1117,7 +1151,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
  
                  let (ref_codon_str, alt_codon_str) = format_codon_change(&ref_codon, &alt_codon);
  
-@@ -416,9 +1260,43 @@
+@@ -416,9 +1294,43 @@
                  let codon_pair = Some((ref_codon_str, alt_codon_str));
                  let aa_pair = Some((ref_aa_str.clone(), alt_aa_str.clone()));
  
@@ -1164,7 +1198,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
                  }
  
                  // Determine consequence type
-@@ -480,8 +1358,12 @@
+@@ -480,8 +1392,12 @@
              return (None, None);
          }
  
@@ -1179,7 +1213,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
          let ref_aa_str = String::from(ref_aa as char);
  
          if is_frameshift {
-@@ -548,7 +1430,8 @@
+@@ -548,7 +1464,8 @@
                      }
                      _ => {}
                  }
@@ -1189,7 +1223,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
                      .map(|&b| (b as char).to_ascii_lowercase())
                      .collect()
              };
-@@ -562,7 +1445,10 @@
+@@ -562,7 +1479,10 @@
                      if transcript.strand == Strand::Reverse {
                          bases = bases.iter().map(|&b| complement(b)).collect();
                      }
@@ -1201,7 +1235,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
                  } else {
                      alt_codon_display
                  };
-@@ -590,12 +1476,15 @@
+@@ -590,12 +1510,15 @@
                          // Deletion starts at codon boundary: VEP shows deleted AAs vs "-"
                          let ref_end = (codon_start + del_codons * 3).min(seq_bytes.len());
                          let ref_region = &seq_bytes[codon_start..ref_end];
@@ -1221,7 +1255,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
                          let aa_pair = Some((ref_aas, "-".to_string()));
                          let codon_pair = Some((ref_codons, "-".to_string()));
                          return (aa_pair, codon_pair);
-@@ -604,21 +1493,33 @@
+@@ -604,21 +1527,33 @@
                          let n_ref_codons = del_codons + 1;
                          let ref_end = (codon_start + n_ref_codons * 3).min(seq_bytes.len());
                          let ref_region = &seq_bytes[codon_start..ref_end];
@@ -1262,7 +1296,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
                          };
                          let aa_pair = Some((ref_aas, alt_aas));
                          let codon_pair = Some((ref_codons, alt_codons));
-@@ -645,16 +1546,19 @@
+@@ -645,16 +1580,19 @@
                      }
  
                      // Ref: the single codon at the insertion point
@@ -1286,7 +1320,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
                          .collect();
  
                      // Build alt codon string: original bases lowercase, inserted uppercase
-@@ -667,10 +1571,8 @@
+@@ -667,10 +1605,8 @@
                      for (i, &b) in alt_region.iter().enumerate() {
                          let is_original = if i < ins_offset_in_codon {
                              true
@@ -1298,7 +1332,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
                          };
                          if is_original {
                              alt_codon_display.push((b as char).to_lowercase().next().unwrap());
-@@ -689,7 +1591,12 @@
+@@ -689,7 +1625,12 @@
          }
      }
  
@@ -1312,7 +1346,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
          // For insertions (end < start), use start for distance calculation
          // since start represents the actual insertion position
          let effective_start = var_start.min(var_end);
-@@ -703,39 +1610,39 @@
+@@ -703,39 +1644,39 @@
          }
      }
  
@@ -1376,7 +1410,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
          }
      }
  }
-@@ -793,9 +1700,33 @@
+@@ -793,9 +1734,33 @@
              end: 5000,
              strand: Strand::Forward,
              exons: vec![
@@ -1413,7 +1447,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
              ],
              translation: Some(Translation {
                  stable_id: "ENSP00000001".into(),
-@@ -814,12 +1745,21 @@
+@@ -814,12 +1779,21 @@
              translateable_seq: Some(translateable),
              peptide: None,
              canonical: true,
@@ -1439,7 +1473,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
          }
      }
  
-@@ -830,28 +1770,63 @@
+@@ -830,28 +1804,63 @@
              gene: Gene {
                  stable_id: "ENSG_NC".into(),
                  symbol: Some("NCRNA1".into()),
@@ -1515,7 +1549,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
          }
      }
  
-@@ -860,12 +1835,20 @@
+@@ -860,12 +1869,20 @@
          let predictor = ConsequencePredictor::default();
          let tr = make_coding_transcript();
          let pos = GenomicPosition::new("chr1", 500, 500, Strand::Forward);
@@ -1538,7 +1572,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
          assert_eq!(tc.allele_consequences[0].distance, Some(500));
      }
  
-@@ -874,10 +1857,18 @@
+@@ -874,10 +1891,18 @@
          let predictor = ConsequencePredictor::default();
          let tr = make_coding_transcript();
          let pos = GenomicPosition::new("chr1", 5500, 5500, Strand::Forward);
@@ -1559,7 +1593,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
          assert_eq!(ac.distance, Some(500));
      }
  
-@@ -887,7 +1878,13 @@
+@@ -887,7 +1912,13 @@
          let tr = make_coding_transcript();
          // Very far away
          let pos = GenomicPosition::new("chr1", 100000, 100000, Strand::Forward);
@@ -1574,7 +1608,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
  
          let ac = &result.transcript_consequences[0].allele_consequences[0];
          assert!(ac.consequences.contains(&Consequence::IntergenicVariant));
-@@ -899,7 +1896,13 @@
+@@ -899,7 +1930,13 @@
          let tr = make_coding_transcript();
          // Position 1020 is in exon1 (1000-1200), before CDS start (1050)
          let pos = GenomicPosition::new("chr1", 1020, 1020, Strand::Forward);
@@ -1589,7 +1623,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
  
          let ac = &result.transcript_consequences[0].allele_consequences[0];
          assert!(ac.consequences.contains(&Consequence::FivePrimeUtrVariant));
-@@ -911,7 +1914,13 @@
+@@ -911,7 +1948,13 @@
          let tr = make_coding_transcript();
          // Position 4600 is in exon3 (4000-5000), after CDS end (4500)
          let pos = GenomicPosition::new("chr1", 4600, 4600, Strand::Forward);
@@ -1604,7 +1638,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
  
          let ac = &result.transcript_consequences[0].allele_consequences[0];
          assert!(ac.consequences.contains(&Consequence::ThreePrimeUtrVariant));
-@@ -923,7 +1932,13 @@
+@@ -923,7 +1966,13 @@
          let tr = make_coding_transcript();
          // Position 1500 is in intron1 (1201-1999), away from splice sites
          let pos = GenomicPosition::new("chr1", 1500, 1500, Strand::Forward);
@@ -1619,7 +1653,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
  
          let ac = &result.transcript_consequences[0].allele_consequences[0];
          assert!(ac.consequences.contains(&Consequence::IntronVariant));
-@@ -935,7 +1950,13 @@
+@@ -935,7 +1984,13 @@
          let tr = make_coding_transcript();
          // Position 1201 is first base of intron1 → splice donor
          let pos = GenomicPosition::new("chr1", 1201, 1201, Strand::Forward);
@@ -1634,7 +1668,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
  
          let ac = &result.transcript_consequences[0].allele_consequences[0];
          assert!(ac.consequences.contains(&Consequence::SpliceDonorVariant));
-@@ -948,10 +1969,18 @@
+@@ -948,10 +2003,18 @@
          let tr = make_coding_transcript();
          // Position 1999 is last base of intron1 → splice acceptor
          let pos = GenomicPosition::new("chr1", 1999, 1999, Strand::Forward);
@@ -1655,7 +1689,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
          assert_eq!(ac.impact, Impact::High);
      }
  
-@@ -978,7 +2007,8 @@
+@@ -978,7 +2041,8 @@
          let ac = &result.transcript_consequences[0].allele_consequences[0];
          assert!(
              ac.consequences.contains(&Consequence::SynonymousVariant),
@@ -1665,7 +1699,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
          );
          assert_eq!(ac.impact, Impact::Low);
      }
-@@ -1001,7 +2031,8 @@
+@@ -1001,7 +2065,8 @@
          let ac = &result.transcript_consequences[0].allele_consequences[0];
          assert!(
              ac.consequences.contains(&Consequence::MissenseVariant),
@@ -1675,7 +1709,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
          );
          assert_eq!(ac.impact, Impact::Moderate);
      }
-@@ -1058,7 +2089,8 @@
+@@ -1058,7 +2123,8 @@
          let ac = &result.transcript_consequences[0].allele_consequences[0];
          assert!(
              ac.consequences.contains(&Consequence::FrameshiftVariant),
@@ -1685,7 +1719,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
          );
          assert_eq!(ac.impact, Impact::High);
      }
-@@ -1080,7 +2112,8 @@
+@@ -1080,7 +2146,8 @@
          let ac = &result.transcript_consequences[0].allele_consequences[0];
          assert!(
              ac.consequences.contains(&Consequence::InframeDeletion),
@@ -1695,7 +1729,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
          );
          assert_eq!(ac.impact, Impact::Moderate);
      }
-@@ -1090,10 +2123,18 @@
+@@ -1090,10 +2157,18 @@
          let predictor = ConsequencePredictor::default();
          let tr = make_noncoding_transcript();
          let pos = GenomicPosition::new("chr1", 10100, 10100, Strand::Forward);
@@ -1716,7 +1750,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
      }
  
      #[test]
-@@ -1114,8 +2155,202 @@
+@@ -1114,8 +2189,202 @@
          let ac = &result.transcript_consequences[0].allele_consequences[0];
          assert!(
              ac.consequences.contains(&Consequence::StartLost),
@@ -1810,7 +1844,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
 +            "combined edits give TCA = Ser (proves edits applied together, not independently)"
 +        );
 +        assert!(predictor
-+            .coding_consequence_terms(&ctx, &tr)
++            .coding_consequence_terms(&ctx, &tr, false)
 +            .contains(&Consequence::MissenseVariant));
 +    }
 +
@@ -1869,7 +1903,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
 +        }];
 +        let ctx = predictor.build_coding_context(&tr, &delins).unwrap();
 +        assert!(predictor
-+            .coding_consequence_terms(&ctx, &tr)
++            .coding_consequence_terms(&ctx, &tr, false)
 +            .contains(&Consequence::ProteinAlteringVariant));
 +        // A clean deletion of TCA (ref keeps the GCT prefix) IS inframe_deletion.
 +        let clean = vec![CdsEdit {
@@ -1879,7 +1913,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
 +        }];
 +        let ctx2 = predictor.build_coding_context(&tr, &clean).unwrap();
 +        assert!(predictor
-+            .coding_consequence_terms(&ctx2, &tr)
++            .coding_consequence_terms(&ctx2, &tr, false)
 +            .contains(&Consequence::InframeDeletion));
 +    }
 +
@@ -1898,7 +1932,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
 +            alt_bases: b"TAATT".to_vec(),
 +        }];
 +        let ctx = predictor.build_coding_context(&tr, &with_stop).unwrap();
-+        let terms = predictor.coding_consequence_terms(&ctx, &tr);
++        let terms = predictor.coding_consequence_terms(&ctx, &tr, false);
 +        assert!(
 +            terms.contains(&Consequence::StopGained),
 +            "TAATT inserts a stop codon"
@@ -1911,7 +1945,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
 +            alt_bases: b"TT".to_vec(),
 +        }];
 +        let ctx2 = predictor.build_coding_context(&tr, &no_stop).unwrap();
-+        let terms2 = predictor.coding_consequence_terms(&ctx2, &tr);
++        let terms2 = predictor.coding_consequence_terms(&ctx2, &tr, false);
 +        assert!(
 +            !terms2.contains(&Consequence::StopGained),
 +            "TT alone is not a stop"
@@ -1920,7 +1954,7 @@ diff -ruN a/fastvep-consequence/src/predictor.rs b/fastvep-consequence/src/predi
      }
  
      #[test]
-@@ -1136,9 +2371,13 @@
+@@ -1136,9 +2405,13 @@
  
          assert_eq!(result.transcript_consequences.len(), 2);
          // tr1: intron variant
