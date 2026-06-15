@@ -301,7 +301,7 @@ indels/MNVs (shared with fastVEP — an engine gap, not a duckvep bug).
 | MODERATE | ins   | 114/100K      | 1767/100K     |
 | MODERATE | mnv   | 0/100K        | 28631/100K    |
 | MODERATE | snv   | 0/100K        | 5/100K        |
-| LOW      | del   | 352/100K      | 16454/100K    |
+| LOW      | del   | 122/100K      | 16454/100K    |
 | LOW      | ins   | 335/100K      | 22920/100K    |
 | LOW      | mnv   | 4975/100K     | 22886/100K    |
 | LOW      | snv   | 2/100K        | 15/100K       |
@@ -324,12 +324,12 @@ fastVEP matches VEP (`regression` = duckvep worse than upstream;
 | type   | impact   | VEP calls                                                                                                                           | duckvep calls                                                                                                                         |   n |
 |:-------|:---------|:------------------------------------------------------------------------------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------|----:|
 | shared | HIGH     | 3_prime_UTR_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant&stop_retained_variant | 3_prime_UTR_variant&coding_sequence_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant |  18 |
-| shared | LOW      | 3_prime_UTR_variant&stop_retained_variant                                                                                           | 3_prime_UTR_variant&stop_lost                                                                                                         |  18 |
 | shared | HIGH     | intron_variant&splice_acceptor_variant&stop_retained_variant                                                                        | coding_sequence_variant&intron_variant&splice_acceptor_variant                                                                        |  14 |
 | shared | LOW      | NMD_transcript_variant&intron_variant&splice_donor_region_variant                                                                   | NMD_transcript_variant&intron_variant&splice_donor_5th_base_variant                                                                   |  12 |
 | shared | LOW      | non_coding_transcript_variant&splice_region_variant                                                                                 | non_coding_transcript_exon_variant&splice_region_variant                                                                              |  12 |
 | shared | MODIFIER | coding_sequence_variant                                                                                                             | synonymous_variant                                                                                                                    |  10 |
 | shared | LOW      | intron_variant&splice_region_variant                                                                                                | intron_variant&splice_polypyrimidine_tract_variant&splice_region_variant                                                              |   8 |
+| shared | LOW      | intron_variant&splice_donor_region_variant                                                                                          | intron_variant&splice_donor_5th_base_variant                                                                                          |   6 |
 | shared | MODIFIER | mature_miRNA_variant                                                                                                                | non_coding_transcript_exon_variant                                                                                                    |   6 |
 
 So the open work splits cleanly: **regressions** (the splice sub-term
