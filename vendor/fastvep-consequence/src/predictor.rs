@@ -379,6 +379,85 @@ impl ConsequencePredictor {
         }
     }
 
+    /// Ensembl `_ins_del_start_altered` (VariationEffect.pm:1028) — the start-codon analog of
+    /// `cil_stop_term`. For a length-changing variant overlapping the start codon, reconstruct
+    /// the (5'UTR + CDS) cDNA, splice the alt allele in at the cDNA coordinates, and decide
+    /// whether the start codon survives. cDNA-anchored => phase-correct and 5'UTR-straddle-aware
+    /// (a deletion reaching from the 5'UTR into the start codon, or a non-ATG initiator, is
+    /// handled the same way VEP handles it). Returns `false` whenever VEP would `return 0`
+    /// (cannot reconstruct, endpoint intronic, start preserved) — the caller treats that as
+    /// "start not altered". The `_overlaps_start_codon` / cds_start_NF / length-changing gates
+    /// are applied by the caller before this runs.
+    fn ins_del_start_altered(
+        &self,
+        transcript: &Transcript,
+        var_start: u64,
+        var_end: u64,
+        ref_allele: &Allele,
+        alt_allele: &Allele,
+    ) -> bool {
+        let Some(translateable) = transcript.translateable_seq.as_ref().map(|s| s.as_bytes()) else {
+            return false;
+        };
+        let Some(cdna_coding_start) = transcript.cdna_coding_start else {
+            return false;
+        };
+        let Some(spliced) = transcript.spliced_seq.as_ref().map(|s| s.as_bytes()) else {
+            return false;
+        };
+        // utr_and_translateable = 5'UTR (spliced cDNA before the CDS) ++ CDS. cdna_coding_start
+        // is 1-based, so the UTR is `spliced[0 .. cdna_coding_start-1]`.
+        let utr_len = (cdna_coding_start as usize).saturating_sub(1).min(spliced.len());
+        let utr = &spliced[..utr_len];
+        let mut seq: Vec<u8> = Vec::with_capacity(utr.len() + translateable.len());
+        seq.extend_from_slice(utr);
+        seq.extend_from_slice(translateable);
+
+        // cDNA coords of the variant (unshifted — we do not 3'-shift, matching cil_stop_term).
+        // VEP: `return 0 unless cdna_start && cdna_end` (an intronic endpoint cannot reconstruct).
+        let (cdna_start, cdna_end) = match (
+            transcript.genomic_to_cdna(var_start.min(var_end)),
+            transcript.genomic_to_cdna(var_start.max(var_end)),
+        ) {
+            (Some(a), Some(b)) => (a.min(b), a.max(b)),
+            _ => return false,
+        };
+
+        // alt in feature (transcript) orientation; empty for a deletion ('-').
+        let (_mref, malt) = minimal_alleles(ref_allele, alt_allele);
+        let alt_feat: Vec<u8> = match transcript.strand {
+            Strand::Forward => malt.clone(),
+            Strand::Reverse => fastvep_genome::codon::reverse_complement(&malt),
+        };
+
+        // splice: substr(seq, cdna_start-1, cdna_end-cdna_start+1) = alt_feat
+        let anchor = (cdna_start as usize).saturating_sub(1);
+        if anchor > seq.len() {
+            return false;
+        }
+        let span = (cdna_end - cdna_start + 1) as usize;
+        let end = (anchor + span).min(seq.len());
+        seq.splice(anchor..end, alt_feat.iter().copied());
+
+        // VEP: if there is a UTR and BOTH the UTR is unchanged AND the new start codon is a
+        // literal ATG, the start is retained -> not altered. (Literal ATG matches Ensembl; a
+        // non-ATG initiator falls through to the prefix/length comparison below.)
+        if utr_len > 0 {
+            let new_utr = &seq[..utr_len.min(seq.len())];
+            if new_utr == utr && seq.len() >= utr_len + 3 && &seq[utr_len..utr_len + 3] == b"ATG" {
+                return false;
+            }
+        }
+        // Reconstruction shorter than the original CDS -> the start region lost bases -> altered.
+        if seq.len() < translateable.len() {
+            return true;
+        }
+        // Otherwise the start codon is altered iff the CDS-anchored tail differs from the
+        // original CDS (an insertion before the start shifts everything but leaves the tail equal).
+        let tail = &seq[seq.len() - translateable.len()..];
+        tail != translateable
+    }
+
     fn ct(&self, transcript: &Transcript) -> &CodonTable {
         if matches!(&*transcript.chromosome, "MT" | "chrM" | "M" | "chrMT") {
             &self.mito_codon_table
@@ -703,6 +782,13 @@ impl ConsequencePredictor {
                     cdna_coding_start: transcript.cdna_coding_start,
                     protein_start,
                 };
+                // VEP `start_lost` for length-changing variants (VariationEffect.pm:870) uses
+                // `_ins_del_start_altered`, NOT translation_start==1 — it is gated only by
+                // `_overlaps_start_codon` (so a 5'UTR-into-start deletion is in scope). Compute
+                // the reconstruction verdict here (var bounds + alleles available) and thread it
+                // down; the predicate ANDs it with is_indel and the inframe-ins/del suppression.
+                let vep_indel_start_altered = vep_ctx.overlaps_start_codon()
+                    && self.ins_del_start_altered(transcript, var_start, var_end, ref_allele, alt_allele);
                 let terms = self.coding_terms_for_variant(
                     ref_allele,
                     alt_allele,
@@ -710,6 +796,7 @@ impl ConsequencePredictor {
                     cds_start,
                     cds_end,
                     vep_ctx.start_codon_change_eligible(),
+                    vep_indel_start_altered,
                 );
                 // When the variant reaches an essential splice site, the windowed peptide
                 // is undeterminable EXCEPT the stop term, which Ensembl derives from the
@@ -839,6 +926,7 @@ impl ConsequencePredictor {
         cds_start: Option<u64>,
         cds_end: Option<u64>,
         vep_start_overlap: bool,
+        vep_indel_start_altered: bool,
     ) -> Option<Vec<Consequence>> {
         let edit = variant_to_cds_edit(
             ref_allele,
@@ -848,7 +936,7 @@ impl ConsequencePredictor {
             transcript.strand,
         )?;
         let ctx = self.build_coding_context(transcript, &[edit])?;
-        Some(self.coding_consequence_terms(&ctx, transcript, vep_start_overlap))
+        Some(self.coding_consequence_terms(&ctx, transcript, vep_start_overlap, vep_indel_start_altered))
     }
 
     /// Haplotype-aware coding consequence: a set of PHASED variants on ONE transcript is
@@ -899,7 +987,7 @@ impl ConsequencePredictor {
         // build_coding_context sorts the edits and applies them to the reference CDS
         // before translating once -> the combined peptide.
         let ctx = self.build_coding_context(transcript, &edits)?;
-        Some(self.coding_consequence_terms(&ctx, transcript, false))
+        Some(self.coding_consequence_terms(&ctx, transcript, false, false))
     }
 
     /// Resolve the coding TERMS for an exonic-coding variant, applying the CDS-boundary
@@ -1107,6 +1195,7 @@ impl ConsequencePredictor {
         ctx: &CodingContext,
         transcript: &Transcript,
         vep_start_overlap: bool,
+        vep_indel_start_altered: bool,
     ) -> Vec<Consequence> {
         // --- shared facts about the peptide change (computed once) ---
         let net = ctx.alt_len as i64 - ctx.ref_len as i64;
@@ -1180,8 +1269,21 @@ impl ConsequencePredictor {
             && ctx.alt_pep.as_slice() != b"X"
             && !ctx.alt_pep.ends_with(&ctx.ref_pep)
             && !ctx.alt_pep.starts_with(&ctx.ref_pep);
-        let p_start_lost = (at_start && alt_first != b'M') || vep_start_lost;
-        let p_start_retained = at_start && alt_first == b'M';
+        // Inframe ins/del predicates (defined here so start_lost can suppress on them, matching
+        // VEP's `!(inframe_insertion || inframe_deletion)`); reused by p_inframe_* below.
+        let inframe = is_indel && !frameshift_len;
+        let inframe_ins_fires = coding_ok && inframe && net > 0 && inframe_ins;
+        let inframe_del_fires = coding_ok && inframe && net < 0 && inframe_del;
+        // VEP `start_lost` for length-changing variants (VariationEffect.pm:870): the variant
+        // overlaps the start codon AND `_ins_del_start_altered` (the 5'UTR+CDS reconstruction,
+        // folded into `vep_indel_start_altered`) AND it is NOT an inframe ins/del (those keep
+        // their inframe term). The strict ATG/mito `at_start` path is restricted to non-indels
+        // so it no longer over-fires for a 5'UTR-into-start deletion.
+        let p_indel_start_lost =
+            is_indel && vep_indel_start_altered && !inframe_ins_fires && !inframe_del_fires;
+        let p_start_lost =
+            (!is_indel && at_start && alt_first != b'M') || vep_start_lost || p_indel_start_lost;
+        let p_start_retained = !is_indel && at_start && alt_first == b'M';
         let p_stop_gained = coding_ok && alt_stop && !ref_stop;
         // DELETION at the stop codon: Ensembl uses `_ins_del_stop_altered` over CDS+3'UTR
         // (stop_altered -> stop_lost, !stop_altered -> stop_retained), NOT the windowed
@@ -1206,9 +1308,8 @@ impl ConsequencePredictor {
         // retained. Then it's stop_lost/stop_retained alone, never frameshift.
         let p_frameshift =
             !incomplete && frameshift_len && ctx.ref_pep.first() != Some(&b'*') && !p_stop_retained;
-        let inframe = is_indel && !frameshift_len;
-        let p_inframe_insertion = coding_ok && inframe && net > 0 && inframe_ins;
-        let p_inframe_deletion = coding_ok && inframe && net < 0 && inframe_del;
+        let p_inframe_insertion = inframe_ins_fires;
+        let p_inframe_deletion = inframe_del_fires;
         let p_protein_altering = coding_ok
             && inframe
             && !(net > 0 && inframe_ins)
@@ -2361,7 +2462,7 @@ mod tests {
             "combined edits give TCA = Ser (proves edits applied together, not independently)"
         );
         assert!(predictor
-            .coding_consequence_terms(&ctx, &tr, false)
+            .coding_consequence_terms(&ctx, &tr, false, false)
             .contains(&Consequence::MissenseVariant));
     }
 
@@ -2420,7 +2521,7 @@ mod tests {
         }];
         let ctx = predictor.build_coding_context(&tr, &delins).unwrap();
         assert!(predictor
-            .coding_consequence_terms(&ctx, &tr, false)
+            .coding_consequence_terms(&ctx, &tr, false, false)
             .contains(&Consequence::ProteinAlteringVariant));
         // A clean deletion of TCA (ref keeps the GCT prefix) IS inframe_deletion.
         let clean = vec![CdsEdit {
@@ -2430,7 +2531,7 @@ mod tests {
         }];
         let ctx2 = predictor.build_coding_context(&tr, &clean).unwrap();
         assert!(predictor
-            .coding_consequence_terms(&ctx2, &tr, false)
+            .coding_consequence_terms(&ctx2, &tr, false, false)
             .contains(&Consequence::InframeDeletion));
     }
 
@@ -2449,7 +2550,7 @@ mod tests {
             alt_bases: b"TAATT".to_vec(),
         }];
         let ctx = predictor.build_coding_context(&tr, &with_stop).unwrap();
-        let terms = predictor.coding_consequence_terms(&ctx, &tr, false);
+        let terms = predictor.coding_consequence_terms(&ctx, &tr, false, false);
         assert!(
             terms.contains(&Consequence::StopGained),
             "TAATT inserts a stop codon"
@@ -2462,12 +2563,39 @@ mod tests {
             alt_bases: b"TT".to_vec(),
         }];
         let ctx2 = predictor.build_coding_context(&tr, &no_stop).unwrap();
-        let terms2 = predictor.coding_consequence_terms(&ctx2, &tr, false);
+        let terms2 = predictor.coding_consequence_terms(&ctx2, &tr, false, false);
         assert!(
             !terms2.contains(&Consequence::StopGained),
             "TT alone is not a stop"
         );
         assert!(terms2.contains(&Consequence::FrameshiftVariant));
+    }
+
+    // VEP `start_lost` for length-changing variants (VariationEffect.pm:870) is gated on the
+    // `_ins_del_start_altered` reconstruction verdict, NOT the strict ATG `at_start` path. A
+    // frameshift deletion at the start codon co-occurs with frameshift when the reconstruction
+    // says the start is altered, and yields NO start_lost when it says the start survives — so
+    // a 5'UTR-into-start deletion that preserves the start no longer over-fires.
+    #[test]
+    fn test_indel_start_lost_gated_on_reconstruction() {
+        let predictor = ConsequencePredictor::default();
+        let tr = make_coding_transcript();
+        // Single-base deletion at the start codon (cds_idx 0) -> frameshift.
+        let del = vec![CdsEdit {
+            cds_idx: 0,
+            ref_bases: b"A".to_vec(),
+            alt_bases: vec![],
+        }];
+        let ctx = predictor.build_coding_context(&tr, &del).unwrap();
+        // Reconstruction verdict TRUE -> start_lost co-occurs with frameshift_variant.
+        let lost = predictor.coding_consequence_terms(&ctx, &tr, false, true);
+        assert!(lost.contains(&Consequence::StartLost), "altered start -> start_lost");
+        assert!(lost.contains(&Consequence::FrameshiftVariant));
+        // Reconstruction verdict FALSE -> no start_lost (the strict at_start path no longer
+        // fires for indels), just the frameshift.
+        let kept = predictor.coding_consequence_terms(&ctx, &tr, false, false);
+        assert!(!kept.contains(&Consequence::StartLost), "preserved start -> no start_lost");
+        assert!(kept.contains(&Consequence::FrameshiftVariant));
     }
 
     #[test]
