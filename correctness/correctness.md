@@ -65,7 +65,7 @@ fair.
 | MODERATE | mnv   |   1693 | 0 (0/100K)         | 482 (28470/100K)   |
 | MODERATE | snv   | 404331 | 0 (0/100K)         | 1 (0/100K)         |
 | LOW      | del   |   7392 | 3 (41/100K)        | 1218 (16477/100K)  |
-| LOW      | ins   |   3589 | 12 (334/100K)      | 824 (22959/100K)   |
+| LOW      | ins   |   3589 | 0 (0/100K)         | 824 (22959/100K)   |
 | LOW      | mnv   |    402 | 0 (0/100K)         | 92 (22886/100K)    |
 | LOW      | snv   | 214757 | 1 (0/100K)         | 34 (16/100K)       |
 | MODIFIER | del   |  35331 | 1 (3/100K)         | 13 (37/100K)       |
@@ -141,24 +141,24 @@ than the upstream engine** (something our patches broke), `shared` =
 both engines differ from VEP (an inherited engine gap). Generated from
 `correctness/data/error_transitions.csv`.
 
-| type       | impact   | VEP calls                                                                                                                           | duckvep calls                                                                                                                                           |   n |
-|:-----------|:---------|:------------------------------------------------------------------------------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------|----:|
-| shared     | LOW      | non_coding_transcript_variant&splice_region_variant                                                                                 | non_coding_transcript_exon_variant&splice_region_variant                                                                                                |  12 |
-| shared     | MODIFIER | 5_prime_UTR_variant&NMD_transcript_variant&coding_sequence_variant                                                                  | 5_prime_UTR_variant&NMD_transcript_variant&start_lost                                                                                                   |   4 |
-| shared     | HIGH     | frameshift_variant&start_lost                                                                                                       | frameshift_variant                                                                                                                                      |   3 |
-| shared     | HIGH     | NMD_transcript_variant&stop_lost                                                                                                    | NMD_transcript_variant&stop_retained_variant                                                                                                            |   3 |
-| shared     | HIGH     | 5_prime_UTR_variant&start_lost                                                                                                      | 5_prime_UTR_variant                                                                                                                                     |   2 |
-| shared     | MODERATE | coding_sequence_variant&inframe_insertion                                                                                           | coding_sequence_variant                                                                                                                                 |   2 |
-| shared     | LOW      | 3_prime_UTR_variant&stop_retained_variant                                                                                           | 3_prime_UTR_variant                                                                                                                                     |   2 |
-| shared     | HIGH     | frameshift_variant&stop_lost                                                                                                        | frameshift_variant                                                                                                                                      |   1 |
-| shared     | HIGH     | NMD_transcript_variant&frameshift_variant&start_lost                                                                                | NMD_transcript_variant&frameshift_variant                                                                                                               |   1 |
-| shared     | HIGH     | 3_prime_UTR_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant&stop_retained_variant | 3_prime_UTR_variant&coding_sequence_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant                   |   1 |
-| shared     | LOW      | 3_prime_UTR_variant&stop_retained_variant                                                                                           | 3_prime_UTR_variant&stop_lost                                                                                                                           |   1 |
-| shared     | HIGH     | transcript_ablation                                                                                                                 | 3_prime_UTR_variant&5_prime_UTR_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant&stop_retained_variant |   1 |
-| shared     | HIGH     | transcript_ablation                                                                                                                 | 3_prime_UTR_variant&5_prime_UTR_variant&coding_sequence_variant                                                                                         |   1 |
-| shared     | HIGH     | 5_prime_UTR_variant&start_lost                                                                                                      | 5_prime_UTR_variant&stop_lost                                                                                                                           |   1 |
-| shared     | MODIFIER | 5_prime_UTR_variant&NMD_transcript_variant&coding_sequence_variant                                                                  | 5_prime_UTR_variant&NMD_transcript_variant&stop_gained                                                                                                  |   1 |
-| regression | HIGH     | start_lost                                                                                                                          | missense_variant                                                                                                                                        |   1 |
+| type       | impact   | VEP calls                                                                                                                           | duckvep calls                                                                                                                         |   n |
+|:-----------|:---------|:------------------------------------------------------------------------------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------|----:|
+| shared     | MODIFIER | 5_prime_UTR_variant&NMD_transcript_variant&coding_sequence_variant                                                                  | 5_prime_UTR_variant&NMD_transcript_variant&start_lost                                                                                 |   4 |
+| shared     | HIGH     | NMD_transcript_variant&stop_lost                                                                                                    | NMD_transcript_variant&stop_retained_variant                                                                                          |   3 |
+| shared     | HIGH     | frameshift_variant&start_lost                                                                                                       | frameshift_variant                                                                                                                    |   3 |
+| shared     | HIGH     | 5_prime_UTR_variant&start_lost                                                                                                      | 5_prime_UTR_variant                                                                                                                   |   2 |
+| shared     | MODERATE | coding_sequence_variant&inframe_insertion                                                                                           | coding_sequence_variant                                                                                                               |   2 |
+| shared     | LOW      | 3_prime_UTR_variant&stop_retained_variant                                                                                           | 3_prime_UTR_variant                                                                                                                   |   2 |
+| shared     | LOW      | synonymous_variant                                                                                                                  | start_lost                                                                                                                            |   1 |
+| shared     | HIGH     | 3_prime_UTR_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant&stop_retained_variant | 3_prime_UTR_variant&coding_sequence_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant |   1 |
+| shared     | HIGH     | frameshift_variant&stop_lost                                                                                                        | frameshift_variant                                                                                                                    |   1 |
+| regression | HIGH     | start_lost                                                                                                                          | missense_variant                                                                                                                      |   1 |
+| shared     | MODIFIER | 5_prime_UTR_variant&coding_sequence_variant                                                                                         | 5_prime_UTR_variant&start_lost                                                                                                        |   1 |
+| shared     | HIGH     | NMD_transcript_variant&frameshift_variant&start_lost                                                                                | NMD_transcript_variant&frameshift_variant                                                                                             |   1 |
+| shared     | LOW      | 3_prime_UTR_variant&stop_retained_variant                                                                                           | 3_prime_UTR_variant&stop_lost                                                                                                         |   1 |
+| shared     | MODIFIER | 5_prime_UTR_variant&NMD_transcript_variant&coding_sequence_variant                                                                  | 5_prime_UTR_variant&NMD_transcript_variant&stop_gained                                                                                |   1 |
+| shared     | MODIFIER | 5_prime_UTR_variant&NMD_transcript_variant&coding_sequence_variant                                                                  | 5_prime_UTR_variant&NMD_transcript_variant                                                                                            |   1 |
+| shared     | HIGH     | 5_prime_UTR_variant&start_lost                                                                                                      | 5_prime_UTR_variant&stop_lost                                                                                                         |   1 |
 
 ### Split by SO term (fair to fastVEP)
 
@@ -173,24 +173,23 @@ gap is never mis-blamed on duckvep and a genuine single-term fastVEP win
 is not masked by the rest of its string. Generated from
 `correctness/data/so_term_transitions.csv`.
 
-| type       | impact   | VEP term(s)                   | duckvep term(s)                                                                                                                                         |   n |
-|:-----------|:---------|:------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------|----:|
-| shared     | LOW      | non_coding_transcript_variant | non_coding_transcript_exon_variant                                                                                                                      |  12 |
-| shared     | HIGH     | start_lost                    | (none)                                                                                                                                                  |   6 |
-| shared     | MODIFIER | coding_sequence_variant       | start_lost                                                                                                                                              |   5 |
-| shared     | HIGH     | stop_lost                     | stop_retained_variant                                                                                                                                   |   3 |
-| shared     | LOW      | stop_retained_variant         | (none)                                                                                                                                                  |   2 |
-| shared     | MODERATE | inframe_insertion             | (none)                                                                                                                                                  |   2 |
-| shared     | LOW      | stop_retained_variant         | stop_lost                                                                                                                                               |   1 |
-| shared     | HIGH     | stop_lost                     | (none)                                                                                                                                                  |   1 |
-| shared     | HIGH     | start_lost                    | stop_lost                                                                                                                                               |   1 |
-| shared     | HIGH     | stop_retained_variant         | coding_sequence_variant                                                                                                                                 |   1 |
-| shared     | HIGH     | transcript_ablation           | 3_prime_UTR_variant&5_prime_UTR_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant&stop_retained_variant |   1 |
-| shared     | MODIFIER | coding_sequence_variant       | (none)                                                                                                                                                  |   1 |
-| regression | HIGH     | start_lost                    | missense_variant                                                                                                                                        |   1 |
-| shared     | LOW      | synonymous_variant            | start_lost                                                                                                                                              |   1 |
-| shared     | HIGH     | transcript_ablation           | 3_prime_UTR_variant&5_prime_UTR_variant&coding_sequence_variant                                                                                         |   1 |
-| regression | MODIFIER | coding_sequence_variant       | stop_gained                                                                                                                                             |   1 |
+| type       | impact   | VEP term(s)             | duckvep term(s)                                                                                                                                         |   n |
+|:-----------|:---------|:------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------|----:|
+| shared     | HIGH     | start_lost              | (none)                                                                                                                                                  |   6 |
+| shared     | MODIFIER | coding_sequence_variant | start_lost                                                                                                                                              |   5 |
+| shared     | HIGH     | stop_lost               | stop_retained_variant                                                                                                                                   |   3 |
+| shared     | LOW      | stop_retained_variant   | (none)                                                                                                                                                  |   2 |
+| shared     | MODERATE | inframe_insertion       | (none)                                                                                                                                                  |   2 |
+| shared     | HIGH     | transcript_ablation     | 3_prime_UTR_variant&5_prime_UTR_variant&coding_sequence_variant                                                                                         |   1 |
+| shared     | MODIFIER | coding_sequence_variant | (none)                                                                                                                                                  |   1 |
+| regression | HIGH     | start_lost              | missense_variant                                                                                                                                        |   1 |
+| shared     | LOW      | synonymous_variant      | start_lost                                                                                                                                              |   1 |
+| shared     | HIGH     | start_lost              | stop_lost                                                                                                                                               |   1 |
+| shared     | HIGH     | transcript_ablation     | 3_prime_UTR_variant&5_prime_UTR_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant&stop_retained_variant |   1 |
+| shared     | HIGH     | stop_retained_variant   | coding_sequence_variant                                                                                                                                 |   1 |
+| shared     | HIGH     | stop_lost               | (none)                                                                                                                                                  |   1 |
+| shared     | LOW      | stop_retained_variant   | stop_lost                                                                                                                                               |   1 |
+| regression | MODIFIER | coding_sequence_variant | stop_gained                                                                                                                                             |   1 |
 
 At the SO-term level, **2 pairs** are duckvep-specific (fastVEP right on
 the exact differing term) — these are the only places duckvep is worse
@@ -245,14 +244,14 @@ misses. Read from `correctness/data/methodology_audit.csv`:
 
 | divergence type (controlled, 50K ClinVar) | duckvep | fastVEP |
 |:------------------------------------------|--------:|--------:|
-| consequence disagreement (shared pairs)   |      40 |   6,314 |
+| consequence disagreement (shared pairs)   |      28 |   6,314 |
 | extra pairs the tool emits, VEP does not  |      27 |      23 |
 | pairs VEP emits, the tool misses          |       3 |       3 |
-| TOTAL divergence vs VEP 116               |      70 |   6,340 |
+| TOTAL divergence vs VEP 116               |      58 |   6,340 |
 
 With the gene model controlled, the emission gap is tiny in both
 directions, so the comparison is genuinely pure-engine — and counting
-*all* divergence (consequence + extra + missing), **duckvep totals 70 vs
+*all* divergence (consequence + extra + missing), **duckvep totals 58 vs
 fastVEP 6,340** of ~1.43M pairs. The duckvep residual is dominated by
 consequence-engine edges (start-codon straddle, boundary insertion); the
 27 extras are 5′/3′-distance-window boundary cases. The fastVEP paper’s

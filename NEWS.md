@@ -12,8 +12,8 @@ Changelog, most recent first. (R-package style.)
   discordance never reads as 100%.
 * **The consequence engine was rebuilt to mirror Ensembl's own structure**, taking
   N=50000 ClinVar discordance vs **controlled** Ensembl VEP 116 (VEP run with `--gff` on
-  the *same* gene model the engines read — so only the engine differs) from **~3,876 → 40
-  consequence discordances (a 99% reduction)**, **70 total divergence** counting emission
+  the *same* gene model the engines read — so only the engine differs) from **~3,876 → 28
+  consequence discordances (a 99% reduction)**, **58 total divergence** counting emission
   misses/extras first-class, vs fastVEP's **6,340**. Almost every remaining discordance is
   a *shared* gap fastVEP has too; just **1** is duckvep-specific (a start-codon MNV edge).
   (The earlier cache-oracle "35" was an undercount — the controlled `--gff` oracle, run on
@@ -45,14 +45,23 @@ Changelog, most recent first. (R-package style.)
   as exonic, suppressing a spurious polypyrimidine-tract call); and the **`consider_ins_len`
   genomic stop model** (`_overlaps_stop_codon_cil` + `_ins_del_stop_altered_cil` — a
   deletion reaching an essential splice site keeps a determinable `stop_retained`/
-  `stop_lost` from the genomic stop-codon overlap, not the blanket `coding_sequence_variant`).
+  `stop_lost` from the genomic stop-codon overlap, not the blanket `coding_sequence_variant`);
+  the **phase-correct non-ATG `start_lost`** (VEP's `_overlaps_start_codon` AND
+  `translation_start==1` as separate facts — a non-ATG / non-zero-phase annotated start
+  still gets `start_lost`); and the **insertion-aware non-coding exon membership** (Ensembl
+  `non_coding_exon_variant` checks the RAW unsorted variant bounds, so an insertion at an
+  exon 5′ edge is `non_coding_transcript_variant`, not `…_exon_variant`).
 * **Regression corpus is mandatory:** every fixed divergence is captured — unit
   tests + `test/sql/vep_splice.test` + `test/data/regression_cases.tsv` (generated
   from the concordance dump by `correctness/gen-regression-cases.sh`, run by
   `test/run-regression-cases.sh`). See `docs/PATCHES.md`.
+* **Boundary predicates are migrating to a `VepAlleleContext`** — a phase-correct
+  coordinate/protein projection (cDNA/CDS/protein coords, start/stop-codon windows,
+  circular/codon-table aware) that the start/stop predicates query, instead of the
+  CDS-codon-index `CodingContext`. This is why the non-ATG `start_lost` landed cleanly
+  where three codon-index patches had regressed.
 * **Open frontier (tracked):** `mature_miRNA_variant` (a feature region not yet in the
-  cache); the `consider_ins_len` insertion-overlap rule for the exon/non-coding boundary;
-  and 3′-shifting.
+  cache); a start-codon MNV/delins edge (the 1 duckvep-specific case); and 3′-shifting.
 
 ### Haplotype-aware consequence (experimental)
 
