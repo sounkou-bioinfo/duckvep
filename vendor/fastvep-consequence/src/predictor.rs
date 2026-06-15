@@ -898,7 +898,6 @@ impl ConsequencePredictor {
         // --- independent predicates: each carries its own exclusions, none nested ---
         let p_start_lost = at_start && alt_first != b'M';
         let p_start_retained = at_start && alt_first == b'M';
-        let p_frameshift = !incomplete && frameshift_len;
         let p_stop_gained = coding_ok && alt_stop && !ref_stop;
         // DELETION at the stop codon: Ensembl uses `_ins_del_stop_altered` over CDS+3'UTR
         // (stop_altered -> stop_lost, !stop_altered -> stop_retained), NOT the windowed
@@ -917,6 +916,14 @@ impl ConsequencePredictor {
             } else {
                 !is_indel && ref_stop && alt_stop && ctx.ref_pep == ctx.alt_pep
             };
+        // VEP `frameshift` (VariationEffect.pm) suppresses the call when the affected
+        // reference peptide starts with the stop (`$ref_pep =~ /^\*/` — the stop codon is
+        // the first residue hit, so the frame past it is moot) or when the stop is
+        // retained. Then it's stop_lost/stop_retained alone, never frameshift.
+        let p_frameshift = !incomplete
+            && frameshift_len
+            && ctx.ref_pep.first() != Some(&b'*')
+            && !p_stop_retained;
         let inframe = is_indel && !frameshift_len;
         let p_inframe_insertion = coding_ok && inframe && net > 0 && inframe_ins;
         let p_inframe_deletion = coding_ok && inframe && net < 0 && inframe_del;

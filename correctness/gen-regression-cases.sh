@@ -36,6 +36,7 @@ COPY (
         WHEN dd.dc LIKE '%protein_altering_variant%' THEN 'inframe_delins_protein_altering'
         WHEN dd.dc LIKE '%intron_variant%splice_donor_variant%' AND k.nalt='-' THEN 'boundary_del_intron_cooccur'
         WHEN dd.dc LIKE '%splice_donor_region_variant%' AND length(k.oref)=length(k.oalt) AND length(k.oref)>1 THEN 'mnv_splice_differing_regions'
+        WHEN dd.dc LIKE '%stop_lost%' AND dd.dc NOT LIKE '%frameshift%' AND k.nalt='-' THEN 'stop_del_frameshift_suppressed'
         WHEN dd.dc LIKE '%splice_polypyrimidine%' AND length(k.oref)<length(k.oalt) THEN 'insertion_polypyrimidine'
         WHEN dd.dc='stop_gained' THEN 'snv_stop_gained'
         WHEN dd.dc='start_lost' THEN 'nuclear_start_lost'
