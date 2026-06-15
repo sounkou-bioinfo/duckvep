@@ -11,10 +11,10 @@ Changelog, most recent first. (R-package style.)
   **every HIGH-impact SO term**. Percentages use enough precision that a non-zero
   discordance never reads as 100%.
 * **The consequence engine was rebuilt to mirror Ensembl's own structure**, taking
-  N=50000 ClinVar discordance vs offline Ensembl VEP 116 from **~3,876 → 117 (a 97%
+  N=50000 ClinVar discordance vs offline Ensembl VEP 116 from **~3,876 → 78 (a 98%
   reduction) with ZERO duckvep-specific regressions** at every step (every remaining
   discordance is a *shared* gap fastVEP has too — fastVEP itself is discordant on
-  6,318 of the same calls). Three VEP-faithful abstractions:
+  thousands of the same calls). Three VEP-faithful abstractions:
   * **`CodingContext` (haplotype-ready):** coding consequences are a predicate SET
     over a peptide/codon context built from `CdsEdit`s applied to the reference CDS.
     One variant = one edit; a phased haplotype = many edits on the same CDS before
@@ -33,7 +33,12 @@ Changelog, most recent first. (R-package style.)
   `start_lost`; splice precedence and insertion handling (`(min,max)` swap, exact
   `codons` window); `intron_variant` / 5′ & 3′ UTR / `stop_lost` co-occurrence as
   unions; `protein_altering_variant` vs clean inframe ins/del; the
-  `splice_polypyrimidine` exon gate; CDS-boundary straddle suppression.
+  `splice_polypyrimidine` exon gate; CDS-boundary straddle suppression; the
+  `frameshift` stop-codon guards (a stop-deleting indel is `stop_lost` alone, not
+  `frameshift`); the `coding_unknown` `X` guard (an N-padded `cds_start_NF` first codon
+  is `coding_sequence_variant`, not synonymous); the **frameshift-intron 12 bp exon
+  stretch** (a transcript with a ≤12 bp intron treats near-boundary intronic variants
+  as exonic, suppressing a spurious polypyrimidine-tract call).
 * **Regression corpus is mandatory:** every fixed divergence is captured — unit
   tests + `test/sql/vep_splice.test` + `test/data/regression_cases.tsv` (generated
   from the concordance dump by `correctness/gen-regression-cases.sh`, run by
