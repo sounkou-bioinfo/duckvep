@@ -1,6 +1,6 @@
 diff -ruN a/fastvep-genome/src/codon.rs b/fastvep-genome/src/codon.rs
 --- a/fastvep-genome/src/codon.rs	2026-06-13 21:22:56.606706541 +0200
-+++ b/fastvep-genome/src/codon.rs	2026-06-14 16:18:14.796485134 +0200
++++ b/fastvep-genome/src/codon.rs	2026-06-15 18:21:25.167830681 +0200
 @@ -3,6 +3,12 @@
  /// Standard genetic code codon translation table.
  pub struct CodonTable {
@@ -166,6 +166,15 @@ diff -ruN a/fastvep-genome/src/codon.rs b/fastvep-genome/src/codon.rs
      }
  }
  
+@@ -159,7 +211,7 @@
+     let mut ref_display = String::with_capacity(3);
+     let mut alt_display = String::with_capacity(3);
+     for i in 0..3 {
+-        if ref_codon[i].to_ascii_uppercase() != alt_codon[i].to_ascii_uppercase() {
++        if !ref_codon[i].eq_ignore_ascii_case(&alt_codon[i]) {
+             ref_display.push((ref_codon[i] as char).to_ascii_uppercase());
+             alt_display.push((alt_codon[i] as char).to_ascii_uppercase());
+         } else {
 @@ -257,7 +309,7 @@
          assert!(table.is_stop(b"TAG"));
          assert!(table.is_stop(b"TGA"));

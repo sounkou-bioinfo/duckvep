@@ -211,7 +211,7 @@ pub fn format_codon_change(ref_codon: &[u8; 3], alt_codon: &[u8; 3]) -> (String,
     let mut ref_display = String::with_capacity(3);
     let mut alt_display = String::with_capacity(3);
     for i in 0..3 {
-        if ref_codon[i].to_ascii_uppercase() != alt_codon[i].to_ascii_uppercase() {
+        if !ref_codon[i].eq_ignore_ascii_case(&alt_codon[i]) {
             ref_display.push((ref_codon[i] as char).to_ascii_uppercase());
             alt_display.push((alt_codon[i] as char).to_ascii_uppercase());
         } else {

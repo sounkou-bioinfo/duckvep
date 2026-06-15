@@ -898,7 +898,7 @@ impl ConsequencePredictor {
         // bases (no downstream base pulled in, so no spurious stop). A mid-codon
         // insertion or any ref-spanning edit overlaps the containing codon(s).
         let total_ref_bases: usize = edits.iter().map(|e| e.ref_bases.len()).sum();
-        let (codon_start, codon_len) = if total_ref_bases == 0 && first_idx % 3 == 0 {
+        let (codon_start, codon_len) = if total_ref_bases == 0 && first_idx.is_multiple_of(3) {
             (first_idx, 0)
         } else {
             let cs = first_codon * 3;
@@ -1180,7 +1180,7 @@ impl ConsequencePredictor {
                 }
             } else {
                 let len_diff = (ref_len as i64 - alt_len as i64).unsigned_abs() as usize;
-                if len_diff % 3 != 0 {
+                if !len_diff.is_multiple_of(3) {
                     (Consequence::FrameshiftVariant, true)
                 } else if ref_len > alt_len {
                     (Consequence::InframeDeletion, false)
@@ -1571,10 +1571,8 @@ impl ConsequencePredictor {
                     for (i, &b) in alt_region.iter().enumerate() {
                         let is_original = if i < ins_offset_in_codon {
                             true
-                        } else if i >= ins_offset_in_codon + bases.len() {
-                            true
                         } else {
-                            false
+                            i >= ins_offset_in_codon + bases.len()
                         };
                         if is_original {
                             alt_codon_display.push((b as char).to_lowercase().next().unwrap());
@@ -1633,7 +1631,7 @@ impl ConsequencePredictor {
         };
         match transcript.strand {
             Strand::Forward => s <= cs.saturating_sub(1) && e >= transcript.start,
-            Strand::Reverse => e >= ce + 1 && s <= transcript.end,
+            Strand::Reverse => e > ce && s <= transcript.end,
         }
     }
     fn overlaps_3utr(&self, var_start: u64, var_end: u64, transcript: &Transcript) -> bool {
@@ -1643,7 +1641,7 @@ impl ConsequencePredictor {
             _ => return false,
         };
         match transcript.strand {
-            Strand::Forward => e >= ce + 1 && s <= transcript.end,
+            Strand::Forward => e > ce && s <= transcript.end,
             Strand::Reverse => s <= cs.saturating_sub(1) && e >= transcript.start,
         }
     }

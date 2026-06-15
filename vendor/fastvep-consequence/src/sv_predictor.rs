@@ -116,18 +116,16 @@ fn predict_sv_for_transcript(
                 } else {
                     Consequence::IntergenicVariant
                 }
-            } else {
-                if (transcript.strand == Strand::Forward && abs_d <= down_dist)
-                    || (transcript.strand == Strand::Reverse && abs_d <= up_dist)
-                {
-                    if transcript.strand == Strand::Forward {
-                        Consequence::DownstreamGeneVariant
-                    } else {
-                        Consequence::UpstreamGeneVariant
-                    }
+            } else if (transcript.strand == Strand::Forward && abs_d <= down_dist)
+                || (transcript.strand == Strand::Reverse && abs_d <= up_dist)
+            {
+                if transcript.strand == Strand::Forward {
+                    Consequence::DownstreamGeneVariant
                 } else {
-                    Consequence::IntergenicVariant
+                    Consequence::UpstreamGeneVariant
                 }
+            } else {
+                Consequence::IntergenicVariant
             }
         } else {
             Consequence::IntergenicVariant
@@ -278,11 +276,11 @@ fn hits_coding_region(sv_start: u64, sv_end: u64, transcript: &Transcript) -> bo
 fn hits_splice_site(sv_start: u64, sv_end: u64, transcript: &Transcript) -> bool {
     for exon in &transcript.exons {
         // Donor site: 2bp after exon end (exon.end+1, exon.end+2)
-        if sv_start <= exon.end + 2 && sv_end >= exon.end + 1 {
+        if sv_start <= exon.end + 2 && sv_end > exon.end {
             return true;
         }
         // Acceptor site: 2bp before exon start (exon.start-2, exon.start-1)
-        if exon.start >= 3 && sv_start <= exon.start - 1 && sv_end >= exon.start - 2 {
+        if exon.start >= 3 && sv_start < exon.start && sv_end >= exon.start - 2 {
             return true;
         }
     }
