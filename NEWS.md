@@ -12,8 +12,8 @@ Changelog, most recent first. (R-package style.)
   discordance never reads as 100%.
 * **The consequence engine was rebuilt to mirror Ensembl's own structure**, taking
   N=50000 ClinVar discordance vs **controlled** Ensembl VEP 116 (VEP run with `--gff` on
-  the *same* gene model the engines read — so only the engine differs) from **~3,876 → 17
-  consequence discordances (a 99% reduction)**, **41 total divergence** counting emission
+  the *same* gene model the engines read — so only the engine differs) from **~3,876 → 16
+  consequence discordances (a 99% reduction)**, **40 total divergence** counting emission
   misses/extras first-class, vs fastVEP's **6,340**. Almost every remaining discordance is
   a *shared* gap fastVEP has too; just **1** is duckvep-specific (an insertion `stop_gained` edge).
   (The earlier cache-oracle "35" was an undercount — the controlled `--gff` oracle, run on

@@ -1310,25 +1310,43 @@ impl ConsequencePredictor {
             (!is_indel && at_start && alt_first != b'M') || vep_start_lost || p_indel_start_lost;
         let p_start_retained = !is_indel && at_start && alt_first == b'M';
         let p_stop_gained = coding_ok && alt_stop && !ref_stop;
-        // DELETION at the stop codon: Ensembl uses `_ins_del_stop_altered` over CDS+3'UTR
-        // (stop_altered -> stop_lost, !stop_altered -> stop_retained), NOT the windowed
-        // peptide. `indel_stop_term` is the SINGLE genomic port (`cil_stop_term`) for this —
-        // the same authority the essential-splice path uses — so the in-CDS deletion stop call
-        // no longer relies on the duplicate CDS-coordinate reconstruction in build_coding_context
-        // (the two disagreed for deletions straddling the stop codon). Insertions/substitutions
-        // keep the windowed/peptide behavior (`ref_stop`/`alt_stop`).
+        // STOP terms follow VEP's actual order (stop_lost:1258-1264 / stop_retained:1311-1318):
+        // when the peptide alleles ARE determinable (defined, non-empty, no `X`, complete
+        // terminal codon) the PEPTIDE rule decides — `stop_lost = ref has * && alt has no *`,
+        // `stop_retained = ref_eq_alt_sequence` (a stop survives at the SAME window position).
+        // ONLY when the peptide is undeterminable (X / partial / spliced-away) does VEP fall
+        // back to the genomic `_ins_del_stop_altered` (`indel_stop_term` / `cil_stop_term`) —
+        // which is also what the essential-splice path uses. This is the peptide-first model;
+        // the earlier "route all deletion stops through cil" was the wrong branch for in-CDS
+        // deletions (cil only matches VEP when the peptide is X/partial).
         let del = is_indel && net < 0;
+        let pep_determinable = !incomplete && !ctx.alt_pep.is_empty() && !ctx.alt_pep.contains(&b'X');
+        // VEP `ref_eq_alt_sequence` windowed clause: a stop is present in BOTH peptides at the
+        // same index (`index(ref_pep,'*') == index(alt_pep,'*')`) — covers a synonymous SNV at
+        // the stop and a deletion that reconstructs a stop at the same relative position.
+        let stop_same_position = match (
+            ctx.ref_pep.iter().position(|&b| b == b'*'),
+            ctx.alt_pep.iter().position(|&b| b == b'*'),
+        ) {
+            (Some(i), Some(j)) => i == j,
+            _ => false,
+        };
         let p_stop_lost = coding_ok
-            && if del {
+            && if pep_determinable {
+                ref_stop && !alt_stop
+            } else if del {
                 indel_stop_term == Some(Consequence::StopLost)
             } else {
-                ref_stop && !alt_stop
+                false
             };
         let p_stop_retained = coding_ok
-            && if del {
+            && !p_stop_lost
+            && if pep_determinable {
+                ref_stop && stop_same_position
+            } else if del {
                 indel_stop_term == Some(Consequence::StopRetainedVariant)
             } else {
-                !is_indel && ref_stop && alt_stop && ctx.ref_pep == ctx.alt_pep
+                false
             };
         // VEP `frameshift` (VariationEffect.pm) suppresses the call when the affected
         // reference peptide starts with the stop (`$ref_pep =~ /^\*/` — the stop codon is
