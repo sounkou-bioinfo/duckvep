@@ -587,8 +587,17 @@ impl ConsequencePredictor {
         // Declarative OverlapConsequence `include` gate: keep only terms whose feature
         // requirements match the variant's overlap flags (computed once). This replaces
         // the scattered hand-wired guards with Ensembl's actual model.
+        // Ensembl stretches exon-overlap by 12 bases for transcripts with a frameshift
+        // intron (`_overlapped_exons`: `fetch(min_vf-13, max_vf+12)` when
+        // `_has_frameshift_intron`). A variant a few bases into a neighbouring intron is
+        // then exonic, suppressing the polypyrimidine-tract / other `exon=0` includes.
+        let include_exon = in_exon
+            || (transcript.has_frameshift_intron()
+                && transcript
+                    .exon_overlapping(var_start.saturating_sub(13), var_end + 12)
+                    .is_some());
         let flags = FeatureOverlap {
-            exon: in_exon,
+            exon: include_exon,
             intron: splice_any(splice::overlaps_intron),
             intron_boundary: splice_any(splice::overlaps_intron_boundary),
         };

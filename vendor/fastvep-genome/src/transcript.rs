@@ -221,6 +221,23 @@ impl Transcript {
         None
     }
 
+    /// Whether the transcript has a "frameshift intron" — any intron whose genomic
+    /// span is <= 12 bases (Ensembl `BaseTranscriptVariation`: `abs(intron_end -
+    /// intron_start) <= 12`). Ensembl then stretches exon-overlap by 12 bases when
+    /// deciding the `exon`/`intron` include flags, so a variant a few bases into a
+    /// neighbouring intron counts as exonic (suppressing e.g. the polypyrimidine tract).
+    pub fn has_frameshift_intron(&self) -> bool {
+        let sorted = self.sorted_exons();
+        sorted.windows(2).any(|w| {
+            let (a, b) = (w[0], w[1]);
+            // genomic gap between consecutive exons, strand-agnostic
+            let lo = a.end.min(b.end);
+            let hi = a.start.max(b.start);
+            // intron is between the inner edges; span = (hi-1) - (lo+1)
+            hi > lo + 1 && (hi - 1).saturating_sub(lo + 1) <= 12
+        })
+    }
+
     /// Map a genomic position in an intron to HGVSc offset notation.
     ///
     /// Returns `(nearest_exon_boundary_cdna_pos, signed_offset)`:
@@ -440,6 +457,20 @@ mod tests {
     fn test_is_coding() {
         let tr = make_test_transcript();
         assert!(tr.is_coding());
+    }
+
+    #[test]
+    fn test_has_frameshift_intron() {
+        // Default transcript: introns of 798 and 1698 bp -> no frameshift intron.
+        let tr = make_test_transcript();
+        assert!(!tr.has_frameshift_intron());
+
+        // Pull exon 2 to start at 1203 -> intron [1201,1202] (span 2 <= 12) is a
+        // frameshift intron (Ensembl `abs(intron_end-intron_start) <= 12`).
+        let mut fs = make_test_transcript();
+        fs.exons[1].start = 1203;
+        fs.exons[1].end = 1400;
+        assert!(fs.has_frameshift_intron());
     }
 
     #[test]

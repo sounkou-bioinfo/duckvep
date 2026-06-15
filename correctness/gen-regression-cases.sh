@@ -38,6 +38,7 @@ COPY (
         WHEN dd.dc LIKE '%splice_donor_region_variant%' AND length(k.oref)=length(k.oalt) AND length(k.oref)>1 THEN 'mnv_splice_differing_regions'
         WHEN dd.dc LIKE '%stop_lost%' AND dd.dc NOT LIKE '%frameshift%' AND k.nalt='-' THEN 'stop_del_frameshift_suppressed'
         WHEN dd.dc LIKE '%coding_sequence_variant%' AND dd.dc NOT LIKE '%synonym%' AND dd.dc NOT LIKE '%missense%' AND dd.dc NOT LIKE '%splice%' AND dd.dc NOT LIKE '%intron%' AND length(k.nref)=1 AND length(k.nalt)=1 THEN 'cds_start_nf_coding_unknown'
+        WHEN dd.dc = 'intron_variant&splice_region_variant' AND length(k.nref)=1 AND length(k.nalt)=1 THEN 'splice_region_intronic_no_ppt'
         WHEN dd.dc LIKE '%splice_polypyrimidine%' AND length(k.oref)<length(k.oalt) THEN 'insertion_polypyrimidine'
         WHEN dd.dc='stop_gained' THEN 'snv_stop_gained'
         WHEN dd.dc='start_lost' THEN 'nuclear_start_lost'
