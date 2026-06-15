@@ -130,6 +130,12 @@ struct CodingContext {
     /// total reference / alternate bases changed (summed over edits).
     ref_len: usize,
     alt_len: usize,
+    /// the edits overlap the CDS stop codon (the last 3 CDS bases).
+    overlaps_stop: bool,
+    /// for an indel overlapping the stop: Ensembl `_ins_del_stop_altered` — applying the
+    /// edit to CDS+3'UTR leaves NO stop at the old stop position (or shortens the CDS),
+    /// so the stop is altered (-> stop_lost). `false` with `overlaps_stop` -> stop_retained.
+    stop_altered: bool,
 }
 
 /// Trim the shared prefix/suffix of two alleles to their minimal changed bytes
@@ -739,6 +745,47 @@ impl ConsequencePredictor {
                 .map(|c| ct.translate(&[c[0], c[1], c[2]]))
                 .collect()
         };
+
+        // Ensembl `_overlaps_stop_codon` / `_ins_del_stop_altered` over CDS+3'UTR — the
+        // primitive behind indel stop_lost vs stop_retained. The stop codon is the last
+        // 3 CDS bases [seq.len()-3, seq.len()).
+        let stop_lo = seq.len().saturating_sub(3);
+        let span_lo = first_idx;
+        let span_hi = last_ref_end.max(first_idx + 1); // half-open; insertion = a point
+        // There must BE a terminal stop codon to overlap. A cds_end_NF transcript (the GFF3
+        // may not tag it) ends in a non-stop codon, so Ensembl's `_overlaps_stop_codon`
+        // returns 0 — no stop_lost/retained. Checking the last codon is the robust proxy.
+        let has_terminal_stop = seq.len() >= 3
+            && ct.translate(&[seq[stop_lo], seq[stop_lo + 1], seq[stop_lo + 2]]) == b'*';
+        let overlaps_stop = has_terminal_stop && span_lo < seq.len() && span_hi > stop_lo;
+        let stop_altered = if overlaps_stop && total_ref != total_alt {
+            // CDS + 3'UTR (utr = the spliced cDNA after the CDS end).
+            let mut cds_utr = seq.to_vec();
+            if let (Some(spliced), Some(cend)) =
+                (transcript.spliced_seq.as_ref(), transcript.cdna_coding_end)
+            {
+                let sb = spliced.as_bytes();
+                let u = (cend as usize).min(sb.len());
+                cds_utr.extend_from_slice(&sb[u..]);
+            }
+            // Apply every edit to the CDS+3'UTR (clipped to the available sequence).
+            for e in edits.iter().rev() {
+                if e.cds_idx <= cds_utr.len() {
+                    let end = (e.cds_idx + e.ref_bases.len()).min(cds_utr.len());
+                    cds_utr.splice(e.cds_idx..end, e.alt_bases.iter().copied());
+                }
+            }
+            if cds_utr.len() < seq.len() {
+                true // shortened past the CDS -> stop altered
+            } else {
+                // codon at the OLD stop position in the edited sequence — still a stop?
+                let c = &cds_utr[stop_lo..stop_lo + 3];
+                ct.translate(&[c[0], c[1], c[2]]) != b'*'
+            }
+        } else {
+            false
+        };
+
         Some(CodingContext {
             first_codon,
             incomplete_terminal,
@@ -748,6 +795,8 @@ impl ConsequencePredictor {
             alt_codons,
             ref_len: total_ref,
             alt_len: total_alt,
+            overlaps_stop,
+            stop_altered,
         })
     }
 
@@ -811,9 +860,23 @@ impl ConsequencePredictor {
         let p_start_retained = at_start && alt_first == b'M';
         let p_frameshift = !incomplete && frameshift_len;
         let p_stop_gained = coding_ok && alt_stop && !ref_stop;
-        let p_stop_lost = coding_ok && ref_stop && !alt_stop;
-        let p_stop_retained =
-            coding_ok && !is_indel && ref_stop && alt_stop && ctx.ref_pep == ctx.alt_pep;
+        // DELETION at the stop codon: Ensembl uses `_ins_del_stop_altered` over CDS+3'UTR
+        // (stop_altered -> stop_lost, !stop_altered -> stop_retained), NOT the windowed
+        // peptide. Insertions use a genomic `consider_ins_len` overlap (not yet ported),
+        // so they keep the windowed peptide behavior; substitutions use the peptide.
+        let del = is_indel && net < 0;
+        let p_stop_lost = coding_ok
+            && if del {
+                ctx.overlaps_stop && ctx.stop_altered
+            } else {
+                ref_stop && !alt_stop
+            };
+        let p_stop_retained = coding_ok
+            && if del {
+                ctx.overlaps_stop && !ctx.stop_altered
+            } else {
+                !is_indel && ref_stop && alt_stop && ctx.ref_pep == ctx.alt_pep
+            };
         let inframe = is_indel && !frameshift_len;
         let p_inframe_insertion = coding_ok && inframe && net > 0 && inframe_ins;
         let p_inframe_deletion = coding_ok && inframe && net < 0 && inframe_del;
