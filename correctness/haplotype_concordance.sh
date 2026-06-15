@@ -75,3 +75,33 @@ awk -v p="$PCT" -v t="$THRESHOLD" 'BEGIN { exit !(p+0 >= t+0) }' || {
   echo "FAIL: haplotype concordance ${PCT}% < ${THRESHOLD}% threshold" >&2
   exit 1
 }
+
+# ── Stronger check: validate against the REAL Ensembl VEP oracle (the controlled dump),
+# not just our own MNV kernel. A same-length MNV's split components, applied as one
+# haplotype, must equal VEP's coding consequence for the whole MNV. Skipped if no dump.
+DUMP=$(ls -t "$ROOT"/data/vep_dumps/*/annotations.parquet 2>/dev/null | head -1)
+if [[ -n "$DUMP" ]]; then
+  ORC=$("$DUCKDB" -unsigned -noheader -csv -c "
+  LOAD '$EXT'; SELECT vep_load_cache('$GFF3','$FASTA');
+  CREATE TEMP MACRO coding_only(lst) AS list_filter(lst, x -> x IN (
+    'missense_variant','synonymous_variant','stop_gained','stop_lost','stop_retained_variant',
+    'start_lost','start_retained_variant','inframe_insertion','inframe_deletion',
+    'frameshift_variant','protein_altering_variant','coding_sequence_variant','incomplete_terminal_codon_variant'));
+  WITH mnvs AS (SELECT v.chrom, v.pos, v.ref r, a.alt al FROM read_vcf('$SAMPLE') v, UNNEST(v.alt) a(alt)
+      WHERE length(v.ref)=length(a.alt) AND length(v.ref)>=2 AND v.ref<>a.alt),
+  comps AS (SELECT chrom,pos,r,al, string_agg((pos+(i-1))||':'||substring(r,i,1)||':'||substring(al,i,1),';' ORDER BY i) cs
+      FROM mnvs, range(1,length(r)+1) t(i) WHERE substring(r,i,1)<>substring(al,i,1) GROUP BY chrom,pos,r,al),
+  nk AS (SELECT chrom,pos,r,al, normalize_variant(pos,r,al) nv FROM mnvs),
+  vep AS (SELECT pos,ref,alt,transcript_id, list_sort(coding_only(string_split(consequence,'&'))) vc
+          FROM read_parquet('$DUMP') WHERE source='vep'),
+  joined AS (SELECT
+      list_sort(string_split(vep_haplotype_consequence(c.chrom, m.transcript_id, c.cs),'&')) hap, m.vc vep_terms
+    FROM (SELECT vep.*, nk.chrom, nk.pos opos, nk.r oref, nk.al oalt FROM vep JOIN nk
+          ON vep.pos=nk.nv.pos AND vep.ref=CASE WHEN nk.nv.ref='' THEN '-' ELSE nk.nv.ref END
+          AND vep.alt=CASE WHEN nk.nv.alt='' THEN '-' ELSE nk.nv.alt END) m
+    JOIN comps c ON c.chrom=m.chrom AND c.pos=m.opos AND c.r=m.oref AND c.al=m.oalt WHERE len(m.vc)>0)
+  SELECT count(*), count(*) FILTER (WHERE hap=vep_terms), round(100.0*count(*) FILTER (WHERE hap=vep_terms)/count(*),3) FROM joined;
+  " 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^[0-9]+,[0-9]+,[0-9.]+$' | tail -1)
+  read -r OT OA OP <<<"$(echo "$ORC" | tr ',' ' ')"
+  echo "haplotype concordance (multi-edit vs REAL Ensembl VEP oracle): ${OA}/${OT} = ${OP}%"
+fi
