@@ -11,10 +11,10 @@ Changelog, most recent first. (R-package style.)
   **every HIGH-impact SO term**. Percentages use enough precision that a non-zero
   discordance never reads as 100%.
 * **The consequence engine was rebuilt to mirror Ensembl's own structure**, taking
-  N=50000 ClinVar discordance vs offline Ensembl VEP 116 from **~3,876 → 78 (a 98%
+  N=50000 ClinVar discordance vs offline Ensembl VEP 116 from **~3,876 → 35 (a 99%
   reduction) with ZERO duckvep-specific regressions** at every step (every remaining
   discordance is a *shared* gap fastVEP has too — fastVEP itself is discordant on
-  thousands of the same calls). Three VEP-faithful abstractions:
+  thousands of the same calls). The VEP-faithful abstractions:
   * **`CodingContext` (haplotype-ready):** coding consequences are a predicate SET
     over a peptide/codon context built from `CdsEdit`s applied to the reference CDS.
     One variant = one edit; a phased haplotype = many edits on the same CDS before
@@ -38,15 +38,17 @@ Changelog, most recent first. (R-package style.)
   `frameshift`); the `coding_unknown` `X` guard (an N-padded `cds_start_NF` first codon
   is `coding_sequence_variant`, not synonymous); the **frameshift-intron 12 bp exon
   stretch** (a transcript with a ≤12 bp intron treats near-boundary intronic variants
-  as exonic, suppressing a spurious polypyrimidine-tract call).
+  as exonic, suppressing a spurious polypyrimidine-tract call); and the **`consider_ins_len`
+  genomic stop model** (`_overlaps_stop_codon_cil` + `_ins_del_stop_altered_cil` — a
+  deletion reaching an essential splice site keeps a determinable `stop_retained`/
+  `stop_lost` from the genomic stop-codon overlap, not the blanket `coding_sequence_variant`).
 * **Regression corpus is mandatory:** every fixed divergence is captured — unit
   tests + `test/sql/vep_splice.test` + `test/data/regression_cases.tsv` (generated
   from the concordance dump by `correctness/gen-regression-cases.sh`, run by
   `test/run-regression-cases.sh`). See `docs/PATCHES.md`.
-* **Open frontier (tracked):** `_get_differing_regions` for the alt-longer *delins*
-  case (split into minimal del+ins sub-regions, not just the same-length MNV split
-  already shipped); stop_retained-at-essential-splice (acceptor vs donor); and
-  3′-shifting.
+* **Open frontier (tracked):** `mature_miRNA_variant` (a feature region not yet in the
+  cache); the `consider_ins_len` insertion-overlap rule for the exon/non-coding boundary;
+  and 3′-shifting.
 
 ### Haplotype-aware consequence (experimental)
 
