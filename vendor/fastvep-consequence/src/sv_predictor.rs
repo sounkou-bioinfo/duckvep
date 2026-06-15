@@ -197,19 +197,23 @@ fn determine_sv_overlap_consequences(
             if completely_contains {
                 consequences.push(Consequence::TranscriptAblation);
             } else {
-                // Partial overlap
+                // Partial overlap: Ensembl emits feature_truncation PLUS the small-variant
+                // interval terms over the SV span (coding_sequence / intron) — NOT a splice
+                // term (a multi-kb deletion boundary lands in an intron, not the 2 bp splice
+                // site). Reuse the interval predicates rather than the splice heuristic.
                 consequences.push(Consequence::FeatureTruncation);
-                // Check if it hits coding region
-                if transcript.is_coding() {
-                    if hits_coding_region(sv_start, sv_end, transcript) {
-                        consequences.push(Consequence::CodingSequenceVariant);
-                    }
-                    // Check splice sites
-                    if hits_splice_site(sv_start, sv_end, transcript) {
-                        consequences.push(Consequence::SpliceAcceptorVariant);
-                    }
+                if transcript.is_coding() && hits_coding_region(sv_start, sv_end, transcript) {
+                    consequences.push(Consequence::CodingSequenceVariant);
                 }
-                consequences.push(Consequence::CopyNumberDecrease);
+                if hits_intron(sv_start, sv_end, transcript) {
+                    consequences.push(Consequence::IntronVariant);
+                }
+                // `copy_number_decrease` is a COPY-NUMBER allele term (<CN0> / copy_number_loss),
+                // NOT a plain <DEL> — Ensembl does not attach it to a sequence deletion
+                // (the `<DEL> != <CN0>` distinction).
+                if variant_type == VariantType::CopyNumberLoss {
+                    consequences.push(Consequence::CopyNumberDecrease);
+                }
             }
         }
         VariantType::TandemDuplication | VariantType::CopyNumberGain => {
@@ -272,7 +276,22 @@ fn hits_coding_region(sv_start: u64, sv_end: u64, transcript: &Transcript) -> bo
     }
 }
 
+/// Check if the SV interval overlaps any intron (the gap between two consecutive exons).
+fn hits_intron(sv_start: u64, sv_end: u64, transcript: &Transcript) -> bool {
+    let mut exons: Vec<(u64, u64)> = transcript.exons.iter().map(|e| (e.start, e.end)).collect();
+    exons.sort_unstable();
+    for w in exons.windows(2) {
+        let intron_lo = w[0].1 + 1; // one base past the previous exon end
+        let intron_hi = w[1].0.saturating_sub(1); // one base before the next exon start
+        if intron_lo <= intron_hi && sv_start <= intron_hi && sv_end >= intron_lo {
+            return true;
+        }
+    }
+    false
+}
+
 /// Check if the SV overlaps a splice site (2bp at exon boundaries).
+#[allow(dead_code)] // retained for precise-breakpoint SV splice handling (interval-predicate WIP)
 fn hits_splice_site(sv_start: u64, sv_end: u64, transcript: &Transcript) -> bool {
     for exon in &transcript.exons {
         // Donor site: 2bp after exon end (exon.end+1, exon.end+2)
@@ -404,6 +423,31 @@ mod tests {
         let cons = &results[0].allele_consequences[0].consequences;
         assert!(cons.contains(&Consequence::FeatureTruncation));
         assert!(cons.contains(&Consequence::CodingSequenceVariant));
+    }
+
+    // A partial SYMBOLIC <DEL> (VariantType::Deletion) matches Ensembl: feature_truncation +
+    // the small-variant interval terms (coding_sequence + intron over the SV span), and NOT a
+    // copy_number_decrease (that is a <CN0> / copy_number_loss term — the <DEL> != <CN0>
+    // distinction) nor a splice_acceptor (the kb-scale boundary lands in the intron).
+    #[test]
+    fn test_partial_deletion_is_not_copy_number() {
+        let tx = make_coding_transcript(5000, 6000); // exons 5000-5200, 5500-5700 (intron 5201-5499)
+        let results = predict_sv_consequences(
+            "chr1",
+            5300,
+            5800,
+            VariantType::Deletion,
+            &[Allele::Symbolic("<DEL>".into())],
+            &[&tx],
+            5000,
+            5000,
+        );
+        let cons = &results[0].allele_consequences[0].consequences;
+        assert!(cons.contains(&Consequence::FeatureTruncation));
+        assert!(cons.contains(&Consequence::CodingSequenceVariant));
+        assert!(cons.contains(&Consequence::IntronVariant), "SV spans the intron");
+        assert!(!cons.contains(&Consequence::CopyNumberDecrease), "<DEL> is not <CN0>");
+        assert!(!cons.contains(&Consequence::SpliceAcceptorVariant), "kb boundary is intronic");
     }
 
     #[test]

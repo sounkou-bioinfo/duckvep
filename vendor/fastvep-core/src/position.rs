@@ -34,6 +34,9 @@ pub enum VariantType {
 
 impl VariantType {
     /// Returns true for structural variant types that need the SV annotation pipeline.
+    /// `Deletion` is here for the SYMBOLIC `<DEL>` SV path — small (resolved-base) deletions
+    /// are never assigned this type (the SV classifier returns `Unknown` for them, and they
+    /// dispatch by allele content), so this does not pull small deletions into the SV pipeline.
     pub fn is_structural(self) -> bool {
         matches!(
             self,
@@ -44,6 +47,7 @@ impl VariantType {
                 | Self::Inversion
                 | Self::TranslocationBreakend
                 | Self::ShortTandemRepeatVariation
+                | Self::Deletion
         )
     }
 

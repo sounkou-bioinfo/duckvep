@@ -357,7 +357,9 @@ fn classify_sv_type(alt: &Allele) -> VariantType {
         _ => return VariantType::Unknown,
     };
     match s.as_str() {
-        "DEL" => VariantType::CopyNumberLoss,
+        // A symbolic `<DEL>` is a sequence deletion (feature_truncation / transcript_ablation),
+        // NOT a copy-number-loss allele — only `<CN0>`/`<CNn<2>` get the copy_number_* terms.
+        "DEL" => VariantType::Deletion,
         "DUP" | "DUP:TANDEM" => VariantType::TandemDuplication,
         "INV" => VariantType::Inversion,
         "BND" => VariantType::TranslocationBreakend,
