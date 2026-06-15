@@ -1011,7 +1011,37 @@ impl ConsequencePredictor {
         // build_coding_context sorts the edits and applies them to the reference CDS
         // before translating once -> the combined peptide.
         let ctx = self.build_coding_context(transcript, &edits)?;
-        Some(self.coding_consequence_terms(&ctx, transcript, false, false, None))
+        // Start-codon eligibility for the COMBINED edit span, so a haplotype overlapping the
+        // start codon gets the same `start_lost` (whole-peptide rule) the single-variant path
+        // does — the haplotype path used to hardcode `false` and so mis-called such cases
+        // `missense`. Uses the same `VepAlleleContext` projection: the union cDNA span of the
+        // edits vs the start codon, with translation_start==1. (The straddle/essential/X
+        // `coding_sequence_variant` resolution remains a tracked multi-edit gap.)
+        let cdna_bounds = variants.iter().filter_map(|(s, e, r, a)| {
+            let (vs, ve) = normalized_interval(*s, *e, r, a);
+            match (transcript.genomic_to_cdna(vs), transcript.genomic_to_cdna(ve)) {
+                (Some(a), Some(b)) => Some((a.min(b), a.max(b))),
+                _ => None,
+            }
+        });
+        let (mut lo, mut hi) = (u64::MAX, 0u64);
+        for (a, b) in cdna_bounds {
+            lo = lo.min(a);
+            hi = hi.max(b);
+        }
+        let vep_start_overlap = lo != u64::MAX && {
+            let vep_ctx = VepAlleleContext {
+                cds_start_nf: transcript.flags.iter().any(|f| f == "cds_start_NF"),
+                cdna_start: Some(lo),
+                cdna_end: Some(hi),
+                cdna_coding_start: transcript.cdna_coding_start,
+                protein_start: transcript
+                    .cdna_to_cds(lo)
+                    .map(Transcript::cds_to_protein),
+            };
+            vep_ctx.start_codon_change_eligible()
+        };
+        Some(self.coding_consequence_terms(&ctx, transcript, vep_start_overlap, false, None))
     }
 
     /// Resolve the coding TERMS for an exonic-coding variant, applying the CDS-boundary
