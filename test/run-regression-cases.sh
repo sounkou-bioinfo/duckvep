@@ -23,11 +23,15 @@ TSV=$ROOT/test/data/regression_cases.tsv
 out=$("$DUCKDB" -unsigned -noheader -list -c "
 LOAD '$EXT'; SELECT vep_load_cache('$GFF3','$FASTA');
 WITH got AS (
+  -- correlated subquery => EXACTLY one row per corpus case: if duckvep emits no
+  -- consequence for that transcript (a dropped/missing transcript), actual is
+  -- '(no output)' and the case FAILS rather than silently vanishing from the
+  -- denominator (reward-hacking hole flagged by the pi audit).
   SELECT c.category, c.chrom, c.pos, c.transcript_id, c.expected,
-         list_aggregate(list_sort(x.consequence),'string_agg','&') AS actual
-  FROM read_csv('$TSV', delim='\t', header=true) c,
-       UNNEST(vep_consequence(c.chrom, c.pos, c.ref, c.alt)) u(x)
-  WHERE x.transcript_id = c.transcript_id
+         coalesce((SELECT list_aggregate(list_sort(x.consequence),'string_agg','&')
+                   FROM UNNEST(vep_consequence(c.chrom, c.pos, c.ref, c.alt)) u(x)
+                   WHERE x.transcript_id = c.transcript_id), '(no output)') AS actual
+  FROM read_csv('$TSV', delim='\t', header=true) c
 )
 SELECT CASE WHEN expected = actual THEN 'PASS' ELSE 'FAIL' END AS status,
        category, chrom||':'||pos AS locus, transcript_id, expected, actual
