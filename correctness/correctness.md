@@ -236,19 +236,27 @@ model** (`--gff`, above), that gap collapses to the handful below, and
 the residual is pure engine. Numbers read from
 `correctness/data/methodology_audit.csv`:
 
-| at scale (50K ClinVar)                                                   | pairs |
-|:-------------------------------------------------------------------------|------:|
-| fastVEP (variant,transcript) pairs VEP never emits (dropped by “shared”) |    23 |
-| VEP pairs fastVEP misses (dropped by “shared”)                           |     3 |
-| fastVEP consequence discordances ON shared pairs                         | 6,314 |
-| duckvep consequence discordances ON shared pairs                         |    58 |
+A shared-pair inner join could *hide* a tool failing to emit a
+transcript (it would become a non-shared row, not a discordance), so we
+count **every** kind of divergence as first-class: consequence
+disagreement on shared pairs, **plus** pairs each tool emits that the
+oracle does not (extra), **plus** pairs the oracle emits that the tool
+misses. Read from `correctness/data/methodology_audit.csv`:
 
-With the gene model controlled, the transcript-set difference is down to
-**23 + 3** pairs — so the comparison is now genuinely pure-engine. And
-the engine verdict is stark: fastVEP diverges from VEP on **6,314**
-consequence calls once indels/MNVs are included, vs duckvep’s **58**.
-The fastVEP paper’s 100% held only because its validation set is 173
-SNVs.
+| divergence type (controlled, 50K ClinVar) | duckvep | fastVEP |
+|:------------------------------------------|--------:|--------:|
+| consequence disagreement (shared pairs)   |      58 |   6,314 |
+| extra pairs the tool emits, VEP does not  |      27 |      23 |
+| pairs VEP emits, the tool misses          |       3 |       3 |
+| TOTAL divergence vs VEP 116               |      88 |   6,340 |
+
+With the gene model controlled, the emission gap is tiny in both
+directions, so the comparison is genuinely pure-engine — and counting
+*all* divergence (consequence + extra + missing), **duckvep totals 88 vs
+fastVEP 6,340** of ~1.43M pairs. The duckvep residual is dominated by
+consequence-engine edges (start-codon straddle, boundary insertion); the
+27 extras are 5′/3′-distance-window boundary cases. The fastVEP paper’s
+100% held only because its validation set is 173 SNVs.
 
 ## Synthetic hard-variant corpus
 

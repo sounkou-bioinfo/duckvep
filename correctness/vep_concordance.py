@@ -296,6 +296,32 @@ COPY (
   FROM t GROUP BY ALL ORDER BY n DESC LIMIT 60
 ) TO '{ROOT}/correctness/data/so_term_transitions.csv' (HEADER, FORMAT csv);
 
+-- (e) recorded: TOTAL divergence vs VEP, counting emission misses/extras as first-class
+-- (not just consequence on shared pairs) — a shared-pair inner join would otherwise hide a
+-- tool failing to emit a transcript. duckvep and fastVEP, both vs the controlled VEP oracle.
+COPY (
+  WITH v AS (SELECT pos,ref,alt,transcript_id,consequence vc FROM ann WHERE source='vep'),
+       f AS (SELECT pos,ref,alt,transcript_id,consequence fc FROM ann WHERE source='fastvep'),
+       dd AS (SELECT pos,ref,alt,transcript_id,consequence dc FROM ann WHERE source='duckvep'),
+       vk AS (SELECT DISTINCT pos,ref,alt,transcript_id FROM v),
+       fk AS (SELECT DISTINCT pos,ref,alt,transcript_id FROM f),
+       dk AS (SELECT DISTINCT pos,ref,alt,transcript_id FROM dd)
+  SELECT * FROM (VALUES
+    ('duckvep_discordant_on_shared',(SELECT count(*) FROM v JOIN dd USING(pos,ref,alt,transcript_id) WHERE vc<>dc)),
+    ('duckvep_only_pairs_emission',(SELECT count(*) FROM (SELECT * FROM dk EXCEPT SELECT * FROM vk))),
+    ('duckvep_missing_pairs_emission',(SELECT count(*) FROM (SELECT * FROM vk EXCEPT SELECT * FROM dk))),
+    ('duckvep_total_divergence',(SELECT count(*) FROM v JOIN dd USING(pos,ref,alt,transcript_id) WHERE vc<>dc)
+       + (SELECT count(*) FROM (SELECT * FROM dk EXCEPT SELECT * FROM vk))
+       + (SELECT count(*) FROM (SELECT * FROM vk EXCEPT SELECT * FROM dk))),
+    ('fastvep_discordant_on_shared',(SELECT count(*) FROM v JOIN f USING(pos,ref,alt,transcript_id) WHERE vc<>fc)),
+    ('fastvep_only_pairs_emission',(SELECT count(*) FROM (SELECT * FROM fk EXCEPT SELECT * FROM vk))),
+    ('fastvep_missing_pairs_emission',(SELECT count(*) FROM (SELECT * FROM vk EXCEPT SELECT * FROM fk))),
+    ('fastvep_total_divergence',(SELECT count(*) FROM v JOIN f USING(pos,ref,alt,transcript_id) WHERE vc<>fc)
+       + (SELECT count(*) FROM (SELECT * FROM fk EXCEPT SELECT * FROM vk))
+       + (SELECT count(*) FROM (SELECT * FROM vk EXCEPT SELECT * FROM fk)))
+  ) t(metric,value)
+) TO '{ROOT}/correctness/data/methodology_audit.csv' (HEADER, FORMAT csv);
+
 -- printed summary (impact x class)
 SELECT engine, impact, class, count(*) AS pairs,
        count(*) FILTER (WHERE vep_csq=eng_csq) AS agree,
