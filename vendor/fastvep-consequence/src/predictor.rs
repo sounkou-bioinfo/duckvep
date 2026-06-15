@@ -934,8 +934,18 @@ impl ConsequencePredictor {
             && !pa_excluded;
         let p_missense =
             coding_ok && !is_indel && !alt_stop && !ref_stop && ctx.ref_pep != ctx.alt_pep;
-        let p_synonymous =
-            coding_ok && !is_indel && !alt_stop && !ref_stop && ctx.ref_pep == ctx.alt_pep;
+        // VEP `synonymous_variant` excludes `X` (an undeterminable residue, e.g. the
+        // N-padded first codon of a cds_start_NF transcript): `$ref_pep !~ /X/ and
+        // $alt_pep !~ /X/`. Without it an N-codon reads ref_pep==alt_pep=="X" and is
+        // mis-called synonymous; with it no specific term fires and the empty-list
+        // fallback yields coding_sequence_variant (VEP's `coding_unknown`).
+        let p_synonymous = coding_ok
+            && !is_indel
+            && !alt_stop
+            && !ref_stop
+            && ctx.ref_pep == ctx.alt_pep
+            && !ctx.ref_pep.contains(&b'X')
+            && !ctx.alt_pep.contains(&b'X');
 
         // --- flat collection (filter-style); order is cosmetic, terms re-ranked later ---
         let mut out = Vec::new();
