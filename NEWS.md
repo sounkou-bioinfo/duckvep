@@ -12,8 +12,8 @@ Changelog, most recent first. (R-package style.)
   discordance never reads as 100%.
 * **The consequence engine was rebuilt to mirror Ensembl's own structure**, taking
   N=50000 ClinVar discordance vs **controlled** Ensembl VEP 116 (VEP run with `--gff` on
-  the *same* gene model the engines read — so only the engine differs) from **~3,876 → 23
-  consequence discordances (a 99% reduction)**, **47 total divergence** counting emission
+  the *same* gene model the engines read — so only the engine differs) from **~3,876 → 17
+  consequence discordances (a 99% reduction)**, **41 total divergence** counting emission
   misses/extras first-class, vs fastVEP's **6,340**. Almost every remaining discordance is
   a *shared* gap fastVEP has too; just **1** is duckvep-specific (an insertion `stop_gained` edge).
   (The earlier cache-oracle "35" was an undercount — the controlled `--gff` oracle, run on
@@ -32,6 +32,11 @@ Changelog, most recent first. (R-package style.)
     split at its internal *matching* bases, so every splice/intron predicate is
     evaluated over only the actually-changed sub-intervals — e.g. `AACTC/GACCA` hits
     `splice_donor_region` but not the donor 5th base. SNVs/indels stay one region.
+  * **CDS-boundary straddle `coding_unknown` fallback:** a variant straddling the CDS
+    boundary still overlaps the coding sequence, so when the codon-window peptide is
+    undeterminable and no boundary term survives, Ensembl emits the generic
+    `coding_sequence_variant` (not nothing) — e.g. a 5′UTR-into-CDS frameshift deletion is
+    `5_prime_UTR_variant&coding_sequence_variant`.
 * **Root-caused fixes** (each verified against VEP — several by *instrumenting* VEP),
   all locked by a generated regression corpus: mitochondrial codon table + non-ATG
   `start_lost`; splice precedence and insertion handling (`(min,max)` swap, exact

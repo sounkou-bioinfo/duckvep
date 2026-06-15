@@ -1,0 +1,7 @@
+WARNING: Setting offline mode. To create database connection use either --database or --cache.
+WARNING: Ignoring 'chromosome' feature_type from data/giab/GRCh38.116.controlled.gff3.gz GFF/GTF file. This feature_type is not supported in VEP.
+WARNING: Ignoring 'three_prime_UTR' feature_type from data/giab/GRCh38.116.controlled.gff3.gz GFF/GTF file. This feature_type is not supported in VEP.
+WARNING: Ignoring 'biological_region' feature_type from data/giab/GRCh38.116.controlled.gff3.gz GFF/GTF file. This feature_type is not supported in VEP.
+WARNING: Ignoring 'five_prime_UTR' feature_type from data/giab/GRCh38.116.controlled.gff3.gz GFF/GTF file. This feature_type is not supported in VEP.
+WARNING: Ignoring 'unconfirmed_transcript' feature_type from data/giab/GRCh38.116.controlled.gff3.gz GFF/GTF file. This feature_type is not supported in VEP.
+WARNING: Parent entries with the following IDs were not found or skipped due to invalid types: transcript:ENST00000624029, transcript:ENST00000623124

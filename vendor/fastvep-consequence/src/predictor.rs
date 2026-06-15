@@ -1043,6 +1043,13 @@ impl ConsequencePredictor {
             }
             out.push(t);
         }
+        // A variant straddling the CDS boundary still OVERLAPS the coding sequence, so when no
+        // boundary term survived the codon-window peptide is undeterminable but Ensembl still
+        // emits the generic `coding_sequence_variant` (coding_unknown) — not nothing. (e.g. a
+        // 5'UTR-into-CDS frameshift deletion -> 5_prime_UTR_variant&coding_sequence_variant.)
+        if straddles_cds && out.is_empty() {
+            out.push(Consequence::CodingSequenceVariant);
+        }
         out
     }
 
