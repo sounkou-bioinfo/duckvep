@@ -324,7 +324,17 @@ fn hits_utr(sv_start: u64, sv_end: u64, transcript: &Transcript, five_prime: boo
     } else {
         (cds_hi + 1, transcript.end) // high-coordinate UTR
     };
-    utr_lo <= utr_hi && sv_start <= utr_hi && sv_end >= utr_lo
+    if utr_lo > utr_hi {
+        return false;
+    }
+    // The UTR is EXONIC — require overlap with the UTR portion of an exon, not just the genomic
+    // UTR-side span, so an SV wholly in a UTR-side intron does not over-call the UTR term
+    // (VEP's UTR predicates require cDNA / exon overlap).
+    transcript.exons.iter().any(|e| {
+        let ex_utr_lo = e.start.max(utr_lo);
+        let ex_utr_hi = e.end.min(utr_hi);
+        ex_utr_lo <= ex_utr_hi && sv_start <= ex_utr_hi && sv_end >= ex_utr_lo
+    })
 }
 
 /// Check if the SV overlaps a splice site (2bp at exon boundaries).
@@ -533,6 +543,29 @@ mod tests {
         assert!(
             !cons.contains(&Consequence::CodingSequenceVariant),
             "intron-only SV inside CDS bounds is not coding"
+        );
+    }
+
+    // hits_utr is exon-gated: an SV on the UTR-side of the CDS but NOT overlapping a UTR exon
+    // must not over-call the UTR term. tx 5000-6000: 3'UTR span 5651-6000, but exon2 ends at
+    // 5700, so 5750-5900 is a non-exonic UTR-side region.
+    #[test]
+    fn test_non_exonic_utr_side_sv_is_not_utr() {
+        let tx = make_coding_transcript(5000, 6000);
+        let results = predict_sv_consequences(
+            "chr1",
+            5750,
+            5900,
+            VariantType::Inversion,
+            &[Allele::Symbolic("<INV>".into())],
+            &[&tx],
+            5000,
+            5000,
+        );
+        let cons = &results[0].allele_consequences[0].consequences;
+        assert!(
+            !cons.contains(&Consequence::ThreePrimeUtrVariant),
+            "SV in a non-exonic UTR-side region is not a UTR variant"
         );
     }
 
