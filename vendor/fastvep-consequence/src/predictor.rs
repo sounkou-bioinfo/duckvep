@@ -1323,7 +1323,13 @@ impl ConsequencePredictor {
         let p_start_lost =
             (!is_indel && at_start && alt_first != b'M') || vep_start_lost || p_indel_start_lost;
         let p_start_retained = !is_indel && at_start && alt_first == b'M';
-        let p_stop_gained = coding_ok && alt_stop && !ref_stop;
+        // The windowed peptide is determinable only when it is complete, non-empty, and has no
+        // `X` (the cds_start_NF N-padding / undeterminable residue). VEP's `_get_peptide_alleles`
+        // returns undef otherwise, so NONE of the peptide-rule terms (stop_gained / stop_lost /
+        // stop_retained) fire — e.g. a 5'UTR-into-CDS insertion on a cds_start_NF transcript whose
+        // windowed alt peptide reads `X…*` must be coding_sequence_variant, not stop_gained.
+        let pep_determinable = !incomplete && !ctx.alt_pep.is_empty() && !ctx.alt_pep.contains(&b'X');
+        let p_stop_gained = coding_ok && pep_determinable && alt_stop && !ref_stop;
         // STOP terms follow VEP's actual order (stop_lost:1258-1264 / stop_retained:1311-1318):
         // when the peptide alleles ARE determinable (defined, non-empty, no `X`, complete
         // terminal codon) the PEPTIDE rule decides — `stop_lost = ref has * && alt has no *`,
@@ -1334,7 +1340,6 @@ impl ConsequencePredictor {
         // the earlier "route all deletion stops through cil" was the wrong branch for in-CDS
         // deletions (cil only matches VEP when the peptide is X/partial).
         let del = is_indel && net < 0;
-        let pep_determinable = !incomplete && !ctx.alt_pep.is_empty() && !ctx.alt_pep.contains(&b'X');
         // VEP `ref_eq_alt_sequence` windowed clause: a stop is present in BOTH peptides at the
         // same index (`index(ref_pep,'*') == index(alt_pep,'*')`) — covers a synonymous SNV at
         // the stop and a deletion that reconstructs a stop at the same relative position.

@@ -31,6 +31,7 @@ COPY (
         WHEN dd.dc LIKE '%frameshift_variant&stop_gained%' THEN 'insertion_stop_gained'
         WHEN dd.dc='start_lost' AND k.chrom='MT' THEN 'mito_start_lost'
         WHEN dd.dc LIKE '%5_prime_UTR_variant%' AND dd.dc LIKE '%start_lost%' THEN 'utr5_start_lost_cooccur'
+        WHEN dd.dc LIKE '%5_prime_UTR_variant%' AND dd.dc LIKE '%coding_sequence_variant%' AND dd.dc NOT LIKE '%start_lost%' AND length(k.oref)<>length(k.oalt) THEN 'utr5_straddle_coding_unknown'
         WHEN dd.dc LIKE '%3_prime_UTR_variant%' AND (dd.dc LIKE '%stop_lost%' OR dd.dc LIKE '%stop_retained%') THEN 'utr3_stop_cooccur'
         WHEN (dd.dc LIKE '%splice_donor_variant%' OR dd.dc LIKE '%splice_acceptor_variant%') AND length(k.oalt) > length(k.oref) AND k.oref<>'-' THEN 'delins_alt_extends_to_splice'
         WHEN dd.dc LIKE '%protein_altering_variant%' THEN 'inframe_delins_protein_altering'

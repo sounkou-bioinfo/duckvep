@@ -12,10 +12,11 @@ Changelog, most recent first. (R-package style.)
   discordance never reads as 100%.
 * **The consequence engine was rebuilt to mirror Ensembl's own structure**, taking
   N=50000 ClinVar discordance vs **controlled** Ensembl VEP 116 (VEP run with `--gff` on
-  the *same* gene model the engines read — so only the engine differs) from **~3,876 → 16
-  consequence discordances (a 99% reduction)**, **40 total divergence** counting emission
-  misses/extras first-class, vs fastVEP's **6,340**. Almost every remaining discordance is
-  a *shared* gap fastVEP has too; just **1** is duckvep-specific (an insertion `stop_gained` edge).
+  the *same* gene model the engines read — so only the engine differs) from **~3,876 → 15
+  consequence discordances (a 99% reduction)**, **39 total divergence** counting emission
+  misses/extras first-class, vs fastVEP's **6,340**. **Every remaining discordance is now a
+  *shared* gap fastVEP has too — ZERO are duckvep-specific** (term-fair flag, per the SO-term
+  split): duckvep diverges from VEP only where fastVEP also does.
   (The earlier cache-oracle "35" was an undercount — the controlled `--gff` oracle, run on
   the identical transcript set, surfaced ~23 discordances the cache had hidden. See
   `correctness/correctness.md`.) The VEP-faithful abstractions:
@@ -70,9 +71,11 @@ Changelog, most recent first. (R-package style.)
   circular/codon-table aware) that the start/stop predicates query, instead of the
   CDS-codon-index `CodingContext`. This is why the non-ATG `start_lost` landed cleanly
   where three codon-index patches had regressed.
-* **Open frontier (tracked):** `mature_miRNA_variant` (a feature region not yet in the
-  cache); an insertion `stop_gained` edge (the 1 duckvep-specific case); large multi-exon
-  deletions spanning the start codon (a `start_lost` miss); and 3′-shifting.
+* **Open frontier (tracked, all SHARED with fastVEP — none duckvep-specific):**
+  `mature_miRNA_variant` (a feature region not yet in the cache); frameshift / 3′UTR-straddle
+  deletions at the stop codon needing VEP's exact `_get_peptide_alleles` window (313154,
+  73419638); large multi-exon deletions spanning the start codon (a `start_lost` miss); and
+  3′-shifting.
 
 ### Haplotype-aware consequence (experimental)
 
