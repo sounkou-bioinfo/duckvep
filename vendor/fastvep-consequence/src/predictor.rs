@@ -1347,14 +1347,15 @@ impl ConsequencePredictor {
         // -> undef peptide -> coding_sequence_variant, not stop_gained. (Distinct from
         // `pep_determinable` below — VEP's stop_gained does NOT gate on `X`, and a DEFINED peptide
         // may legitimately contain `X` alongside a real `*` and still be stop_gained.)
-        // stop_lost/stop_retained use the PEPTIDE rule only when the alleles are defined AND the
-        // alt peptide is complete & has no `X` (VEP: `defined(ref)&&defined(alt)&&alt!~X`), else
-        // the genomic CIL fallback. `peptide_defined` folds in VEP's allele-definedness (cds-mapped
-        // + unambiguous DNA); the `X`/complete checks are stop-specific.
-        let pep_determinable = peptide_defined
-            && !incomplete
-            && !ctx.alt_pep.is_empty()
-            && !ctx.alt_pep.contains(&b'X');
+        // stop_lost/stop_retained use the PEPTIDE rule only when the alleles are defined and the
+        // alt peptide has no `X`, else the genomic CIL fallback. VEP's emptiness rule DIFFERS
+        // between the two: `stop_lost` (VariationEffect.pm:1259) gates on `defined(alt) && alt!~X`
+        // — an EMPTY alt peptide is allowed, so a deletion that removes the whole stop codon
+        // (alt_pep="") is stop_lost (alt has no `*`, ref has `*`); `stop_retained` (:1313) gates on
+        // `defined(alt) && alt ne '' && alt!~X` — non-empty REQUIRED. `peptide_defined` folds in
+        // VEP's allele-definedness (cds-mapped + unambiguous DNA).
+        let pep_det_lost = peptide_defined && !incomplete && !ctx.alt_pep.contains(&b'X');
+        let pep_determinable = pep_det_lost && !ctx.alt_pep.is_empty();
         let p_stop_gained = coding_ok && peptide_defined && alt_stop && !ref_stop;
         // STOP terms follow VEP's actual order (stop_lost:1258-1264 / stop_retained:1311-1318):
         // when the peptide alleles ARE determinable (defined, non-empty, no `X`, complete
@@ -1377,7 +1378,7 @@ impl ConsequencePredictor {
             _ => false,
         };
         let p_stop_lost = coding_ok
-            && if pep_determinable {
+            && if pep_det_lost {
                 ref_stop && !alt_stop
             } else if del {
                 indel_stop_term == Some(Consequence::StopLost)
