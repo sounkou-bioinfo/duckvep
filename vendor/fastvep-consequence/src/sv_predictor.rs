@@ -235,9 +235,20 @@ fn determine_sv_overlap_consequences(
             if completely_contains {
                 consequences.push(Consequence::TranscriptVariant);
             } else {
-                consequences.push(Consequence::FeatureTruncation);
+                // An inversion does NOT delete/truncate the feature — Ensembl gives it the
+                // small-variant interval terms over its span (coding_sequence / intron / UTR),
+                // not feature_truncation. Reuse the interval predicates.
                 if transcript.is_coding() && hits_coding_region(sv_start, sv_end, transcript) {
                     consequences.push(Consequence::CodingSequenceVariant);
+                }
+                if hits_intron(sv_start, sv_end, transcript) {
+                    consequences.push(Consequence::IntronVariant);
+                }
+                if hits_utr(sv_start, sv_end, transcript, true) {
+                    consequences.push(Consequence::FivePrimeUtrVariant);
+                }
+                if hits_utr(sv_start, sv_end, transcript, false) {
+                    consequences.push(Consequence::ThreePrimeUtrVariant);
                 }
             }
         }
@@ -288,6 +299,27 @@ fn hits_intron(sv_start: u64, sv_end: u64, transcript: &Transcript) -> bool {
         }
     }
     false
+}
+
+/// Check if the SV interval overlaps the 5' (`five_prime=true`) or 3' UTR genomic region —
+/// the transcript span outside the coding region, strand-aware (5'UTR is upstream of the CDS
+/// in transcript orientation: low-coordinate side on +, high-coordinate side on -).
+fn hits_utr(sv_start: u64, sv_end: u64, transcript: &Transcript, five_prime: bool) -> bool {
+    let (Some(crs), Some(cre)) =
+        (transcript.coding_region_start, transcript.coding_region_end)
+    else {
+        return false;
+    };
+    let cds_lo = crs.min(cre);
+    let cds_hi = crs.max(cre);
+    // The UTR on the low-coordinate side is 5' on +strand, 3' on -strand (and vice-versa).
+    let low_is_five_prime = transcript.strand == Strand::Forward;
+    let (utr_lo, utr_hi) = if five_prime == low_is_five_prime {
+        (transcript.start, cds_lo.saturating_sub(1)) // low-coordinate UTR
+    } else {
+        (cds_hi + 1, transcript.end) // high-coordinate UTR
+    };
+    utr_lo <= utr_hi && sv_start <= utr_hi && sv_end >= utr_lo
 }
 
 /// Check if the SV overlaps a splice site (2bp at exon boundaries).
@@ -448,6 +480,31 @@ mod tests {
         assert!(cons.contains(&Consequence::IntronVariant), "SV spans the intron");
         assert!(!cons.contains(&Consequence::CopyNumberDecrease), "<DEL> is not <CN0>");
         assert!(!cons.contains(&Consequence::SpliceAcceptorVariant), "kb boundary is intronic");
+    }
+
+    // A partial <INV> reuses the interval predicates over its span (coding_sequence + intron +
+    // 5'UTR here) and does NOT emit feature_truncation (an inversion does not truncate the
+    // feature) — matching Ensembl. tx 5000-6000: 5'UTR 5000-5049, CDS 5050-5650, intron
+    // 5201-5499, 3'UTR 5651-6000; the SV 5000-5550 hits the first three only.
+    #[test]
+    fn test_partial_inversion_interval_predicates() {
+        let tx = make_coding_transcript(5000, 6000);
+        let results = predict_sv_consequences(
+            "chr1",
+            5000,
+            5550,
+            VariantType::Inversion,
+            &[Allele::Symbolic("<INV>".into())],
+            &[&tx],
+            5000,
+            5000,
+        );
+        let cons = &results[0].allele_consequences[0].consequences;
+        assert!(cons.contains(&Consequence::CodingSequenceVariant));
+        assert!(cons.contains(&Consequence::IntronVariant));
+        assert!(cons.contains(&Consequence::FivePrimeUtrVariant));
+        assert!(!cons.contains(&Consequence::ThreePrimeUtrVariant), "SV does not reach the 3'UTR");
+        assert!(!cons.contains(&Consequence::FeatureTruncation), "an inversion does not truncate");
     }
 
     #[test]

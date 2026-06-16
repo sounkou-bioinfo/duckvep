@@ -5,15 +5,16 @@
 # diffs the consequence sets. Requires the controlled GFF + FASTA (scripts/fetch-data.sh).
 #
 # Usage: correctness/sv_concordance.sh
-# Current state (recorded 2026-06-16, TP53 ENST00000269305) — 3/4:
+# Current state (recorded 2026-06-16, TP53 ENST00000269305) — 4/4 MATCH:
 #   DEL whole-gene -> transcript_ablation         : MATCH
 #   DUP whole-gene -> transcript_amplification     : MATCH
 #   DEL partial    -> coding_sequence_variant&feature_truncation&intron_variant : MATCH
-#                    (fixed: <DEL> classifies as Deletion not CopyNumberLoss, so no
+#                    (<DEL> classifies as Deletion not CopyNumberLoss, so no
 #                     copy_number_decrease; splice heuristic replaced by intron-overlap)
-#   INV            : duckvep coding_sequence_variant&feature_truncation vs VEP
-#                    5_prime_UTR_variant&coding_sequence_variant&intron_variant — KNOWN GAP
-#                    (needs feature_truncation dropped + 5'UTR/intron interval predicates)
+#   INV partial    -> 5_prime_UTR_variant&coding_sequence_variant&intron_variant : MATCH
+#                    (no feature_truncation — an inversion does not truncate; reuses the
+#                     coding/intron/UTR interval predicates over the SV span)
+# NOTE: only a 4-case TP53 harness — get GIAB SV Tier1 coverage before further type changes.
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DUCKDB=${DUCKVEP_DUCKDB:-$ROOT/.tools/duckdb}
