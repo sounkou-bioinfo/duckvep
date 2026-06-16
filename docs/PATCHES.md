@@ -122,20 +122,90 @@ table — `ct(transcript)` returns the vertebrate-mitochondrial table
 Validated on ClinVar chrM vs offline Ensembl VEP (the non-ATG mitochondrial *start*
 codons are now handled too — see the `start_lost` patch above).
 
+### Controlled `--gff` oracle (only the engine differs)
+`correctness/vep_concordance.py`. The concordance harness now runs Ensembl **VEP 116**
+with `--gff` over the **same** GFF3 gene model the engines read (not the cache), so the
+*only* free variable is the engine. Total divergence is first-class — consequence
+mismatch on shared pairs **plus** emission extra/miss (an inner join would hide
+emission gaps). A **term-fair** flag marks a duckvep-specific regression only when
+fastVEP is correct on exactly the differing SO terms. This surfaced ~23 discordances
+the cache oracle had hidden; the honest number is now what the patches below drove down.
+
+### Genomic start-codon model — `_ins_del_start_altered` + whole-peptide `start_lost`
+`predictor.rs` (`VepAlleleContext`, `ins_del_start_altered`). VEP `start_lost`
+(`VariationEffect.pm:851`) gates on `_overlaps_start_codon` (cDNA, phase-correct) AND,
+for SNV/MNV, the whole-peptide rule (`alt_pep` neither starts- nor ends-with `ref_pep`);
+for length-changing variants it uses `_ins_del_start_altered` (a 5′UTR+CDS reconstruction,
+the start analog of the stop CIL model) and is suppressed on inframe ins/del. Patch: the
+strict ATG/mito `at_start` path is restricted to non-indels; a 5′UTR-into-start deletion
+that preserves the start no longer over-fires and a frameshift-start deletion is no longer
+missed. Regression: `test_ins_del_start_altered_reconstruction`,
+`test_indel_start_lost_gated_on_reconstruction`, corpus `indel_start_lost_reconstruction`.
+
+### CDS-boundary straddle → `coding_sequence_variant` (coding_unknown)
+`predictor.rs::resolve_coding_terms`. A variant straddling the CDS boundary still overlaps
+the coding sequence, so when no boundary term survives the codon-window peptide is
+undeterminable but Ensembl still emits the generic `coding_sequence_variant` — not nothing.
+Corpus `utr5_straddle_coding_unknown`.
+
+### Peptide-first deletion stop + single `_ins_del_stop_altered`
+`predictor.rs`. VEP `stop_lost`/`stop_retained` (`VariationEffect.pm:1234`,`:1290`) decide by
+the PEPTIDE rule when the peptide is determinable (`stop_lost = ref has * && alt has none`;
+`stop_retained = ref_eq_alt_sequence`) and fall back to the genomic `_ins_del_stop_altered`
+(CIL) ONLY for X/partial/spliced-away peptides. An earlier patch had routed *all* deletion
+stops through CIL — the wrong branch for in-CDS deletions; corrected to peptide-first. The two
+former stop reconstructions (a CDS-coordinate one in `build_coding_context` and the verbatim
+genomic `cil_stop_term`) were unified into one. Corpus `stop_retained_essential_splice_cil`,
+`stop_del_frameshift_suppressed`, `utr3_stop_cooccur`.
+
+### `stop_gained` needs a DEFINED peptide, not "no X"
+`predictor.rs` (`peptide_defined`). VEP `stop_gained` (`VariationEffect.pm:1224`) requires the
+peptide alleles be DEFINED (`_get_peptide_alleles`) — it does **not** test `X`; a defined
+peptide may contain `X` alongside a real `*` and still be `stop_gained`. "Defined" = the
+variant maps to the CDS (both CDS coordinates present) AND the alt allele is unambiguous DNA
+(`seq_is_unambiguous_dna`). Patch: gate `p_stop_gained` on `peptide_defined`, so a cds_start_NF
+5′UTR-straddle insertion whose windowed peptide reads `X…*` is `coding_sequence_variant`. The
+no-`X` gate (`pep_determinable`) is kept ONLY for `stop_lost`/`stop_retained`, where VEP gates
+on `X`. (pi caught a first attempt that gated `stop_gained` on `contains('X')` as an unsound
+proxy — recorded honestly.) Corpus `utr5_straddle_coding_unknown`.
+
+### Structural variants: `<DEL>` ≠ `<CN0>` + exon-aware interval predicates
+`engine.rs::classify_sv_type`, `sv_predictor.rs`. A symbolic `<DEL>` was typed
+`CopyNumberLoss`, so a partial `<DEL>` over-called `copy_number_decrease` (a copy-number-allele
+term) + a crude `splice_acceptor` heuristic and missed `intron_variant`. Patch: `<DEL>` →
+`VariantType::Deletion` (copy_number_* stays only for `<CN0>`/`<CNn<2>`), routed structural;
+the SV consequence reuses **exon-aware** interval predicates — `hits_coding_region` (exon∩CDS,
+not the genomic CDS span), `hits_intron`, strand-aware `hits_utr` (exon∩UTR). A partial `<INV>`
+drops `feature_truncation` (an inversion does not truncate) and gets the interval terms. SV
+concordance vs VEP (TP53 symbolic harness) 2/4 → **4/4**. Tests in `sv_predictor.rs`.
+
+### Haplotype path: start eligibility + shared essential-splice resolution
+`predictor.rs::haplotype_coding_terms`. The multi-edit (bcftools-csq-style) path computes
+`VepAlleleContext` start eligibility over the union cDNA span (so a haplotype overlapping the
+start codon gets `start_lost`), and applies the SAME essential-splice resolution the
+single-variant path uses (any variant reaching `splice::is_splice_donor/acceptor` →
+`coding_sequence_variant`, since the peptide is undeterminable). MNV-split concordance — vs the
+proven single-variant kernel AND the real VEP-116 oracle — **98.8% → 100%** (1761/1761).
+Experimental; latent over-broad edges (distant-missense over-merge, stop-exception) tracked.
+
 **Impact — current, valid, version-matched figures are in the generated report
 [`correctness/correctness.md`](correctness/correctness.md)** (split by impact ×
-class, per-100K error rates, all read from `correctness/data/concordance_by_impact.csv`
-so they never drift). Headline: SNVs near-perfect at every impact tier and ahead of
-fastVEP; the open frontier is high-impact indels/MNVs (shared with fastVEP — a real
-engine gap vs Ensembl VEP, not a measurement artifact).
+class, per-100K error rates, read from `correctness/data/*.csv` so they never drift).
+Headline vs **controlled Ensembl VEP 116** (N=50000 ClinVar, `--gff` same gene model):
+**15 consequence discordant on shared pairs / 39 total divergence**, vs fastVEP's **6,340** —
+and **ZERO duckvep-specific** (every remaining discordance is a *shared* gap fastVEP has too;
+duckvep diverges from VEP only where fastVEP does). The open frontier is the high-impact
+indel/MNV tail — e.g. a frameshift/3′UTR-straddle deletion at the stop (KDM5A 313154) and
+multi-exon start-codon deletions — all **shared with fastVEP**.
 
-The remaining engine frontier (tracked, paper-relevant): a frameshift that
-introduces a premature stop should add `stop_gained` (duckvep emits only
-`frameshift_variant`); and MNV codon handling. These are **shared with fastVEP** vs
-Ensembl VEP (both differ from Ensembl) — engine accuracy work, measured per-100K in
-the generated report. After the splice-insertion and start-codon patches there are
-**zero duckvep-specific regressions** vs the upstream engine in the concordance run:
-every remaining discordance is a shared engine gap, not something our patches broke.
+> **The honest framing (pi port-faithfulness review):** these patches make duckvep
+> *VEP-116-concordant on N=50000 ClinVar* — they do **not** yet make it a faithful
+> *re-implementation*. The current engine matches VEP's OUTPUT via a windowed-peptide
+> surrogate + boolean proxies (`peptide_defined`, `pep_determinable`, `at_start`), not
+> VEP's `TranscriptVariationAllele` mapper/codon/`peptide()` machinery. The road to a true
+> port (and to closing the residual tail at the root) is to port that coordinate layer +
+> the start/stop predicates verbatim, not to keep patching the window. See
+> [`refinements.md`](refinements.md).
 
 ## Feature patches (parity with `fastvep annotate`, kept lean)
 

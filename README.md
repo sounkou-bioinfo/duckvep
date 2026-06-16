@@ -78,8 +78,8 @@ ORDER BY pos;
 
 |   pos | end_pos | ref | alt       | span |
 |------:|--------:|-----|-----------|-----:|
-|  5000 |    8000 | N   | \[<DEL>\] | 3000 |
-| 12000 |   20000 | A   | \[<CNV>\] | 8000 |
+|  5000 |    8000 | N   | \[&lt;DEL&gt;\] | 3000 |
+| 12000 |   20000 | A   | \[&lt;CNV&gt;\] | 8000 |
 
 ### Multi-sample, phased genotypes
 
