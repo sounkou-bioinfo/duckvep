@@ -1008,6 +1008,20 @@ impl ConsequencePredictor {
         if edits.is_empty() {
             return None;
         }
+        // Essential-splice resolution, shared with the single-variant path (resolve_coding_terms):
+        // if ANY variant's reference interval reaches an essential splice site (donor/acceptor),
+        // it straddles the exon/intron boundary so the combined peptide is undeterminable — the
+        // coding effect is the generic coding_sequence_variant, NOT a computed missense from the
+        // partial in-exon edit. (The MNV-split harness's 21 divergences were exactly these:
+        // kernel coding_sequence_variant vs haplotype missense.)
+        let reaches_essential = variants.iter().any(|(s, e, r, a)| {
+            let (vs, ve) = normalized_interval(*s, *e, r, a);
+            splice::is_splice_donor(transcript, vs, ve)
+                || splice::is_splice_acceptor(transcript, vs, ve)
+        });
+        if reaches_essential {
+            return Some(vec![Consequence::CodingSequenceVariant]);
+        }
         // build_coding_context sorts the edits and applies them to the reference CDS
         // before translating once -> the combined peptide.
         let ctx = self.build_coding_context(transcript, &edits)?;
