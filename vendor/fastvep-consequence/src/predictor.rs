@@ -954,11 +954,19 @@ impl ConsequencePredictor {
             transcript.strand,
         )?;
         let ctx = self.build_coding_context(transcript, &[edit])?;
-        // VEP's `_get_peptide_alleles` is defined only when the variant maps to the CDS — both
-        // CDS endpoints present. A UTR-straddling variant has one of them = None (its windowed
-        // peptide is the undeterminable, possibly N-padded, projection), so the peptide-rule
-        // terms that lack a genomic fallback (stop_gained) must not fire.
-        let peptide_defined = cds_start.is_some() && cds_end.is_some();
+        // VEP's `_get_peptide_alleles` is defined only when BOTH (a) the variant maps to the CDS
+        // (both CDS endpoints present — a UTR-straddling variant has one = None) AND (b) the alt
+        // allele is unambiguous DNA (`seq_is_unambiguous_dna`; an N/IUPAC allele cannot be
+        // translated). When undef, the peptide-rule terms that lack a genomic fallback
+        // (stop_gained) must not fire — VEP gives coding_sequence_variant instead.
+        let alt_unambiguous = match alt_allele {
+            Allele::Sequence(b) => b
+                .iter()
+                .all(|c| matches!(c, b'A' | b'C' | b'G' | b'T' | b'a' | b'c' | b'g' | b't')),
+            Allele::Deletion | Allele::Missing => true, // no inserted bases to translate
+            _ => false,
+        };
+        let peptide_defined = cds_start.is_some() && cds_end.is_some() && alt_unambiguous;
         Some(self.coding_consequence_terms(
             &ctx,
             transcript,
@@ -1339,7 +1347,14 @@ impl ConsequencePredictor {
         // -> undef peptide -> coding_sequence_variant, not stop_gained. (Distinct from
         // `pep_determinable` below — VEP's stop_gained does NOT gate on `X`, and a DEFINED peptide
         // may legitimately contain `X` alongside a real `*` and still be stop_gained.)
-        let pep_determinable = !incomplete && !ctx.alt_pep.is_empty() && !ctx.alt_pep.contains(&b'X');
+        // stop_lost/stop_retained use the PEPTIDE rule only when the alleles are defined AND the
+        // alt peptide is complete & has no `X` (VEP: `defined(ref)&&defined(alt)&&alt!~X`), else
+        // the genomic CIL fallback. `peptide_defined` folds in VEP's allele-definedness (cds-mapped
+        // + unambiguous DNA); the `X`/complete checks are stop-specific.
+        let pep_determinable = peptide_defined
+            && !incomplete
+            && !ctx.alt_pep.is_empty()
+            && !ctx.alt_pep.contains(&b'X');
         let p_stop_gained = coding_ok && peptide_defined && alt_stop && !ref_stop;
         // STOP terms follow VEP's actual order (stop_lost:1258-1264 / stop_retained:1311-1318):
         // when the peptide alleles ARE determinable (defined, non-empty, no `X`, complete
