@@ -274,17 +274,22 @@ fn determine_sv_overlap_consequences(
     consequences
 }
 
-/// Check if the SV interval overlaps any exon's coding region.
+/// Check if the SV interval overlaps the CODING portion of any exon (the exon ∩ CDS span) —
+/// VEP uses mapped CDS coordinates, so an intron-only SV that merely falls WITHIN the genomic
+/// CDS bounds (between two coding exons) must NOT count as coding_sequence_variant.
 fn hits_coding_region(sv_start: u64, sv_end: u64, transcript: &Transcript) -> bool {
-    if let (Some(cds_start), Some(cds_end)) =
+    let (Some(cds_start), Some(cds_end)) =
         (transcript.coding_region_start, transcript.coding_region_end)
-    {
-        let coding_start = cds_start.min(cds_end);
-        let coding_end = cds_start.max(cds_end);
-        sv_start <= coding_end && sv_end >= coding_start
-    } else {
-        false
-    }
+    else {
+        return false;
+    };
+    let coding_lo = cds_start.min(cds_end);
+    let coding_hi = cds_start.max(cds_end);
+    transcript.exons.iter().any(|e| {
+        let ex_cds_lo = e.start.max(coding_lo); // coding portion of this exon
+        let ex_cds_hi = e.end.min(coding_hi);
+        ex_cds_lo <= ex_cds_hi && sv_start <= ex_cds_hi && sv_end >= ex_cds_lo
+    })
 }
 
 /// Check if the SV interval overlaps any intron (the gap between two consecutive exons).
@@ -505,6 +510,30 @@ mod tests {
         assert!(cons.contains(&Consequence::FivePrimeUtrVariant));
         assert!(!cons.contains(&Consequence::ThreePrimeUtrVariant), "SV does not reach the 3'UTR");
         assert!(!cons.contains(&Consequence::FeatureTruncation), "an inversion does not truncate");
+    }
+
+    // An SV entirely within an INTRON but inside the genomic CDS bounds must NOT be
+    // coding_sequence_variant (VEP uses mapped/exonic CDS coords). tx 5000-6000: intron
+    // 5201-5499 sits between coding exons; an SV 5250-5450 is intron-only.
+    #[test]
+    fn test_intron_only_sv_inside_cds_is_not_coding() {
+        let tx = make_coding_transcript(5000, 6000);
+        let results = predict_sv_consequences(
+            "chr1",
+            5250,
+            5450,
+            VariantType::Deletion,
+            &[Allele::Symbolic("<DEL>".into())],
+            &[&tx],
+            5000,
+            5000,
+        );
+        let cons = &results[0].allele_consequences[0].consequences;
+        assert!(cons.contains(&Consequence::IntronVariant));
+        assert!(
+            !cons.contains(&Consequence::CodingSequenceVariant),
+            "intron-only SV inside CDS bounds is not coding"
+        );
     }
 
     #[test]
