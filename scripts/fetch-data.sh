@@ -28,6 +28,21 @@ fetch "$REF"      GRCh38.primary.fa.gz
 fetch "$CLINVAR"  clinvar.vcf.gz
 fetch "$GIAB_VCF" HG002.vcf.gz
 
+# ── Diverse real-data validation cohort (gated by DIVERSE=1). Broadens concordance vs VEP
+#    across sex (M/F), ancestry (Ashkenazi + Han Chinese + 1000G all superpopulations incl.
+#    African: YRI/LWK/GWD/MSL/ESN/ASW/ACB), structural variants, and PHASED haplotypes.
+#    Pinned: GIAB small-variant benchmarks v4.2.1, HG002 SV Tier1 v0.6, 1000G 3202 high-cov
+#    phased panel (2020-08-05). chr21 slice keeps the phased panel tractable for the harness.
+if [ "${DIVERSE:-1}" = 1 ]; then
+  GIABREL=${GIABREL:-https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab}
+  fetch "$GIABREL/release/AshkenazimTrio/HG003_NA24149_father/latest/GRCh38/HG003_GRCh38_1_22_v4.2.1_benchmark.vcf.gz" HG003.vcf.gz  # AJ father (male)
+  fetch "$GIABREL/release/AshkenazimTrio/HG004_NA24143_mother/latest/GRCh38/HG004_GRCh38_1_22_v4.2.1_benchmark.vcf.gz" HG004.vcf.gz  # AJ mother (female)
+  fetch "$GIABREL/release/ChineseTrio/HG005_NA24631_son/latest/GRCh38/HG005_GRCh38_1_22_v4.2.1_benchmark.vcf.gz" HG005.vcf.gz        # Han Chinese son (male)
+  fetch "$GIABREL/data/AshkenazimTrio/analysis/NIST_SVs_Integration_v0.6/HG002_SVs_Tier1_v0.6.vcf.gz" HG002.SV.Tier1.vcf.gz          # structural variants (DEL/DUP/INV/INS)
+  TGP=${TGP:-https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20201028_3202_phased}
+  fetch "$TGP/CCDG_14151_B01_GRM_WGS_2020-08-05_chr21.filtered.shapeit2-duohmm-phased.vcf.gz" 1000G.3202.phased.chr21.vcf.gz         # phased haplotypes, all superpops (incl. AFR)
+fi
+
 # Primary-assembly FASTA: decompress + faidx for random access; carve chr17 subset.
 [ -f GRCh38.primary.fa ] || { echo "decompressing reference…"; gunzip -k GRCh38.primary.fa.gz; }
 if command -v samtools >/dev/null; then
