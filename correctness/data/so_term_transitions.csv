@@ -3,8 +3,8 @@ date,impact,vep_terms,duckvep_terms,duckvep_specific_regression,n
 2026-06-16,HIGH,start_lost,coding_sequence_variant,false,3
 2026-06-16,LOW,stop_retained_variant,coding_sequence_variant,false,2
 2026-06-16,MODERATE,coding_sequence_variant&inframe_insertion,stop_retained_variant,false,2
-2026-06-16,HIGH,stop_retained_variant,coding_sequence_variant,false,1
-2026-06-16,HIGH,transcript_ablation,3_prime_UTR_variant&5_prime_UTR_variant&coding_sequence_variant,false,1
 2026-06-16,LOW,synonymous_variant,start_lost,false,1
-2026-06-16,HIGH,transcript_ablation,3_prime_UTR_variant&5_prime_UTR_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant&stop_retained_variant,false,1
+2026-06-16,HIGH,transcript_ablation,3_prime_UTR_variant&5_prime_UTR_variant&coding_sequence_variant,false,1
+2026-06-16,HIGH,stop_retained_variant,coding_sequence_variant,false,1
 2026-06-16,HIGH,stop_lost,(none),false,1
+2026-06-16,HIGH,transcript_ablation,3_prime_UTR_variant&5_prime_UTR_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant&stop_retained_variant,false,1

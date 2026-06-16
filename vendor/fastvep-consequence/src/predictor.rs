@@ -954,12 +954,18 @@ impl ConsequencePredictor {
             transcript.strand,
         )?;
         let ctx = self.build_coding_context(transcript, &[edit])?;
+        // VEP's `_get_peptide_alleles` is defined only when the variant maps to the CDS — both
+        // CDS endpoints present. A UTR-straddling variant has one of them = None (its windowed
+        // peptide is the undeterminable, possibly N-padded, projection), so the peptide-rule
+        // terms that lack a genomic fallback (stop_gained) must not fire.
+        let peptide_defined = cds_start.is_some() && cds_end.is_some();
         Some(self.coding_consequence_terms(
             &ctx,
             transcript,
             vep_start_overlap,
             vep_indel_start_altered,
             indel_stop_term,
+            peptide_defined,
         ))
     }
 
@@ -1055,7 +1061,9 @@ impl ConsequencePredictor {
             };
             vep_ctx.start_codon_change_eligible()
         };
-        Some(self.coding_consequence_terms(&ctx, transcript, vep_start_overlap, false, None))
+        // peptide_defined = true: the haplotype path's combined edit is treated as CDS-mapped
+        // (UTR-straddle peptide-defined gating is not yet plumbed here; no harness case needs it).
+        Some(self.coding_consequence_terms(&ctx, transcript, vep_start_overlap, false, None, true))
     }
 
     /// Resolve the coding TERMS for an exonic-coding variant, applying the CDS-boundary
@@ -1235,6 +1243,7 @@ impl ConsequencePredictor {
         vep_start_overlap: bool,
         vep_indel_start_altered: bool,
         indel_stop_term: Option<Consequence>,
+        peptide_defined: bool,
     ) -> Vec<Consequence> {
         // --- shared facts about the peptide change (computed once) ---
         let net = ctx.alt_len as i64 - ctx.ref_len as i64;
@@ -1323,13 +1332,15 @@ impl ConsequencePredictor {
         let p_start_lost =
             (!is_indel && at_start && alt_first != b'M') || vep_start_lost || p_indel_start_lost;
         let p_start_retained = !is_indel && at_start && alt_first == b'M';
-        // The windowed peptide is determinable only when it is complete, non-empty, and has no
-        // `X` (the cds_start_NF N-padding / undeterminable residue). VEP's `_get_peptide_alleles`
-        // returns undef otherwise, so NONE of the peptide-rule terms (stop_gained / stop_lost /
-        // stop_retained) fire — e.g. a 5'UTR-into-CDS insertion on a cds_start_NF transcript whose
-        // windowed alt peptide reads `X…*` must be coding_sequence_variant, not stop_gained.
+        // VEP `stop_gained` (VariationEffect.pm:1224) requires the peptide alleles be DEFINED
+        // (`_get_peptide_alleles` not undef) — NOT that the translated peptide lacks `X`. In our
+        // model "peptide defined" means the variant maps to the CDS (both CDS coordinates present,
+        // `peptide_defined`). A variant straddling a UTR boundary has `cds_start`/`cds_end` = None
+        // -> undef peptide -> coding_sequence_variant, not stop_gained. (Distinct from
+        // `pep_determinable` below — VEP's stop_gained does NOT gate on `X`, and a DEFINED peptide
+        // may legitimately contain `X` alongside a real `*` and still be stop_gained.)
         let pep_determinable = !incomplete && !ctx.alt_pep.is_empty() && !ctx.alt_pep.contains(&b'X');
-        let p_stop_gained = coding_ok && pep_determinable && alt_stop && !ref_stop;
+        let p_stop_gained = coding_ok && peptide_defined && alt_stop && !ref_stop;
         // STOP terms follow VEP's actual order (stop_lost:1258-1264 / stop_retained:1311-1318):
         // when the peptide alleles ARE determinable (defined, non-empty, no `X`, complete
         // terminal codon) the PEPTIDE rule decides — `stop_lost = ref has * && alt has no *`,
@@ -2527,7 +2538,7 @@ mod tests {
             "combined edits give TCA = Ser (proves edits applied together, not independently)"
         );
         assert!(predictor
-            .coding_consequence_terms(&ctx, &tr, false, false, None)
+            .coding_consequence_terms(&ctx, &tr, false, false, None, true)
             .contains(&Consequence::MissenseVariant));
     }
 
@@ -2586,7 +2597,7 @@ mod tests {
         }];
         let ctx = predictor.build_coding_context(&tr, &delins).unwrap();
         assert!(predictor
-            .coding_consequence_terms(&ctx, &tr, false, false, None)
+            .coding_consequence_terms(&ctx, &tr, false, false, None, true)
             .contains(&Consequence::ProteinAlteringVariant));
         // A clean deletion of TCA (ref keeps the GCT prefix) IS inframe_deletion.
         let clean = vec![CdsEdit {
@@ -2596,7 +2607,7 @@ mod tests {
         }];
         let ctx2 = predictor.build_coding_context(&tr, &clean).unwrap();
         assert!(predictor
-            .coding_consequence_terms(&ctx2, &tr, false, false, None)
+            .coding_consequence_terms(&ctx2, &tr, false, false, None, true)
             .contains(&Consequence::InframeDeletion));
     }
 
@@ -2615,7 +2626,7 @@ mod tests {
             alt_bases: b"TAATT".to_vec(),
         }];
         let ctx = predictor.build_coding_context(&tr, &with_stop).unwrap();
-        let terms = predictor.coding_consequence_terms(&ctx, &tr, false, false, None);
+        let terms = predictor.coding_consequence_terms(&ctx, &tr, false, false, None, true);
         assert!(
             terms.contains(&Consequence::StopGained),
             "TAATT inserts a stop codon"
@@ -2628,7 +2639,7 @@ mod tests {
             alt_bases: b"TT".to_vec(),
         }];
         let ctx2 = predictor.build_coding_context(&tr, &no_stop).unwrap();
-        let terms2 = predictor.coding_consequence_terms(&ctx2, &tr, false, false, None);
+        let terms2 = predictor.coding_consequence_terms(&ctx2, &tr, false, false, None, true);
         assert!(
             !terms2.contains(&Consequence::StopGained),
             "TT alone is not a stop"
@@ -2653,12 +2664,12 @@ mod tests {
         }];
         let ctx = predictor.build_coding_context(&tr, &del).unwrap();
         // Reconstruction verdict TRUE -> start_lost co-occurs with frameshift_variant.
-        let lost = predictor.coding_consequence_terms(&ctx, &tr, false, true, None);
+        let lost = predictor.coding_consequence_terms(&ctx, &tr, false, true, None, true);
         assert!(lost.contains(&Consequence::StartLost), "altered start -> start_lost");
         assert!(lost.contains(&Consequence::FrameshiftVariant));
         // Reconstruction verdict FALSE -> no start_lost (the strict at_start path no longer
         // fires for indels), just the frameshift.
-        let kept = predictor.coding_consequence_terms(&ctx, &tr, false, false, None);
+        let kept = predictor.coding_consequence_terms(&ctx, &tr, false, false, None, true);
         assert!(!kept.contains(&Consequence::StartLost), "preserved start -> no start_lost");
         assert!(kept.contains(&Consequence::FrameshiftVariant));
     }
