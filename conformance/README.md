@@ -52,7 +52,7 @@ Until then this framework is a strong *falsifier + bound*, not yet a proof.
 | **formal generator** | covering array over the classes on a synthetic transcript (known exons/introns/UTRs/start+stop/codon-table/NF flags) | `../tools/gen_hard_variants.rs` (splice/exon cells; extend to full tiling) |
 | **statistical corpus** | gold labels from Ensembl `transcript_variation` MySQL for the release; variant distributions from TOPMed/gnomAD/ClinVar + the pinned GIAB diverse cohort | ClinVar in place; Ensembl-MySQL puller TODO |
 | **differential oracle** | VEP `--gff` ⟂ duckvep, exact SO-term-set match per pair | `../correctness/vep_concordance.py` (dumps `annotations.parquet`) |
-| **stratified CI report** | per (consequence class × variant type × length bin): N, discordant, Clopper-Pearson 95% upper bound (rule-of-three at k=0) | **`stratified_conformance.py`** ✅ runnable now |
+| **stratified CI report** | per (consequence class × variant type × length bin): N, discordant, Clopper-Pearson 95% upper bound (rule-of-three at k=0) | **`stratified_conformance.R`** ✅ runnable now (DuckDB SQL + `binom.test`) |
 | **coverage report** | every reachable class hit? (formal completeness) | TODO (needs the class model + labeler) |
 
 ## The statistical statement
@@ -70,7 +70,8 @@ formal witnesses.
 ## Run
 
 ```sh
-# statistical tier (reads the newest correctness dump)
-conformance/stratified_conformance.py
+# statistical tier (reads the newest correctness dump). DuckDB SQL for the data, R for the
+# stats/report (exact Clopper-Pearson via binom.test) — no hand-rolled CIs.
+Rscript conformance/stratified_conformance.R
 # -> conformance/data/stratified_conformance.csv  (class × type × length-bin, N, discordant, 95% bound)
 ```
