@@ -6,7 +6,7 @@
 # is COVERED-and-passing; any divergence is a fuzz finding. (Statistical tier = exact CIs over a
 # real corpus; this formal tier = class coverage. Same diff.) Native duckdb-r v1.5.3 loads the
 # extension; VEP is a subprocess; SO-term sets sort byte-order (radix) to match DuckDB list_sort.
-suppressMessages({ library(optparse); library(jsonlite); library(duckdb); library(DBI) })
+suppressMessages({ library(optparse); library(duckdb); library(DBI) })
 options(rlang_backtrace_on_error = "none")
 
 root <- system2("git", c("rev-parse", "--show-toplevel"), stdout = TRUE)
@@ -15,10 +15,9 @@ op <- add_option(op, "--vcf",   default = file.path(root, "conformance/data/witn
 op <- add_option(op, "--gff",   default = file.path(root, "data/giab/GRCh38.116.controlled.gff3.gz"))
 op <- add_option(op, "--fasta", default = file.path(root, "data/giab/GRCh38.primary.fa"))
 op <- add_option(op, "--ext",   default = Sys.getenv("DUCKVEP_EXT", file.path(root, "build/release/duckvep.duckdb_extension")))
-op <- add_option(op, "--fork",  default = as.character(max(1, parallel::detectCores() - 2)))
+op <- add_option(op, "--fork",  default = as.character(max(1, parallel::detectCores())))  # VEP is the slow step; fork across all cores
 opt <- parse_args(op)
 vep_cmd <- strsplit(Sys.getenv("VEP_CMD", "conda run -n vep vep"), " ")[[1]]
-setlist <- function(x) paste(sort(x, method = "radix"), collapse = "&")   # byte order, matches DuckDB
 
 # class + TARGET transcript per ORIGINAL (chrom,pos,ref,alt) from the witness INFO. The CLASS
 # geometry is defined on TX only; we attach it solely to that transcript's pairs (pi P1-8).
@@ -31,6 +30,7 @@ cls <- data.frame(opos = as.integer(wf[, 2]), oref = wf[, 4], oalt = wf[, 5],
 con <- dbConnect(duckdb(config = list(allow_unsigned_extensions = "true")))
 on.exit(dbDisconnect(con, shutdown = TRUE))
 invisible(dbExecute(con, sprintf("LOAD '%s'", opt$ext)))
+invisible(dbExecute(con, "INSTALL json")); invisible(dbExecute(con, "LOAD json"))  # read_json for VEP/fastVEP output
 invisible(dbGetQuery(con, sprintf("SELECT vep_load_cache('%s','%s')", opt$gff, opt$fasta)))
 
 # duckvep rows (native), keyed by ORIGINAL witness identity (v.pos,v.ref,a.alt) — NOT by
@@ -52,22 +52,19 @@ vrc <- system2(vep_cmd[1], c(vep_cmd[-1], "-i", opt$vcf, "--gff", opt$gff, "--fa
         "--force_overwrite", "--no_stats"), stdout = FALSE, stderr = FALSE)
 if (vrc != 0 || !file.exists(vep_json) || file.info(vep_json)$size == 0)
   stop(sprintf("VEP --gff failed (exit %s) or produced no JSON at %s", vrc, vep_json))
-recs <- stream_in(file(vep_json), verbose = FALSE)
-# Each VEP record echoes the ORIGINAL VCF line in `input` (fields pos=2, ref=4, alt=5). Key VEP
-# rows to that original identity; record-level vmap (orig -> VEP-normalized start/allele_string)
-# bridges fastVEP (which has no `input` field but shares VEP's normalization) back to original.
-V <- list(); vmap <- list()
-for (i in seq_len(nrow(recs))) {
-  r <- recs[i, ]; inf <- strsplit(r$input, "\t")[[1]]
-  opos <- as.integer(inf[2]); oref <- inf[4]; oalt <- inf[5]
-  vmap[[length(vmap)+1]] <- data.frame(opos = opos, oref = oref, oalt = oalt,
-    vkey = paste(r$start, r$allele_string), stringsAsFactors = FALSE)
-  tcs <- r$transcript_consequences[[1]]; if (is.null(tcs) || !length(tcs)) next
-  for (j in seq_len(nrow(tcs))) { tc <- tcs[j, ]
-    V[[length(V)+1]] <- data.frame(opos = opos, oref = oref, oalt = oalt,
-      tx = tc$transcript_id, vc = setlist(tc$consequence_terms[[1]]), stringsAsFactors = FALSE) }
-}
-vep <- do.call(rbind, V); vmap <- unique(do.call(rbind, vmap))
+# Parse VEP's NDJSON with duckdb-r's read_json (not an R per-row loop) and UNNEST in SQL. Each
+# record echoes the ORIGINAL VCF line in `input` (fields pos=2, ref=4, alt=5); key VEP rows to
+# that original identity. vmap (orig -> VEP-normalized start/allele_string) bridges fastVEP (no
+# `input` field, but it shares VEP's normalization) back to original.
+vep <- dbGetQuery(con, sprintf("
+  SELECT CAST(split_part(input,chr(9),2) AS BIGINT) opos, split_part(input,chr(9),4) oref,
+         split_part(input,chr(9),5) oalt, tc.transcript_id tx,
+         list_aggregate(list_sort(tc.consequence_terms),'string_agg','&') vc
+  FROM read_json('%s', format='newline_delimited', sample_size=-1), UNNEST(transcript_consequences) u(tc)", vep_json))
+vmap <- dbGetQuery(con, sprintf("
+  SELECT DISTINCT CAST(split_part(input,chr(9),2) AS BIGINT) opos, split_part(input,chr(9),4) oref,
+         split_part(input,chr(9),5) oalt, start||' '||allele_string vkey
+  FROM read_json('%s', format='newline_delimited', sample_size=-1)", vep_json))
 
 # fastVEP (the vendored engine) on the same witnesses -> term-fair "duckvep-specific" flag.
 # fastvep_ok gates ALL "shared with fastVEP" claims: if fastVEP is absent or its JSON fails to
@@ -76,17 +73,17 @@ vep <- do.call(rbind, V); vmap <- unique(do.call(rbind, vmap))
 FASTVEP <- Sys.getenv("FASTVEP", file.path(root, "../DuckfastVEP/target/release/fastvep"))
 fv <- NULL; fastvep_ok <- FALSE
 if (file.exists(FASTVEP)) {
-  raw <- system2(FASTVEP, c("annotate", "-i", opt$vcf, "--gff3", opt$gff, "--fasta", opt$fasta,
-                            "--output-format", "json"), stdout = TRUE, stderr = FALSE)
-  arr <- tryCatch(fromJSON(paste(raw, collapse = "\n"), simplifyVector = FALSE),
-                  error = function(e) { message("WARN: fastVEP JSON parse failed: ", conditionMessage(e)); NULL })
-  if (!is.null(arr)) {
-    F <- list()
-    for (r in arr) for (tc in r$transcript_consequences)   # key by fastVEP's VEP-style normalized (start, allele_string)
-      F[[length(F)+1]] <- data.frame(vkey = paste(r$start, r$allele_string), tx = tc$transcript_id,
-                                     fc = setlist(unlist(tc$consequence_terms)), stringsAsFactors = FALSE)
-    if (length(F)) {
-      fvn <- do.call(rbind, F)                              # bridge fastVEP's normalized key -> original identity via vmap
+  fv_json <- tempfile(fileext = ".json"); unlink(fv_json)
+  frc <- system2(FASTVEP, c("annotate", "-i", opt$vcf, "--gff3", opt$gff, "--fasta", opt$fasta,
+                            "--output-format", "json"), stdout = fv_json, stderr = FALSE)
+  if (frc == 0 && file.exists(fv_json) && file.info(fv_json)$size > 0) {
+    fvn <- tryCatch(dbGetQuery(con, sprintf("       -- read + UNNEST fastVEP JSON in DuckDB
+      SELECT f.start||' '||f.allele_string vkey, tc.transcript_id tx,   -- bridge key = VEP-style 'start allele_string'
+             list_aggregate(list_sort(tc.consequence_terms),'string_agg','&') fc
+      FROM read_json('%s', sample_size=-1) f, UNNEST(f.transcript_consequences) u(tc)", fv_json)),
+      error = function(e) { message("WARN: fastVEP JSON parse failed: ", conditionMessage(e)); NULL })
+    if (!is.null(fvn) && nrow(fvn)) {
+      # join fastVEP's normalized vkey to vmap to recover the original variant identity
       fv <- merge(fvn, vmap, by = "vkey")[, c("opos","oref","oalt","tx","fc")]
       fastvep_ok <- TRUE
     }

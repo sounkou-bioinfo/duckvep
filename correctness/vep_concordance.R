@@ -6,11 +6,11 @@
 # three as a dated Parquet dump and the recorded concordance CSVs. Data plane = DuckDB SQL via
 # the version-matched `.tools/duckdb` CLI (the unstable duckvep extension loads only in its own
 # v1.5.3 build — the dev duckdb R pkg reports a git-hash version and is rejected). VEP/fastVEP
-# are external processes (system2); their JSON is parsed with jsonlite. Stats/reports are R.
+# are external processes (system2); their JSON is parsed by DuckDB read_json. Stats/reports are R.
 #
 # Usage: correctness/vep_concordance.R <vcf> <gff3(.gz)> <fasta> [-n N]
 # Dumps: data/vep_dumps/<YYYY-MM-DD>/annotations.parquet  (+ the correctness/data/*.csv reports)
-suppressMessages({ library(optparse); library(jsonlite) })
+suppressMessages(library(optparse))
 
 op <- OptionParser(usage = "%prog <vcf> <gff3> <fasta> [options]")
 op <- add_option(op, c("-n", "--n"), type = "integer", default = 100L, help = "sample size [%default]")
@@ -76,7 +76,8 @@ build_controlled_gff <- function() {
 MODEL_GFF <- if (oracle == "gff") build_controlled_gff() else gff3
 
 ## 3. Ensembl VEP (offline, controlled --gff, forked) -> JSON -> canonical rows.
-fork <- if (nzchar(pa$options$fork)) pa$options$fork else as.character(max(1, parallel::detectCores() - 4))
+## VEP is now the only slow step (JSON parsing moved to DuckDB), so fork across ALL cores by default.
+fork <- if (nzchar(pa$options$fork)) pa$options$fork else as.character(max(1, parallel::detectCores()))
 gene_model <- if (oracle == "gff") c("--gff", MODEL_GFF, "--fasta", fasta) else
   c("--offline", "--cache", "--dir_cache", file.path(root, "data/vep_cache"),
     "--cache_version", rel, "--species", "homo_sapiens", "--assembly", "GRCh38", "--fasta", fasta)
@@ -85,34 +86,31 @@ vrc <- system2(vep_cmd[1], c(vep_cmd[-1], "-i", SAMPLE_VCF, gene_model, "--dista
         pa$options$buffer, "--force_overwrite", "--no_stats"), stdout = FALSE, stderr = FALSE)
 if (vrc != 0 || !file.exists("/tmp/vep_off.json") || file.info("/tmp/vep_off.json")$size == 0)
   stop(sprintf("VEP failed (exit %s) or produced empty JSON — refusing to write a partial dump", vrc))
-# Stream the JSON-lines; one row per (variant, transcript). Key on the ORIGINAL input variant
-# (VEP echoes the VCF line in `input`: pos=2, ref=4, alt=5) — NOT VEP's normalized output —
-# so a deletion/insertion that VEP and duckvep left/right-align differently still compares as
-# the same pair (pi P0-5). vmap (orig -> VEP normalized start/allele_string) bridges fastVEP.
-vmap <<- list()
-vep_rows <- function() {
-  out <- list(); recs <- stream_in(file("/tmp/vep_off.json"), verbose = FALSE)
-  for (i in seq_len(nrow(recs))) {
-    rec <- recs[i, ]; inf <- strsplit(rec$input, "\t")[[1]]
-    opos <- as.integer(inf[2]); oref <- inf[4]; oalt <- inf[5]
-    vmap[[length(vmap) + 1]] <<- data.frame(opos = opos, oref = oref, oalt = oalt,
-      vkey = paste(rec$start, rec$allele_string), stringsAsFactors = FALSE)
-    tcs <- rec$transcript_consequences[[1]]; if (is.null(tcs) || !length(tcs)) next
-    nref <- strsplit(rec$allele_string, "/")[[1]][1]
-    for (j in seq_len(nrow(tcs))) {
-      tc <- tcs[j, ]
-      out[[length(out) + 1]] <- data.frame(source = "vep", date = DATE, opos = opos, oref = oref, oalt = oalt,
-        pos = rec$start, ref = nref, alt = if (!is.null(tc$variant_allele)) tc$variant_allele else "",
-        transcript_id = tc$transcript_id, gene_symbol = if (!is.null(tc$gene_symbol)) tc$gene_symbol else "",
-        consequence = paste(sort(tc$consequence_terms[[1]], method = "radix"), collapse = "&"),
-        impact = if (!is.null(tc$impact)) tc$impact else "", stringsAsFactors = FALSE)
-    }
-  }
-  do.call(rbind, out)
-}
-vr <- vep_rows(); vmap <- unique(do.call(rbind, vmap))
-msg(sprintf("VEP %s (%s GRCh38): %d (variant,transcript) rows", oracle, rel, nrow(vr)))
-stream_out(vr, file("/tmp/vep_raw.json"), verbose = FALSE)
+# Parse VEP's NDJSON with DuckDB's read_json (C++-backed, seconds vs ~10 min for an R per-row
+# rbind loop) and UNNEST transcript_consequences in SQL — one row per (variant, transcript).
+# Key on the ORIGINAL input variant (VEP echoes the VCF line in `input`: pos=2, ref=4, alt=5),
+# NOT VEP's normalized output, so an indel that VEP and duckvep align differently still compares
+# as the same pair (pi P0-5). The companion vmap (original -> VEP's normalized start/allele_string)
+# is written once so fastVEP, which has no `input` field, can be bridged back to the original key.
+sql_run(sprintf("COPY (
+  SELECT 'vep' AS source, '%s' AS date,
+    CAST(split_part(input, chr(9), 2) AS BIGINT) AS opos,
+    split_part(input, chr(9), 4) AS oref, split_part(input, chr(9), 5) AS oalt,
+    start AS pos, split_part(allele_string, '/', 1) AS ref, COALESCE(tc.variant_allele, '') AS alt,
+    tc.transcript_id AS transcript_id, COALESCE(tc.gene_symbol, '') AS gene_symbol,
+    list_aggregate(list_sort(tc.consequence_terms), 'string_agg', '&') AS consequence,
+    COALESCE(tc.impact, '') AS impact
+  FROM read_json('/tmp/vep_off.json', format='newline_delimited', sample_size=-1),
+       UNNEST(transcript_consequences) AS u(tc)
+) TO '/tmp/vep_raw.json' (FORMAT json);
+COPY (
+  SELECT DISTINCT CAST(split_part(input, chr(9), 2) AS BIGINT) AS opos,
+    split_part(input, chr(9), 4) AS oref, split_part(input, chr(9), 5) AS oalt,
+    start || ' ' || allele_string AS vkey
+  FROM read_json('/tmp/vep_off.json', format='newline_delimited', sample_size=-1)
+) TO '/tmp/vmap.csv' (HEADER);", DATE))
+nvr <- sql_csv("SELECT count(*) AS n FROM read_json('/tmp/vep_raw.json')")$n
+msg(sprintf("VEP %s (%s GRCh38): %d (variant,transcript) rows", oracle, rel, nvr))
 
 ## 4. duckvep (CLI, one session): annotate the sample. Carry the ORIGINAL (v.pos,v.ref,a.alt)
 ## as the comparison key (opos/oref/oalt) AND the engine-normalized alleles (pos/ref/alt, for
@@ -132,30 +130,27 @@ COPY (
   FROM dv
 ) TO '/tmp/dv.json' (FORMAT json);", EXT, MODEL_GFF, fasta, SAMPLE_VCF, DATE))
 
-## 5. fastVEP (the underlying engine) on the same sample -> JSON -> rows.
+## 5. fastVEP (the underlying engine) on the same sample. Write its JSON to a file and parse it
+## with DuckDB read_json (same fast path). fastVEP has no `input` field but mirrors VEP's
+## normalization, so bridge its (start, allele_string) back to the original identity via vmap.csv.
 FASTVEP <- Sys.getenv("FASTVEP", file.path(root, "../DuckfastVEP/target/release/fastvep"))
 fv_present <- file.exists(FASTVEP)
 if (fv_present) {
-  raw <- system2(FASTVEP, c("annotate", "-i", SAMPLE_VCF, "--gff3", MODEL_GFF, "--fasta", fasta,
-                            "--output-format", "json"), stdout = TRUE, stderr = FALSE)
-  arr <- tryCatch(fromJSON(paste(raw, collapse = "\n"), simplifyVector = FALSE),
-                  error = function(e) stop("fastVEP JSON parse failed (not silently skipped): ", conditionMessage(e)))
-  # fastVEP has no `input` field but mirrors VEP's normalization; bridge its (start,allele_string)
-  # back to the original identity via VEP's vmap so all three engines share the original key.
-  vlk <- setNames(seq_len(nrow(vmap)), vmap$vkey)
-  out <- list()
-  for (rec in arr) for (tc in rec$transcript_consequences) {
-    parts <- strsplit(rec$allele_string, "/")[[1]]
-    mi <- vlk[[paste(rec$start, rec$allele_string)]]; if (is.null(mi)) next   # no VEP anchor -> can't key to original
-    out[[length(out) + 1]] <- data.frame(source = "fastvep", date = DATE,
-      opos = vmap$opos[mi], oref = vmap$oref[mi], oalt = vmap$oalt[mi],
-      pos = rec$start, ref = parts[1], alt = parts[length(parts)], transcript_id = tc$transcript_id,
-      gene_symbol = if (!is.null(tc$gene_symbol)) tc$gene_symbol else "",
-      consequence = paste(sort(unlist(tc$consequence_terms), method = "radix"), collapse = "&"),
-      impact = if (!is.null(tc$impact)) tc$impact else "", stringsAsFactors = FALSE)
-  }
-  fv <- if (length(out)) do.call(rbind, out) else NULL
-  if (!is.null(fv)) { stream_out(fv, file("/tmp/fv.json"), verbose = FALSE); msg(sprintf("fastVEP: %d rows", nrow(fv))) }
+  fvrc <- system2(FASTVEP, c("annotate", "-i", SAMPLE_VCF, "--gff3", MODEL_GFF, "--fasta", fasta,
+                             "--output-format", "json"), stdout = "/tmp/fv_raw.json", stderr = FALSE)
+  if (fvrc != 0 || !file.exists("/tmp/fv_raw.json") || file.info("/tmp/fv_raw.json")$size == 0)
+    stop(sprintf("fastVEP failed (exit %s) or produced empty JSON", fvrc))
+  sql_run(sprintf("COPY (
+    SELECT 'fastvep' AS source, '%s' AS date, m.opos, m.oref, m.oalt,
+      f.start AS pos, split_part(f.allele_string, '/', 1) AS ref, split_part(f.allele_string, '/', -1) AS alt,
+      tc.transcript_id AS transcript_id, COALESCE(tc.gene_symbol, '') AS gene_symbol,
+      list_aggregate(list_sort(tc.consequence_terms), 'string_agg', '&') AS consequence,
+      COALESCE(tc.impact, '') AS impact
+    FROM read_json('/tmp/fv_raw.json', sample_size=-1) f, UNNEST(f.transcript_consequences) AS u(tc)
+    JOIN read_csv('/tmp/vmap.csv', header=true) m ON (f.start || ' ' || f.allele_string) = m.vkey
+  ) TO '/tmp/fv.json' (FORMAT json);", DATE))
+  nfv <- sql_csv("SELECT count(*) AS n FROM read_json('/tmp/fv.json')")$n
+  msg(sprintf("fastVEP: %d rows", nfv))
 }
 
 ## 6. Dated Parquet dump + the recorded concordance CSVs (DuckDB SQL, unchanged from the port).
