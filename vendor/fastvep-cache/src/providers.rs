@@ -109,15 +109,44 @@ impl IndexedTranscriptProvider {
     pub fn transcript_count(&self) -> usize {
         self.by_chrom.values().map(|v| v.len()).sum()
     }
+
+    /// Resolve a query chromosome to its stored `(transcripts, suffix_max_end)`
+    /// buckets, tolerating a `chr` prefix mismatch between the VCF and the gene
+    /// model — VEP normalizes `chr1`↔`1` and `chrM`↔`MT`. Without this, a
+    /// `chr`-prefixed VCF against an Ensembl cache (`1`,`2`,…,`MT`) annotates
+    /// **nothing**. The exact match is tried first and is allocation-free; the
+    /// fallbacks only run on a miss.
+    fn buckets(&self, chrom: &str) -> Option<(&[Transcript], &[u64])> {
+        let get = |k: &str| -> Option<(&[Transcript], &[u64])> {
+            Some((
+                self.by_chrom.get(k)?.as_slice(),
+                self.suffix_max_end.get(k)?.as_slice(),
+            ))
+        };
+        if let Some(x) = get(chrom) {
+            return Some(x); // fast path: exact match, no allocation
+        }
+        match chrom.strip_prefix("chr") {
+            // `chr1` → `1`, `chrM`/`chrMT` → `MT` (both alloc-free `&str` lookups)
+            Some(core) => get(core).or_else(|| match core {
+                "M" | "MT" => get("MT"),
+                _ => None,
+            }),
+            // `1` → `chr1`, `MT`/`M` → `chrM` (allocates only on this miss path)
+            None => get(&format!("chr{chrom}")).or_else(|| match chrom {
+                "MT" | "M" => get("chrM").or_else(|| get("MT")),
+                _ => None,
+            }),
+        }
+    }
 }
 
 impl TranscriptProvider for IndexedTranscriptProvider {
     fn get_transcripts(&self, chrom: &str, start: u64, end: u64) -> Result<Vec<&Transcript>> {
-        let trs = match self.by_chrom.get(chrom) {
-            Some(trs) => trs,
+        let (trs, sme) = match self.buckets(chrom) {
+            Some(x) => x,
             None => return Ok(Vec::new()),
         };
-        let sme = &self.suffix_max_end[chrom];
 
         // Binary search: find the first transcript whose start > end (query end).
         // All transcripts that could overlap must have start <= end, so they're in [0..upper).
@@ -140,8 +169,8 @@ impl TranscriptProvider for IndexedTranscriptProvider {
     }
 
     fn get_transcripts_by_chrom(&self, chrom: &str) -> Result<Vec<&Transcript>> {
-        match self.by_chrom.get(chrom) {
-            Some(trs) => Ok(trs.iter().collect()),
+        match self.buckets(chrom) {
+            Some((trs, _)) => Ok(trs.iter().collect()),
             None => Ok(Vec::new()),
         }
     }
@@ -413,6 +442,37 @@ mod tests {
 
         // Transcript count
         assert_eq!(provider.transcript_count(), 3);
+    }
+
+    #[test]
+    fn test_chr_prefix_and_mt_normalization() {
+        // Regression: a `chr`-prefixed VCF against an Ensembl-style gene model
+        // (`1`,`2`,…,`MT`) used to annotate NOTHING because lookups were exact.
+        // VEP normalizes `chr1`↔`1` and `chrM`↔`MT`; so must we.
+        let provider = IndexedTranscriptProvider::new(vec![
+            make_transcript("1", 1000, 2000),  // Ensembl-style (no prefix)
+            make_transcript("MT", 100, 500),   // mitochondrial, Ensembl spelling
+        ]);
+
+        // chr-prefixed query must find the non-prefixed model
+        assert_eq!(provider.get_transcripts("chr1", 1500, 1600).unwrap().len(), 1);
+        assert_eq!(provider.get_transcripts_by_chrom("chr1").unwrap().len(), 1);
+        // exact (no-prefix) query still works
+        assert_eq!(provider.get_transcripts("1", 1500, 1600).unwrap().len(), 1);
+        // mitochondrial: chrM / M both resolve to the stored `MT`
+        assert_eq!(provider.get_transcripts("chrM", 200, 300).unwrap().len(), 1);
+        assert_eq!(provider.get_transcripts("M", 200, 300).unwrap().len(), 1);
+        assert_eq!(provider.get_transcripts("MT", 200, 300).unwrap().len(), 1);
+        // a genuinely absent contig still yields nothing
+        assert_eq!(provider.get_transcripts("chr99", 1, 100).unwrap().len(), 0);
+
+        // The reverse direction: model stored WITH `chr`, query without it.
+        let pfx = IndexedTranscriptProvider::new(vec![
+            make_transcript("chr7", 1000, 2000),
+            make_transcript("chrM", 100, 500),
+        ]);
+        assert_eq!(pfx.get_transcripts("7", 1500, 1600).unwrap().len(), 1);
+        assert_eq!(pfx.get_transcripts("MT", 200, 300).unwrap().len(), 1);
     }
 
     #[test]
