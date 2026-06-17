@@ -546,19 +546,13 @@ impl ConsequencePredictor {
         // the donor/acceptor and mis-classifies — match VEP by trimming it.
         let (var_start, var_end) =
             normalized_interval(position.start, position.end, ref_allele, alt_allele);
-        // Splice/intron predicates use the genomic interval Ensembl's
-        // `_get_differing_regions` produces: a delins whose ALT is longer than its REF
-        // spans the alt length (the inserted bases extend the affected region toward a
-        // splice site), so `r_end = var_start + alt_len - 1`. SNVs/MNVs/deletions and
-        // pure insertions are unchanged (alt not longer, or the anchor-trimmed form).
-        let splice_end = {
-            let (mref, malt) = minimal_alleles(ref_allele, alt_allele);
-            if !mref.is_empty() && malt.len() > mref.len() {
-                var_start + malt.len() as u64 - 1
-            } else {
-                var_end
-            }
-        };
+        // Splice/intron predicates overlap the variant's REFERENCE genomic interval
+        // [var_start, var_end] (the changed reference bases). Inserted bases have no reference
+        // coordinates, so the ALT length does NOT extend the splice interval — an earlier
+        // alt-length extension (`var_start + alt_len - 1`) over-called splice_acceptor/intron on
+        // delins whose alt is long, e.g. 6002600 CTT>116bp got a 116-base splice interval reaching
+        // the intron, while VEP keeps the 3-base reference span. fastVEP (the base engine) agrees.
+        let splice_end = var_end;
 
         // Ensembl `_get_differing_regions`: a same-length MNV is split at its internal
         // MATCHING bases, so splice/intron predicates see only the actually-changed
