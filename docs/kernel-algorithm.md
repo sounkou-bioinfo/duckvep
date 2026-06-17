@@ -627,3 +627,26 @@ and correct but not the textbook range join.
 * Realize it in DuckDB as a **parallel range join + per-pair scalar** (no
   phasing) and a **tiled parallel table function** (phasing), retiring the serial
   `read_vcf` → per-variant-LIST scalar that caps us at one core.
+
+### Region parallelization (answering "these were all single-threaded")
+
+The prototypes above are single-threaded. Parallelizing the sweep+classify over
+chromosomes (`examples/sweep_parallel.rs`, work-stealing tiles):
+
+| threads | wall | speedup | efficiency |
+|---|---|---|---|
+| 1 | 0.504 s | 1.0× | — |
+| 2 | 0.270 s | 1.87× | 0.93 |
+| 4 | 0.141 s | 3.6× | 0.89 |
+| 8 | 0.085 s | 5.9× | 0.74 |
+| 16 | 0.065 s | 7.7× | 0.48 |
+
+The sweep scales **far better than the random-access index** (0.74@8 / 0.48@16 vs
+the cgranges index's 0.33@16) — sequential, cache-local streams with an L1/L2-
+resident active set don't hit the §8 memory-bandwidth wall. The 16-thread falloff
+is work granularity (22 chromosomes, chr1 the long pole); finer genome tiles fix
+it. But it's **moot**: 65 ms at 16 cores is ~50× below the 3 s I/O floor. The
+kernel is no longer the bottleneck under any thread count — **the VCF read is**, so
+the remaining parallelism budget belongs on parallel BGZF reading, not the kernel.
+Region tiles are also the haplotype-safe parallel unit, so this is the same
+decomposition correctness needs.
