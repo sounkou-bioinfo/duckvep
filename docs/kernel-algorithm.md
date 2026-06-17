@@ -396,7 +396,27 @@ interval columns (chrom_id/start/end as SoA), maintaining an active set and
 
 Same 46.97 M pairs (0.0004% off — SNV-point approximation; max active set 525,
 matching the measured stabbing number). **~660× faster in wall, ~7,300× fewer
-core-seconds.** So the "join is 70% of wall" finding does **not** mean candidate
+core-seconds.**
+
+**Prototype C — sweep + full structural classification (`examples/sweep_classify.rs`).**
+Adds a branch-light SoA region classifier (exon/intron/CDS/UTR/splice/up/down) over
+compact integer columns + an offset/count exon pool (`vep_exons()`), for **every**
+pair, no allocations/strings:
+
+| step | wall | cores |
+|---|---|---|
+| DuckDB full join + scalar kernel | 45.0 s | 12 |
+| **sweep + region masks, all 47 M pairs** | **0.673 s** | **1** |
+
+**~67× faster wall, ~800× fewer core-seconds.** And the mask histogram is the
+punchline: of 47 M pairs, **79% intron, only 0.5% (256 k) CDS**. So the heavy
+sequence/codon kernel applies to **256 k pairs, not 47 M** (~180× less) — the
+libsais/bucketed-kernel insight, measured. The current `annotate_over` runs the
+full object path on all 47 M; the sweep engine runs cheap masks on 47 M and the
+codon kernel only on the CDS bucket. Projected: I/O-bound VCF read (~3–7 s) + ~1 s
+kernel, vs today's 45 s. (Caveat: masks are coarse — splice = within-8bp, UTR not
+5′/3′-split — semantics get faithful in the real port; the *cost structure* is what
+this proves.) So the "join is 70% of wall" finding does **not** mean candidate
 generation is expensive — it means DuckDB's general-purpose hash-join is
 catastrophically wasteful for an interval sweep. Overlap discovery is intrinsically
 ~50 ms. With the sweep, candidate generation **evaporates**, the engine becomes
