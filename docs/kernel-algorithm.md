@@ -296,7 +296,92 @@ runs into the bandwidth wall of the random-access (cgranges) index** → **the
 sweep-line is what makes the parallel cores actually pay off**. Parallelism and
 the streaming inversion are complements, not alternatives.
 
-## 8. Summary
+## 8. One join, four granularities: SV, haplotype, supplementary annotation
+
+Consequence prediction is not a special problem — it is one instance of "match
+variants against a reference set." The same machinery covers structural variants,
+supplementary annotation, and (with one twist) haplotypes:
+
+| task | what is matched | join shape | DuckDB primitive | fastVEP hand-rolls it as |
+|---|---|---|---|---|
+| **SA point** (gnomAD AF, ClinVar-by-variant) | exact `(chrom,pos,ref,alt)` | equi-join | hash join + Parquet zone-maps + bloom | `var32` packed key + bloom + block min/max |
+| **consequence** (SNV/indel) | point ∈ transcript interval | range join | IEJoin / piecewise merge | cgranges interval index |
+| **SV consequence** | SV span `[pos,END]` ∩ transcript | interval ∩ interval | range join (IEJoin) | interval index + END handling |
+| **SA region** (panel / BED / regulatory) | interval ∩ interval | range join | IEJoin | `.osi`/`.oga` interval index |
+| **haplotype** | variants grouped per `sample × hap × transcript` | partitioned aggregate | `GROUP BY` / window | per-transcript buffered reduce |
+
+Only **haplotype is stateful**; the rest are stateless joins. The consequence
+kernel is the SA interval-join with a *heavy* per-pair function (predict a
+consequence) where SA has a *light* one (pick up an AF column).
+
+### SVs
+
+SVs **span** `[pos, END]` (`INFO/END` for symbolic `<DEL>`/`<DUP>`/`<CNV>`/
+`<INV>`; the mate for breakends) and carry their own vocabulary
+(`transcript_ablation`, `feature_truncation`, `copy_number_*`). The engine
+already dispatches them — `annotate_over` partitions symbolic vs sequence alleles
+and routes symbolic ones to `predict_sv_consequences` via `classify_sv_type`.
+What the **join** needs:
+
+* an interval ∩ interval predicate: `t.start ≤ v.END + d AND t.end ≥ v.pos − d`;
+* `read_vcf` to surface `INFO/END`, and a 6-arg END-aware
+  `vep_consequence_pair(chrom, pos, END, ref, alt, tid)` (the per-*variant*
+  scalar already has the 5-arg END form; the per-pair one currently passes
+  `end = pos`, so it does not span SVs yet).
+
+Hazard: **fan-out** — a chromosome-scale `<DEL>` overlaps thousands of
+transcripts (one variant, huge output). Inherent, not an algorithm flaw; the
+sweep keeps the SV "active" across the run of transcripts it spans.
+
+### Haplotypes — the one that is *not* a per-pair join
+
+Phased variants on the same transcript+haplotype **interact**: two SNVs in one
+codon → a single combined amino-acid change; a frameshift re-frames everything
+downstream; a stop-gain triggers NMD. So `consequence(v, t)` is **not**
+independent of `v`'s phased neighbours, and a per-`(variant, transcript)` join is
+wrong by construction. The correct shape is a **partitioned aggregate**:
+
+```sql
+SELECT sample, haplotype, t.transcript_id,
+       vep_haplotype_consequence(v.chrom, t.transcript_id,
+           list(struct_pack(v.pos, v.ref, v.alt) ORDER BY v.pos))
+FROM phased_variants v
+JOIN transcripts t ON t.chrom = v.chrom AND v.pos BETWEEN t.start - d AND t.end_pos + d
+GROUP BY sample, haplotype, t.transcript_id;
+```
+
+duckvep already ships the kernel (`vep_haplotype_consequence`, the
+haplosaurus/multi-edit path, experimental). The key realization: **DuckDB's
+hash-partitioned `GROUP BY` *is* the genome-tiling decomposition of §4** — it
+places each `sample × hap × transcript` group on one thread automatically, so
+phasing stays contained and the work still parallelizes. Haplotypes do not block
+parallelism; they require the **aggregate** shape, with the range join as its
+*input* rather than the final step. (This is also why sharding by variant is
+unsafe — a group's variants must travel together.)
+
+### How fastVEP does supplementary annotation — the same problem, hand-rolled
+
+`fastvep-sa` (~7.7k LOC: `var32`/`kmer16`/`bloom`/`block`/`chunk`/`index`,
+`.osa`/`.osi`/`.oga`) is a hand-rolled query engine for exactly these joins:
+
+* **Exact annotation** — `var32` packs `(chrom,pos,ref,alt)` into a key; a
+  **bloom filter** skips blocks that cannot contain it; **binning + block
+  min/max** skip ranges. That is a **hash equi-join + zone-maps + bloom
+  pre-filter**, built by hand.
+* **Region annotation** — an **interval index** (cgranges tree) = a **range
+  join**, built by hand.
+
+DuckDB provides both natively: Parquet row-group min/max **are** zone maps, hash
+joins build **bloom filters** automatically, range joins **are** the IEJoin. So
+`var32 + bloom + block ≡ variants JOIN gnomad USING (chrom,pos,ref,alt)`, and the
+SA interval index ≡ our consequence range join. The project thesis (plan §C, and
+the annotation-SQL-API design) is precisely to **retire the hand-rolled SA engine
+and express every annotation — point, interval, consequence — as a Parquet join
+the optimizer plans and parallelizes.** The consequence kernel is the first and
+heaviest of these; getting its join shape right (range join for SNV/SV, partitioned
+aggregate for haplotypes) is what makes the rest fall out as ordinary SQL.
+
+## 9. Summary
 
 * Baseline is **`B = 3 s` (sequential I/O)**, not fastVEP. Optimal kernel is
   **`Θ(P·c)`**; today we sit at ~50·B because of `N·log T` random, cache-missing
