@@ -10,16 +10,18 @@ read with [noodles](https://github.com/zaeleus/noodles), and treats
 annotation databases as plain Parquet/DuckDB tables joined by the
 optimizer.
 
-- **Conformance, measured — not claimed.** Concordance with Ensembl VEP
-  116 is run on a *controlled* `--gff` oracle (all engines read the same
-  gene model, so only the engine differs), **stratified by consequence
-  term × variant type × length bin with exact 95% CIs**, on a diverse
-  real corpus (ClinVar + GIAB AJ/Han/male/female + 1000G). Every
-  divergence is *shared* with the vendored fastVEP — **zero are
-  duckvep-specific**. [`conformance/`](conformance/) adds the formal
-  tier (equivalence-class covering witnesses) that becomes a *proof* as
-  the engine is ported 1:1 from VEP — formal + statistical + real-world
-  meet at one differential fuzzer.
+- **Conformance, measured — not claimed.** On a *controlled* `--gff`
+  oracle (all engines read the same gene model), **stratified by
+  consequence term × variant type × length bin with exact 95% CIs** over
+  a diverse real corpus (ClinVar + GIAB AJ/Han/male/female + 1000G),
+  every divergence is *shared* with the vendored fastVEP — **0
+  duckvep-specific *on that distribution***. And the honest part:
+  [`conformance/`](conformance/)'s **formal tier** — systematic
+  equivalence-class witnesses generated via duckhts — *does* surface
+  duckvep-specific divergences (indels at splice/start/stop boundaries
+  that random corpora under-sample), pinning the engine's real frontier.
+  Formal + statistical + real-world meet at one differential fuzzer; it
+  becomes a *proof* as the engine is ported 1:1 from VEP.
 - **Haplotype-aware.** `vep_haplotype_consequence` applies *phased*
   variants together (bcftools-`csq` / haplosaurus), so a silent SNV
   flips to missense when phased with its neighbour.
