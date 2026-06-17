@@ -360,14 +360,33 @@ retracted. The two sources had wildly different scan granularity:
 | `vep_transcripts()` table fn | 1 stream | 2.2 | 185 s |
 
 Morsel-driven parallelism is bounded by the **build-side scan's row-group count**.
-Re-encoding the *same* parquet at DuckDB's native 122,880-row group size collapses
-it to 5 cores — matching the `.duckdb` table exactly. So the table was never worse
-*as storage*; it just had 6 groups (DuckDB's native row-group size is a fixed
-122,880, not tunable per table → only ~6 groups for 645k rows). My parquet had 79
-groups only because `BATCH_ROWS = 8192` (chosen for the streaming writer's memory
-bound) doubles as the Parquet row-group size — an *accidental* good tune.
+Re-encoding the *same* parquet at 122,880 rows/group collapses it to 5 cores —
+matching the `.duckdb` table. The table was never worse *as storage*; it just had
+6 groups by default. **And `.duckdb`'s row-group size IS tunable** —
+`ATTACH 'f.duckdb' (ROW_GROUP_SIZE 8192)` yields 79 groups and the join then runs
+in **45 s at 12 cores, matching the parquet** (measured). So the earlier
+"native row groups are fixed at 122,880" was wrong, and `ATTACH` is a fully viable
+hot-path source when created at a fine row-group size. My parquet had 79 groups
+only because `BATCH_ROWS = 8192` (chosen for the streaming writer's memory bound)
+doubles as the Parquet row-group size — an *accidental* good tune.
 `vep_transcripts()`'s 2 cores is the same effect maxed out: one non-partitioned
 stream = one morsel.
+
+**Where the time actually goes (benchmark ladder, threads=16, no FASTA):**
+
+| step | wall | cores |
+|---|---|---|
+| A. join only (candidate pairs, no scalar) | 31.2 s | 11.4 |
+| C. join + per-pair consequence kernel | 45.0 s | 12 |
+
+The **DuckDB range join is ~70% of the wall (31 s); the Rust kernel adds ~30%
+(~14 s)** in this config. So the object-heavy per-pair kernel (string-id HashMap
+lookup, `annotate_over` allocations) is real but **not the dominant wall-clock
+cost** — the join is. The highest-leverage single change is therefore a compact
+**`tx_idx` integer join key** (shrinks the 47 M-row join payload *and* removes the
+per-pair string lookup), ahead of a full kernel rewrite. (Caveat: this is the
+no-FASTA kernel; with sequences the coding path costs more, so the kernel share
+grows — a FASTA ladder is still owed.)
 
 Corrected lessons:
 * **Row-group size is a first-class tuning knob.** ~8192 rows/group (→ tens of

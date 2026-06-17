@@ -11,13 +11,16 @@
 -- staged table / any query), hence `vep_annotate` over a relation, not
 -- `annotate_vcf` over a path. Requires a prior vep_load_cache(gff3, fasta).
 
--- Normalize a VCF into the contract (one row per ALT, real end_pos incl. INFO/END).
+-- Normalize a VCF into the contract (one row per ALT). Use read_vcf's OWN
+-- end_pos — it already resolves INFO/END → SVLEN → precise interval, so symbolic
+-- SVs (<DEL>/<CNV>) span correctly. (Recomputing pos+len(ref)-1 here was a bug:
+-- it collapses every symbolic SV to a 1 bp anchor.)
 CREATE OR REPLACE MACRO vep_variants_from_vcf(path) AS TABLE
-  SELECT v.chrom::VARCHAR                              AS chrom,
-         v.pos::UBIGINT                                AS pos,
-         (v.pos + length(v.ref) - 1)::UBIGINT          AS end_pos,
-         v.ref::VARCHAR                                AS ref,
-         a.alt::VARCHAR                                AS alt
+  SELECT v.chrom::VARCHAR   AS chrom,
+         v.pos::UBIGINT     AS pos,
+         v.end_pos::UBIGINT AS end_pos,
+         v.ref::VARCHAR     AS ref,
+         a.alt::VARCHAR     AS alt
   FROM read_vcf(path) v, UNNEST(v.alt) AS a(alt);
 
 -- Candidate (variant, transcript) pairs via a full-span interval range join.

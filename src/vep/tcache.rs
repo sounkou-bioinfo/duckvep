@@ -39,10 +39,11 @@ pub(crate) fn is_fresh(cache: &Path, gff3: &Path) -> bool {
 ///     copy of the entire ~645k-transcript model at once); and
 ///  2. it IS the Parquet **row-group size**, which governs how many morsels the
 ///     bulk range join's transcript scan can parallelize over. 8192 → tens of
-///     row groups for the gene model → the join saturates ~13 cores; DuckDB's
-///     native-table default of 122,880 would give ~6 groups and starve it to
-///     ~5 cores (measured — docs/kernel-algorithm.md §8). So this is a real
-///     parallelism knob, not just a memory bound.
+///     row groups for the gene model → the join saturates ~13 cores; a coarse
+///     122,880 would give ~6 groups and starve it to ~5 cores (measured —
+///     docs/kernel-algorithm.md §8). (A `.duckdb` table tuned with
+///     `ROW_GROUP_SIZE 8192` matches this; the size is tunable there too.) So
+///     this is a real parallelism knob, not just a memory bound.
 const BATCH_ROWS: usize = 8192;
 
 /// Default zstd level for the cache's `model` column — a sane space/build-time
