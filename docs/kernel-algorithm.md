@@ -679,3 +679,30 @@ linear). The natural gnomAD output is **per-variant most-severe** or
 **per-(variant, gene)**, aggregated on the fly in the active-set loop → 150 M output
 rows, not 1.74 B. Population-scale annotation (gnomAD / UK Biobank / All-of-Us) is
 the architecture's decisive use case: linear time, constant streaming memory.
+
+### Fused multi-track sweep — consequence + supplementary annotations in ONE pass
+
+The sweep is not "the consequence engine" — it is a **multi-track cursor**. The same
+single pass over the variant stream maintains, in lockstep, an active set per
+*interval* source (transcripts → consequence; regulatory/panel/conservation →
+region SAs) and a sorted-**merge** cursor per *point* source (gnomAD AF, ClinVar,
+dbSNP). Because everything in genomics is coordinate-sorted, **no variant key /
+var32 / bloom / hash is needed** — those exist for random lookups; sorted streams
+use sorted-merge (a pointer advance + `(pos,ref,alt)` compare).
+
+Measured (`examples/sweep_multi.rs`, HG002 4 M variants, single thread):
+
+| config (one pass each) | wall | added |
+|---|---|---|
+| consequence only | 0.037 s | — |
+| + gnomAD AF (point SA, sorted-merge) | 0.044 s | **+7 ms** |
+| + gnomAD + 3 region tracks (4 annotations) | 0.108 s | +71 ms |
+
+A **point** annotation is nearly free (+7 ms — one merge cursor). A **region**
+annotation is a cheap active-set track (~+20 ms each). Dozens fuse into one pass at
+linear cost. Contrast: fastVEP-SA runs M hash-joined passes (var32/bloom/block per
+source); DuckDB would run M separate range/equi joins, each re-scanning variants.
+The fused sweep reads variants **once** and emits consequence + *all* annotations
+together — and it inherits the same linear-in-N, constant-streaming-memory,
+region-parallel properties as the consequence sweep. This is how duckvep does
+supplementary annotation at gnomAD/biobank scale: one cursor, many tracks, no key.
