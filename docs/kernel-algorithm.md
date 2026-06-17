@@ -384,6 +384,27 @@ The **DuckDB range join is ~70% of the wall (31 s); the Rust kernel adds ~30%
 dominant wall-clock cost** — the join is. (Caveat: no-FASTA kernel; the coding path
 grows the kernel share — a FASTA ladder is still owed.)
 
+**Tile-sweep prototype — the architecture bet, VALIDATED (`examples/tile_sweep.rs`).**
+A single-threaded per-chromosome two-pointer sweep over the compact integer
+interval columns (chrom_id/start/end as SoA), maintaining an active set and
+**emitting every (variant, transcript) pair**:
+
+| candidate generation | wall | cores | core-s |
+|---|---|---|---|
+| DuckDB range join (materialized) | 31.2 s | 11 | ~343 |
+| **tile-sweep, emit all 47 M pairs** | **0.047 s** | **1** | **0.05** |
+
+Same 46.97 M pairs (0.0004% off — SNV-point approximation; max active set 525,
+matching the measured stabbing number). **~660× faster in wall, ~7,300× fewer
+core-seconds.** So the "join is 70% of wall" finding does **not** mean candidate
+generation is expensive — it means DuckDB's general-purpose hash-join is
+catastrophically wasteful for an interval sweep. Overlap discovery is intrinsically
+~50 ms. With the sweep, candidate generation **evaporates**, the engine becomes
+I/O-bound on the VCF read (~3–7 s) plus the per-pair consequence kernel — which
+makes the **no-alloc `ConsequenceLite` kernel the next (and now dominant) lever**,
+and the tiled sweep the haplotype-safe parallel unit. This is the empirical green
+light for the big-bang sweep-engine rewrite.
+
 **`tx_idx` measured NEUTRAL — a falsified prediction.** Both reviews (and I)
 predicted a compact `tx_idx` integer key would be "the no-regret win hitting both
 slices" (smaller join payload + no per-pair string lookup). Built and measured at
