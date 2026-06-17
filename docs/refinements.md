@@ -42,18 +42,19 @@ figure was a normalized-key measurement artifact (the two engines align indels d
 removed by keying VEP/duckvep/fastVEP to the original witness identity — so the real frontier is
 ~26× smaller and is start/stop-codon engine accuracy, not splice-boundary indel bugs.
 
-- **The 92 duckvep-specific divergences are ALL insertions**, in two sub-patterns, both rooted in
-  the missing pre-consequence allele normalization (trim + 3′-shift in transcript orientation):
-  (a) ~53 add spurious `splice_region`/`splice_acceptor`/`splice_donor`/`intron_variant` terms —
-  duckvep computes the splice/region overlap on the untrimmed span `[pos, pos+len(ref)-1]`, while
-  VEP trims/3′-shifts the allele off the boundary first (e.g. `6002600 CTT>AGAGAC…` 117 bp delins:
-  VEP `5_prime_UTR_variant`, duckvep adds `intron_variant&splice_acceptor_variant`); (b) ~39 are
-  `inframe_insertion → protein_altering_variant` — the unshifted insertion straddles a codon
-  boundary so duckvep can't resolve a clean codon insertion and falls back to the generic term.
-  FIX = normalize/3′-shift the allele before the splice/region overlap and the codon projection
-  (the [[port-faithfulness-pivot-to-TVA]] `shift_hash`); code is in
-  `vendor/fastvep-consequence/src/{splice.rs,predictor.rs}`. This is THE convergence target the
-  `correctness/correctness.md` convergence plot tracks.
+- **The duckvep-specific insertion frontier — half closed (2026-06-17).** Originally 92
+  duckvep-specific pairs from 5 ClinVar insertions, two sub-patterns: (a) ~53 spurious
+  `splice_region`/`splice_acceptor`/`intron` terms and (b) ~39 `inframe_insertion →
+  protein_altering_variant`. **Sub-pattern (a) is FIXED** (commit 82a3fa2): the splice/intron overlap
+  no longer extends the interval by the inserted ALT length (`predictor.rs` `splice_end = var_end`);
+  it was over-reaching into the intron for long-ALT delins (e.g. `6002600 CTT>116bp` → a 116-base
+  splice interval). ClinVar `duckvep_total` 239→161, `duckvep_specific` 92→39; regression suite 35/35,
+  witness fuzzer unchanged. **Sub-pattern (b) remains** (39): a clean multiple-of-3 insertion (e.g.
+  `57490537 G>+24bp`, 8 codons) near a splice junction where VEP calls `inframe_insertion` but
+  duckvep's `inframe_ins` peptide prefix/suffix check (`predictor.rs:1293`) fails because the
+  **windowed-peptide surrogate** mis-reconstructs `ref_pep`/`alt_pep` at the exon boundary — the
+  deeper [[port-faithfulness-pivot-to-TVA]] `peptide()` issue, not a one-line fix. Tracked by the
+  `correctness/correctness.md` convergence plot.
 - **High-impact indel / MNV tail (shared with fastVEP)** — a frameshift / 3′UTR-straddle deletion
   at the stop (KDM5A 313154: VEP `stop_lost`, duckvep `stop_retained` — the windowed peptide is too
   short to see the read-through; needs the full `peptide()` from item 1), and multi-exon
