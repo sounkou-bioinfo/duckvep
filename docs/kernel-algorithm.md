@@ -348,17 +348,41 @@ And the same holds for a **persisted `.duckdb` table you `ATTACH`** instead of
 | `read_parquet(cache)` | 60 s | 1333% (~13 cores) | 46 MB |
 | `ATTACH gene_model.duckdb` table | 82 s | 448% (~4.5 cores) | 483 MB full / 12.6 MB lean |
 
-The attached table is **slower, ~3× less parallel, and the full native file is 10×
-larger** (DuckDB does not zstd-compress the `model` BLOB; Parquet does). DuckDB's
-Parquet scanner is simply the best-tuned parallel source — and the DuckDB-free Rust
-engine needs Parquet anyway (a `.duckdb` file has no standalone reader). So for the
-**transcript cache**, Parquet wins on every axis. `ATTACH` is still the right home
-for the **annotation-database ecosystem** (gnomAD / ClinVar / panels as persisted,
-shareable, multi-source `.duckdb` files joined in one query) — but not for the hot
-transcript scan.
+**Correction — it is the row-group count, not the storage format.** The first
+reading of this table ("ATTACH is worse, Parquet wins") was *confounded* and is
+retracted. The two sources had wildly different scan granularity:
 
-The lesson: **better SQL means leaning *harder* on DuckDB's native operators, not
-wrapping data in custom UDFs.** `read_parquet` *is* the better SQL. The real
+| transcript source | row groups | cores | wall |
+|---|---|---|---|
+| parquet @ 8192 rows/group | 79 | **13** | 44.9 s |
+| parquet @ 122,880 rows/group | 6 | **5.2** | 79.3 s |
+| `.duckdb` table (default storage) | 6 | 4.5 | 82 s |
+| `vep_transcripts()` table fn | 1 stream | 2.2 | 185 s |
+
+Morsel-driven parallelism is bounded by the **build-side scan's row-group count**.
+Re-encoding the *same* parquet at DuckDB's native 122,880-row group size collapses
+it to 5 cores — matching the `.duckdb` table exactly. So the table was never worse
+*as storage*; it just had 6 groups (DuckDB's native row-group size is a fixed
+122,880, not tunable per table → only ~6 groups for 645k rows). My parquet had 79
+groups only because `BATCH_ROWS = 8192` (chosen for the streaming writer's memory
+bound) doubles as the Parquet row-group size — an *accidental* good tune.
+`vep_transcripts()`'s 2 cores is the same effect maxed out: one non-partitioned
+stream = one morsel.
+
+Corrected lessons:
+* **Row-group size is a first-class tuning knob.** ~8192 rows/group (→ tens of
+  groups for the gene model) parallelizes the join well; 122,880 starves it. This
+  is the real reason `read_parquet` beat the table — Parquet's row-group size is
+  **tunable**, DuckDB native storage's is not.
+* A **custom table function still loses** — not on statistics this time but on
+  *partitioning*: it emits a single stream, so the scan can't be split into morsels
+  at all. Keep it for interactive use, not the bulk join.
+* `ATTACH` remains the right home for the **annotation-database ecosystem** (gnomAD
+  / ClinVar / panels), and a `.duckdb` join would be competitive *if* its row-group
+  count were controllable; today it is capped by the 122,880 constant.
+
+The standing lesson holds — lean on DuckDB's native scans — but the *mechanism* is
+**row-group granularity of the build side**, not "Parquet is magic." The real
 levers are (1) keep the native parquet scan; (2) store the cache **sorted by
 `(chrom, start)`** so zone-maps are tight and pruning is maximal; (3) shrink the
 per-pair scalar to return a nullable **`STRUCT`** instead of `LIST<STRUCT>` (kills

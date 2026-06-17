@@ -34,9 +34,15 @@ pub(crate) fn is_fresh(cache: &Path, gff3: &Path) -> bool {
     }
 }
 
-/// Transcripts serialized per Arrow row group. Bounds the writer's *transient*
-/// memory to one batch's worth of serialized + Arrow copies instead of
-/// materializing a copy of the **entire** ~280k-transcript model at once.
+/// Rows per Arrow row group. Two jobs, both wanting a smallish value:
+///  1. bounds the writer's *transient* memory to one batch (vs materializing a
+///     copy of the entire ~645k-transcript model at once); and
+///  2. it IS the Parquet **row-group size**, which governs how many morsels the
+///     bulk range join's transcript scan can parallelize over. 8192 → tens of
+///     row groups for the gene model → the join saturates ~13 cores; DuckDB's
+///     native-table default of 122,880 would give ~6 groups and starve it to
+///     ~5 cores (measured — docs/kernel-algorithm.md §8). So this is a real
+///     parallelism knob, not just a memory bound.
 const BATCH_ROWS: usize = 8192;
 
 /// Default zstd level for the cache's `model` column — a sane space/build-time
