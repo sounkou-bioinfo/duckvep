@@ -106,14 +106,18 @@ across classes despite very different pair counts.
 Each `correctness/vep_concordance.R` run appends a timestamped row of
 the headline divergence counts to
 `correctness/data/conformance_history.csv`, so progress is tracked over
-time (lower is better; duckvep vs the vendored fastVEP, both against the
-same controlled VEP 116):
+time. The plot decomposes duckvep’s **total** divergence from VEP 116
+into the part that is genuinely ours to fix (**duckvep-specific** —
+fastVEP gets these right), the part **shared with fastVEP** (an
+inherited engine gap), and **emission** differences (extra/missing
+pairs). The goal is to drive the whole stack — and especially the
+duckvep-specific band — to zero.
 
 ![](correctness_files/figure-gfm/convergence-1.png)<!-- -->
 
-A single point is the current run; the curve fills in as the engine is
-iterated (e.g. closing the duckvep-specific boundary-indel tail). The
-raw history table is `conformance_history.csv`.
+The point labels are duckvep’s total divergence; the red band at the
+base is the duckvep-specific tail (the real target). The curve fills in
+as the engine is iterated. Raw history: `conformance_history.csv`.
 
 ## Where the misses are — per consequence (SO term)
 

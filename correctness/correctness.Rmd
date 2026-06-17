@@ -111,28 +111,49 @@ classes despite very different pair counts.
 ## Convergence toward conformance
 
 Each `correctness/vep_concordance.R` run appends a timestamped row of the headline divergence
-counts to `correctness/data/conformance_history.csv`, so progress is tracked over time (lower is
-better; duckvep vs the vendored fastVEP, both against the same controlled VEP 116):
+counts to `correctness/data/conformance_history.csv`, so progress is tracked over time. The plot
+decomposes duckvep's **total** divergence from VEP 116 into the part that is genuinely ours to fix
+(**duckvep-specific** — fastVEP gets these right), the part **shared with fastVEP** (an inherited
+engine gap), and **emission** differences (extra/missing pairs). The goal is to drive the whole
+stack — and especially the duckvep-specific band — to zero.
 
-```{r convergence, fig.width=8, fig.height=4, dpi=130}
+```{r convergence, fig.width=8, fig.height=4.4, dpi=130}
 h <- csv("correctness/data/conformance_history.csv")
 h <- h[h$methodology == "original-identity-keyed", ]      # only comparable keyings on one axis
 h$timestamp <- as.POSIXct(h$timestamp, format = "%Y-%m-%dT%H:%M:%S")
-long <- rbind(
-  data.frame(timestamp = h$timestamp, metric = "duckvep total divergence",   value = h$duckvep_total),
-  data.frame(timestamp = h$timestamp, metric = "duckvep-specific (vs fastVEP)", value = h$duckvep_specific),
-  data.frame(timestamp = h$timestamp, metric = "fastVEP total divergence",    value = h$fastvep_total))
+h <- h[order(h$timestamp), ]
+# duckvep_total = duckvep-specific + shared-with-fastVEP + emission (the three bands sum to total)
+comp <- rbind(
+  data.frame(t = h$timestamp, band = "duckvep-specific (ours; fastVEP is right)", value = h$duckvep_specific),
+  data.frame(t = h$timestamp, band = "shared with fastVEP (inherited engine gap)", value = h$duckvep_discordant_shared - h$duckvep_specific),
+  data.frame(t = h$timestamp, band = "emission (extra / missing pairs)", value = h$duckvep_emission))
+# stack order: duckvep-specific at the bottom (anchored at 0, easiest to read its shrinkage)
+comp$band <- factor(comp$band, levels = c("emission (extra / missing pairs)",
+  "shared with fastVEP (inherited engine gap)", "duckvep-specific (ours; fastVEP is right)"))
 library(ggplot2)
-ggplot(long, aes(timestamp, value, colour = metric)) +
-  geom_line(linewidth = 0.7) + geom_point(size = 2) +
-  scale_y_continuous(trans = "log10", labels = scales::comma) +
-  labs(x = NULL, y = "divergences vs VEP 116 (log scale)", colour = NULL,
-       title = "Convergence toward Ensembl VEP conformance") +
-  theme_minimal(base_size = 12) + theme(legend.position = "bottom")
+ggplot(comp, aes(t, value, fill = band)) +
+  geom_area(position = "stack", alpha = 0.92) +
+  geom_point(data = h, aes(timestamp, duckvep_total), inherit.aes = FALSE, size = 1.6) +
+  geom_text(data = h, aes(timestamp, duckvep_total, label = duckvep_total), inherit.aes = FALSE,
+            vjust = -0.8, size = 3.4) +
+  scale_fill_manual(values = c("duckvep-specific (ours; fastVEP is right)" = "#d62728",
+                               "shared with fastVEP (inherited engine gap)" = "#9e9e9e",
+                               "emission (extra / missing pairs)" = "#aec7e8"),
+                    breaks = c("duckvep-specific (ours; fastVEP is right)",
+                               "shared with fastVEP (inherited engine gap)",
+                               "emission (extra / missing pairs)")) +
+  labs(x = NULL, y = "duckvep divergences vs VEP 116", fill = NULL,
+       title = "Convergence toward Ensembl VEP conformance",
+       subtitle = sprintf("total %d → %d; duckvep-specific %d → %d (fastVEP control: %d)",
+                          h$duckvep_total[1], tail(h$duckvep_total, 1),
+                          h$duckvep_specific[1], tail(h$duckvep_specific, 1), tail(h$fastvep_total, 1))) +
+  theme_minimal(base_size = 12) + theme(legend.position = "bottom") +
+  guides(fill = guide_legend(nrow = 2))
 ```
 
-A single point is the current run; the curve fills in as the engine is iterated (e.g. closing the
-duckvep-specific boundary-indel tail). The raw history table is `conformance_history.csv`.
+The point labels are duckvep's total divergence; the red band at the base is the duckvep-specific
+tail (the real target). The curve fills in as the engine is iterated. Raw history:
+`conformance_history.csv`.
 
 ## Where the misses are — per consequence (SO term)
 
