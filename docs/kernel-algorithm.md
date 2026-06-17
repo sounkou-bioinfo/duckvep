@@ -267,6 +267,32 @@ JOIN transcripts t
 | **per-pair + range join (shuffled)** | 72 s | 15.9 | 1138 | 46,968,776 | **+22%** = DuckDB's internal sort |
 | fastVEP (rayon, no HGVS) | 58 s | 7.6 | 441 | 46,968,887 | reference |
 
+**Explicit thread scaling** (`SET threads=N`, per-pair range join, full-span
+predicate, real 47M-pair annotation):
+
+| threads | wall | speedup | efficiency | CPU | peak RSS |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 315.8 s | 1.00× | 1.00 | 99% | 2049 MB |
+| 2 | 172.8 s | 1.83× | 0.91 | 195% | 2126 MB |
+| 4 | 115.0 s | 2.75× | 0.69 | 377% | 2104 MB |
+| 8 | 79.4 s | 3.98× | 0.50 | 707% | 2355 MB |
+| 16 | 60.6 s | 5.21× | 0.33 | 1333% | 2490 MB |
+
+* **Efficiency collapses 0.91 → 0.33.** Cores stay busy (CPU → 1333%) but wall
+  does not follow — 16 threads buy 5.2×, not 16×. This is the §1 random-vs-
+  sequential bandwidth wall made visible: many cores concurrently probing the
+  shared 72 MB random-access (cgranges) index saturate memory bandwidth. It is
+  the empirical proof that **threads alone plateau**; the sweep-line's cache-
+  resident `O(D=518)` active set is what would restore per-core efficiency.
+* **Memory is bounded and predictable.** Base ≈ 2.0 GB at 1 thread, rising only
+  ~+30 MB/thread (2049 → 2490 at 16t). The base is the transcript model held
+  **twice** — the engine's resident `EngineContext` (~1.6 GB of full `Transcript`
+  structs, needed by the per-pair `get_by_id`) **plus** DuckDB's `read_parquet`
+  of the join columns. The model must be resident for the kernel, but the
+  `read_parquet` copy is removable via a `vep_transcripts()` table function over
+  the same in-memory structure. Per-thread state is small; memory does not gate
+  scaling.
+
 What the prototype proves and disproves:
 
 * **Parallelism was the only blocker.** The per-pair scalar over a range join hits
