@@ -650,3 +650,32 @@ kernel is no longer the bottleneck under any thread count — **the VCF read is*
 the remaining parallelism budget belongs on parallel BGZF reading, not the kernel.
 Region tiles are also the haplotype-safe parallel unit, so this is the same
 decomposition correctness needs.
+
+### Scaling with variant count — gnomAD (150 M variants)
+
+The sweep is `O(N + T + P)` with `P = fan-out·N`, so it scales **linearly** in
+variants with **constant working memory** (active set O(D), independent of N).
+Replicating HG002 k× to gnomAD scale (`examples/sweep_scale.rs`, 20 threads):
+
+| variants | wall | pairs | throughput | RSS |
+|---|---|---|---|---|
+| 4.1 M | 0.061 s | 47 M | 774 M/s | 161 MB |
+| 16.4 M | 0.188 s | 188 M | 998 M/s | 255 MB |
+| 65.5 M | 0.809 s | 752 M | 929 M/s | 630 MB |
+| **151.6 M (gnomAD)** | **1.88 s** | **1.74 B** | 923 M/s | 1286 MB |
+
+**150 M variants → 1.74 billion pairs in 1.88 s.** Throughput is flat at every
+scale (linear). The RSS growth is only the demo *materializing* the variant array;
+in production variants **stream** from `read_vcf` and the sweep's footprint is flat
+~200 MB whether it is 4 M or 4 billion variants — the active set is O(D=525),
+independent of N.
+
+Contrast: the DuckDB range-join at gnomAD scale is ~31 s × 37 ≈ **~19 minutes** for
+candidate generation alone, materializing 1.74 B rows = **tens of GB spilling to
+disk**; the per-variant scalar ≈ **~28 minutes**. The streaming sweep is **~2 s at
+bounded memory**, and the gap *widens* with scale (the old path's
+materialization/object overhead grows with memory pressure; the sweep stays
+linear). The natural gnomAD output is **per-variant most-severe** or
+**per-(variant, gene)**, aggregated on the fly in the active-set loop → 150 M output
+rows, not 1.74 B. Population-scale annotation (gnomAD / UK Biobank / All-of-Us) is
+the architecture's decisive use case: linear time, constant streaming memory.
