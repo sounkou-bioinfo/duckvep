@@ -105,10 +105,15 @@ sql_run(sprintf("COPY (
        UNNEST(transcript_consequences) AS u(tc)
 ) TO '/tmp/vep_raw.json' (FORMAT json);
 COPY (
-  SELECT DISTINCT CAST(split_part(input, chr(9), 2) AS BIGINT) AS opos,
-    split_part(input, chr(9), 4) AS oref, split_part(input, chr(9), 5) AS oalt,
-    start || ' ' || allele_string AS vkey
-  FROM read_json('/tmp/vep_off.json', format='newline_delimited', sample_size=-1)
+  -- one row per vkey (guard: if two distinct originals ever normalize to the same VEP
+  -- start+allele_string, keep one so the fastVEP bridge join can't cross-product / inflate).
+  SELECT opos, oref, oalt, vkey FROM (
+    SELECT CAST(split_part(input, chr(9), 2) AS BIGINT) AS opos,
+      split_part(input, chr(9), 4) AS oref, split_part(input, chr(9), 5) AS oalt,
+      start || ' ' || allele_string AS vkey,
+      row_number() OVER (PARTITION BY start || ' ' || allele_string ORDER BY start) AS rn
+    FROM read_json('/tmp/vep_off.json', format='newline_delimited', sample_size=-1)
+  ) WHERE rn = 1
 ) TO '/tmp/vmap.csv' (HEADER);", DATE))
 nvr <- sql_csv("SELECT count(*) AS n FROM read_json('/tmp/vep_raw.json')")$n
 msg(sprintf("VEP %s (%s GRCh38): %d (variant,transcript) rows", oracle, rel, nvr))

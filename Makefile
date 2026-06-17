@@ -59,6 +59,7 @@ benchmarks/results.md: benchmarks/results.Rmd scripts/render-benchmarks.R \
            benchmarks/data/footprint.csv \
            benchmarks/data/thread_scaling.csv \
            benchmarks/data/throughput.csv \
-           benchmarks/data/timings.csv
+           benchmarks/data/timings.csv \
+           data/vep_dumps/concordance_log.csv
 	Rscript scripts/render-benchmarks.R
 benchmarks: benchmarks/results.md

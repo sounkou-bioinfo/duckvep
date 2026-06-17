@@ -62,9 +62,11 @@ vep <- dbGetQuery(con, sprintf("
          list_aggregate(list_sort(tc.consequence_terms),'string_agg','&') vc
   FROM read_json('%s', format='newline_delimited', sample_size=-1), UNNEST(transcript_consequences) u(tc)", vep_json))
 vmap <- dbGetQuery(con, sprintf("
-  SELECT DISTINCT CAST(split_part(input,chr(9),2) AS BIGINT) opos, split_part(input,chr(9),4) oref,
-         split_part(input,chr(9),5) oalt, start||' '||allele_string vkey
-  FROM read_json('%s', format='newline_delimited', sample_size=-1)", vep_json))
+  SELECT opos, oref, oalt, vkey FROM (   -- one row per vkey so the fastVEP bridge join can't cross-product
+    SELECT CAST(split_part(input,chr(9),2) AS BIGINT) opos, split_part(input,chr(9),4) oref,
+           split_part(input,chr(9),5) oalt, start||' '||allele_string vkey,
+           row_number() OVER (PARTITION BY start||' '||allele_string ORDER BY start) rn
+    FROM read_json('%s', format='newline_delimited', sample_size=-1)) WHERE rn=1", vep_json))
 
 # fastVEP (the vendored engine) on the same witnesses -> term-fair "duckvep-specific" flag.
 # fastvep_ok gates ALL "shared with fastVEP" claims: if fastVEP is absent or its JSON fails to
