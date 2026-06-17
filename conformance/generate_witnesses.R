@@ -3,8 +3,8 @@
 # DuckDB build). Reads a transcript's structure from a GFF and the reference sequence from a
 # FASTA *range*, then tiles the equivalence classes where consequence bugs live — each exon/intron
 # boundary (splice donor/acceptor/5th-base/region), the start codon, the stop codon, exon interior
-# and UTR — crossed with allele shapes (SNV ×3, 1 bp ins/del = frameshift, 3 bp del = inframe,
-# MNV). Emits a witness VCF; the differential fuzzer (VEP --gff ⟂ duckvep) then asserts an exact
+# and UTR — crossed with allele shapes: SNV ×3, 1 bp ins + 1/2 bp del (frameshift), 3 bp del
+# (in-frame), and a 2 bp MNV. Emits a witness VCF; the differential fuzzer (VEP --gff ⟂ duckvep) asserts an exact
 # SO-term-set match on it. This is the FORMAL (covering) tier; conformance/stratified_conformance.R
 # is the STATISTICAL tier — they share the one fuzzer. See conformance/README.md.
 suppressMessages({ library(optparse); library(Rduckhts); library(duckdb); library(DBI) })
@@ -67,9 +67,12 @@ for (k in seq_along(pos)) {
   tb <- twobase(p); if (grepl("^[ACGT]{2}$", tb)) {
     W[[length(W)+1]] <- c(p, tb, substr(tb,1,1), paste0(lab[k], "_del1"))          # 1bp del (frameshift)
     W[[length(W)+1]] <- c(p, rb, paste0(rb,"T"), paste0(lab[k], "_ins1"))          # 1bp ins (frameshift)
+    W[[length(W)+1]] <- c(p, tb, chartr("ACGT","TGCA",tb), paste0(lab[k], "_mnv2"))# 2bp MNV (both bases flip; complement guarantees both differ)
   }
   fb <- nuc(p, 3)
-  if (grepl("^[ACGT]{3}$", fb)) W[[length(W)+1]] <- c(p, fb, substr(fb,1,1), paste0(lab[k], "_del2"))  # 2bp del
+  if (grepl("^[ACGT]{3}$", fb)) W[[length(W)+1]] <- c(p, fb, substr(fb,1,1), paste0(lab[k], "_del2"))  # 2bp del (frameshift)
+  qb <- nuc(p, 4)
+  if (grepl("^[ACGT]{4}$", qb)) W[[length(W)+1]] <- c(p, qb, substr(qb,1,1), paste0(lab[k], "_del3"))  # 3bp del (in-frame)
 }
 wdf <- as.data.frame(do.call(rbind, W), stringsAsFactors = FALSE)
 names(wdf) <- c("pos","ref","alt","class"); wdf$pos <- as.integer(wdf$pos)

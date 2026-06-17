@@ -33,13 +33,20 @@ Until then: claim **"VEP-concordant on N=50000 ClinVar," not "faithful VEP port.
 
 ## Open correctness gaps (residual tail — all SHARED with fastVEP)
 
+The formal-tier fuzzer (`conformance/fuzz_witnesses.R`, original-identity keyed) pins this tail
+precisely on TP53: **71 divergences / 39,048 union pairs, all `start_codon_*` + `stop_codon_del1`,
+0 duckvep-specific** (fastVEP diverges from VEP identically). An earlier "1,854 boundary-indel"
+figure was a normalized-key measurement artifact (the two engines align indels differently),
+removed by keying VEP/duckvep/fastVEP to the original witness identity — so the real frontier is
+~26× smaller and is start/stop-codon engine accuracy, not splice-boundary indel bugs.
+
 - **High-impact indel / MNV tail** — a frameshift / 3′UTR-straddle deletion at the stop
   (KDM5A 313154: VEP `stop_lost`, duckvep `stop_retained` — the windowed peptide is too short
   to see the read-through; needs the full `peptide()` from item 1 above), and multi-exon
   start-codon deletions. Shared with fastVEP (engine accuracy, not duckvep-specific).
 - **`mature_miRNA_variant`** — a feature region not yet in the cache (a join away).
 - **chrX/Y haploid + PAR** — now have a **female sample (HG004) + HG003/HG005 + 1000G** in the
-  pinned diverse cohort (`scripts/fetch-data.sh`, `DIVERSE=1`); add chrX-diploid + PAR
+  pinned diverse cohort (`scripts/fetch-data.R`, `DIVERSE=1`); add chrX-diploid + PAR
   regression coverage to the `correctness/` suite.
 - **Haplotype experimental edges** — the multi-edit path is 100% on the MNV-split harness but
   over-merges as a single block (no bcftools-`csq` `hap_finalize` flush) and can't yet yield the

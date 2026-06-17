@@ -262,10 +262,10 @@ in-codon MNVs — to stress-test those classes directly.
 
 ```sh
 # 0. fetch all inputs with pinned provenance (Ensembl 116, ClinVar 2026-06-06,
-#    VEP cache 116, GIAB) -> data/ ; see scripts/fetch-data.sh for exact sources
-scripts/fetch-data.sh
+#    VEP cache 116, GIAB) -> data/ ; see scripts/fetch-data.R for exact sources
+scripts/fetch-data.R
 # 1. build the Ensembl-sourced cache (server-free, from MySQL dumps)
-correctness/cache-build/build-cache.sh homo_sapiens 116 38
+correctness/cache-build/build-cache.R homo_sapiens 116 38
 # 2. impact-stratified concordance vs offline Ensembl VEP
 correctness/vep_concordance.R data/giab/clinvar.vcf.gz \
   data/giab/GRCh38.116.gff3.gz data/giab/GRCh38.primary.fa 50000

@@ -63,7 +63,7 @@ diff -ruN a/fastvep-cache/src/fasta.rs b/fastvep-cache/src/fasta.rs
          let bases_needed = (end_0 - start_0 + 1) as usize;
 diff -ruN a/fastvep-cache/src/gff.rs b/fastvep-cache/src/gff.rs
 --- a/fastvep-cache/src/gff.rs	2026-06-13 21:22:56.599706552 +0200
-+++ b/fastvep-cache/src/gff.rs	2026-06-13 22:59:40.223170842 +0200
++++ b/fastvep-cache/src/gff.rs	2026-06-15 22:52:09.331876237 +0200
 @@ -29,9 +29,10 @@
  /// indistinguishable from a single-source one.
  pub fn parse_gff3_with_source<R: Read>(reader: R, source: &str) -> Result<Vec<Transcript>> {
@@ -326,7 +326,19 @@ diff -ruN a/fastvep-cache/src/gff.rs b/fastvep-cache/src/gff.rs
              };
              match gff_phase {
                  1 => 2,
-@@ -611,18 +643,30 @@
+@@ -560,6 +592,11 @@
+                 Strand::Reverse => (cds_end, cds_start),
+             };
+ 
++            // JUSTIFIED defaults (build-time GFF parser robustness): for a valid Ensembl
++            // GFF the translation start/end always lies within an exon, so these `find`s
++            // succeed and the fallbacks (rank 1 / offset 0) are unreachable. They keep the
++            // parser from panicking on a malformed/edge transcript, producing a best-effort
++            // model rather than aborting the whole cache build. NOT accuracy-hot-path.
+             let start_exon_rank = tr_exons
+                 .iter()
+                 .find(|e| tl_start_pos >= e.start && tl_start_pos <= e.end)
+@@ -611,18 +648,30 @@
                  let exon_len = exon.end - exon.start + 1;
                  match gff_tr.strand {
                      Strand::Forward => {
@@ -361,7 +373,7 @@ diff -ruN a/fastvep-cache/src/gff.rs b/fastvep-cache/src/gff.rs
                              ce = Some(cdna_pos + (exon.end - tl.genomic_start) + 1);
                          }
                      }
-@@ -678,11 +722,7 @@
+@@ -678,11 +727,7 @@
              appris: None,
              ccds: gff_tr.ccds.clone(),
              protein_id: tr_cds.first().map(|c| c.protein_id.clone()),
@@ -374,7 +386,7 @@ diff -ruN a/fastvep-cache/src/gff.rs b/fastvep-cache/src/gff.rs
              swissprot: vec![],
              trembl: vec![],
              uniparc: vec![],
-@@ -881,7 +921,10 @@
+@@ -881,7 +926,10 @@
          assert_eq!(transcripts.len(), 2);
  
          // MANE Select transcript
@@ -386,7 +398,7 @@ diff -ruN a/fastvep-cache/src/gff.rs b/fastvep-cache/src/gff.rs
          assert!(ms.canonical);
          assert_eq!(ms.mane_select.as_deref(), Some("ENST00000001.7"));
          assert!(ms.mane_plus_clinical.is_none());
-@@ -890,7 +933,10 @@
+@@ -890,7 +938,10 @@
          assert_eq!(ms.tsl, Some(1));
  
          // MANE Plus Clinical transcript
@@ -398,7 +410,7 @@ diff -ruN a/fastvep-cache/src/gff.rs b/fastvep-cache/src/gff.rs
          assert!(!mpc.canonical);
          assert!(mpc.mane_select.is_none());
          assert_eq!(mpc.mane_plus_clinical.as_deref(), Some("ENST00000002.3"));
-@@ -930,8 +976,7 @@
+@@ -930,8 +981,7 @@
          // The merged-cache path relies on per-file source tagging — without
          // it, transcripts from Ensembl and RefSeq runs are indistinguishable
          // in the SOURCE column.

@@ -16,7 +16,7 @@ op <- add_option(op, "--ext",   default = Sys.getenv("DUCKVEP_EXT", file.path(ro
 opt <- parse_args(op)
 tsv <- file.path(root, "test/data/regression_cases.tsv")
 if (!file.exists(opt$ext))  { message("extension not built: ", opt$ext, " (make release)"); quit(status = 1) }
-if (!file.exists(opt$gff3)) { message("gff3 not found: ", opt$gff3, " — run scripts/fetch-data.sh (gated)"); quit(status = 77) }
+if (!file.exists(opt$gff3)) { message("gff3 not found: ", opt$gff3, " — run scripts/fetch-data.R (gated)"); quit(status = 77) }
 
 con <- dbConnect(duckdb(config = list(allow_unsigned_extensions = "true")))
 on.exit(dbDisconnect(con, shutdown = TRUE))

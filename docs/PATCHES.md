@@ -3,7 +3,7 @@
 > **The patches as files (reproducible):** the complete divergence is captured as
 > per-crate diffs against the pristine base **Huang-lab/fastVEP@785922e** in
 > [`vendor/patches/`](vendor/patches/) (`*.patch`, `git apply -p1` from the repo
-> root). Regenerate with [`vendor/patches/regen-patches.sh`](vendor/patches/regen-patches.sh).
+> root). Regenerate with [`vendor/patches/regen-patches.R`](vendor/patches/regen-patches.R).
 > This prose is the *rationale*; the patch files are the *source of truth*.
 
 duckvep vendors the lean compute closure of [fastVEP](https://github.com/Huang-lab/fastVEP)
@@ -123,7 +123,7 @@ Validated on ClinVar chrM vs offline Ensembl VEP (the non-ATG mitochondrial *sta
 codons are now handled too — see the `start_lost` patch above).
 
 ### Controlled `--gff` oracle (only the engine differs)
-`correctness/vep_concordance.py`. The concordance harness now runs Ensembl **VEP 116**
+`correctness/vep_concordance.R`. The concordance harness now runs Ensembl **VEP 116**
 with `--gff` over the **same** GFF3 gene model the engines read (not the cache), so the
 *only* free variable is the engine. Total divergence is first-class — consequence
 mismatch on shared pairs **plus** emission extra/miss (an inner join would hide

@@ -23,10 +23,12 @@ treats annotation databases as plain Parquet/DuckDB tables joined by the optimiz
   CIs** over a diverse real corpus (ClinVar + GIAB AJ/Han/male/female + 1000G), every divergence is
   *shared* with the vendored fastVEP — **0 duckvep-specific *on that distribution***. And the honest
   part: [`conformance/`](conformance/)'s **formal tier** — systematic equivalence-class witnesses
-  generated via duckhts — *does* surface duckvep-specific divergences (indels at splice/start/stop
-  boundaries that random corpora under-sample), pinning the engine's real frontier. Formal +
-  statistical + real-world meet at one differential fuzzer; it becomes a *proof* as the engine is
-  ported 1:1 from VEP.
+  generated via duckhts (TP53: 968 witnesses → 39,048 pairs) — pins the engine's real frontier at
+  **71 divergences, all `start_codon`/`stop_codon`, 0 duckvep-specific** (fastVEP diverges from VEP
+  identically on each). It is a *falsifier + empirical bound*, **not a proof**: formal + statistical
+  + real-world meet at one differential fuzzer that becomes a proof only as the engine is ported 1:1
+  from VEP. (An earlier "boundary-indel" divergence tail was a normalized-key artifact, removed by
+  keying all engines to the original witness identity.)
 - **Haplotype-aware.** `vep_haplotype_consequence` applies *phased* variants together
   (bcftools-`csq` / haplosaurus), so a silent SNV flips to missense when phased with its neighbour.
 - **Annotations are joins, not flags.** Any source (gnomAD, ClinVar, conservation, custom BED) is
@@ -205,7 +207,7 @@ FROM csq JOIN genes g USING (gene_id);
 ```
 
 A FASTA-backed, tabix-region version (adding `hgvsp`) is in
-[`scripts/duckhts_integration_demo.sh`](scripts/duckhts_integration_demo.sh).
+[`scripts/duckhts_integration_demo.R`](scripts/duckhts_integration_demo.R).
 
 ## Correctness
 
@@ -271,7 +273,7 @@ cat(knitr::kable(t[, c("dataset", "variants", "tool", "wall_clock", "peak_rss_mb
 
 Full throughput / footprint / HGVS-concordance tables, and the methodology, are in
 **[`benchmarks/results.md`](benchmarks/results.md)** (`make benchmarks`). Setup and
-inputs: [`scripts/fetch-data.sh`](scripts/fetch-data.sh) (pinned versions).
+inputs: [`scripts/fetch-data.R`](scripts/fetch-data.R) (pinned versions).
 
 ## License
 

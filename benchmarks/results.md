@@ -6,7 +6,7 @@
 
 R Markdown report — every table below is read **directly from a recorded
 CSV** under `benchmarks/data/` (regenerate the data with
-`scripts/benchmark.sh` / `correctness/vep_concordance.py`, then
+`scripts/benchmark.R` / `correctness/vep_concordance.R`, then
 `make benchmarks`). duckvep wraps the same consequence engine as
 fastVEP, so head-to-heads are fair; the differences are data-engineering
 (caching, streaming, columnar), not the science. **Setup:** Ensembl GFF3
@@ -25,7 +25,7 @@ gene models; release builds (`opt-level=3`, `lto=fat`); steady state
 | Human (chr17)    | GRCh38   | 252,980     | 267,534   | ClinVar    | 1.9s | 140,807    |
 
 Add organisms by running
-`scripts/benchmark.sh "<organism>" <assembly> <gff3> <vcf> [fasta]`
+`scripts/benchmark.R "<organism>" <assembly> <gff3> <vcf> [fasta]`
 (yeast / fly / arabidopsis / mouse / human).
 
 ## Head-to-head vs fastVEP (full output, same gene model)
@@ -70,7 +70,7 @@ concordance vs the live VEP is below.
 
 How the `vep_consequence` kernel scales with DuckDB worker threads, each
 run **pinned to N cores with `taskset`** and `SET threads=N`
-([`scripts/bench-threads.sh`](../scripts/bench-threads.sh); the one-off
+([`scripts/bench-threads.R`](../scripts/bench-threads.R); the one-off
 serial GFF3 load is subtracted so this is the parallel kernel). `CPU %`
 ≈ N×100% means N cores saturated; `efficiency` = speedup / N.
 

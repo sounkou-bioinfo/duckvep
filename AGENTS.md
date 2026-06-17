@@ -108,4 +108,4 @@ Ensembl-MySQL cache; and **haplotype-aware consequence** — `vep_haplotype_cons
 phased set jointly over the CDS (100% on the MNV-split harness, experimental edges tracked in
 refinements). The residual indel/MNV tail is **shared with fastVEP** and is the target of the
 `TranscriptVariationAllele` coordinate-layer port. A diverse real cohort (GIAB AJ/Han/M/F + 1000G
-+ GIAB SV Tier1) is pinned in `scripts/fetch-data.sh` (`DIVERSE=1`) for chrX/PAR/sex + SV coverage.
++ GIAB SV Tier1) is pinned in `scripts/fetch-data.R` (`DIVERSE=1`) for chrX/PAR/sex + SV coverage.

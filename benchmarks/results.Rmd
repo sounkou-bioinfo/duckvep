@@ -14,7 +14,7 @@ kbl <- function(df, ...) knitr::kable(df, ...)
 # duckvep benchmarks
 
 R Markdown report — every table below is read **directly from a recorded CSV**
-under `benchmarks/data/` (regenerate the data with `scripts/benchmark.sh` /
+under `benchmarks/data/` (regenerate the data with `scripts/benchmark.R` /
 `correctness/vep_concordance.R`, then `make benchmarks`). duckvep wraps the same
 consequence engine as fastVEP, so head-to-heads are fair; the differences are
 data-engineering (caching, streaming, columnar), not the science. **Setup:**
@@ -36,7 +36,7 @@ t$time <- sprintf("%.1fs", t$time_s)
 kbl(t[, c("organism", "assembly", "transcripts", "variants", "source", "time", "variants/s")])
 ```
 
-Add organisms by running `scripts/benchmark.sh "<organism>" <assembly> <gff3>
+Add organisms by running `scripts/benchmark.R "<organism>" <assembly> <gff3>
 <vcf> [fasta]` (yeast / fly / arabidopsis / mouse / human).
 
 ## Head-to-head vs fastVEP (full output, same gene model)
@@ -72,7 +72,7 @@ kbl(csv("benchmarks/data/footprint.csv"))
 
 How the `vep_consequence` kernel scales with DuckDB worker threads, each run
 **pinned to N cores with `taskset`** and `SET threads=N`
-([`scripts/bench-threads.sh`](../scripts/bench-threads.sh); the one-off serial GFF3
+([`scripts/bench-threads.R`](../scripts/bench-threads.R); the one-off serial GFF3
 load is subtracted so this is the parallel kernel). `CPU %` ≈ N×100% means N cores
 saturated; `efficiency` = speedup / N.
 

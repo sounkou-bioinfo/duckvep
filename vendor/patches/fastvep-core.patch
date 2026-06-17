@@ -25,8 +25,26 @@ diff -ruN a/fastvep-core/src/consequence.rs b/fastvep-core/src/consequence.rs
  }
 diff -ruN a/fastvep-core/src/position.rs b/fastvep-core/src/position.rs
 --- a/fastvep-core/src/position.rs	2026-06-13 21:22:56.605706543 +0200
-+++ b/fastvep-core/src/position.rs	2026-06-13 22:59:40.245170804 +0200
-@@ -131,9 +131,7 @@
++++ b/fastvep-core/src/position.rs	2026-06-16 00:49:20.710242375 +0200
+@@ -34,6 +34,9 @@
+ 
+ impl VariantType {
+     /// Returns true for structural variant types that need the SV annotation pipeline.
++    /// `Deletion` is here for the SYMBOLIC `<DEL>` SV path — small (resolved-base) deletions
++    /// are never assigned this type (the SV classifier returns `Unknown` for them, and they
++    /// dispatch by allele content), so this does not pull small deletions into the SV pipeline.
+     pub fn is_structural(self) -> bool {
+         matches!(
+             self,
+@@ -44,6 +47,7 @@
+                 | Self::Inversion
+                 | Self::TranslocationBreakend
+                 | Self::ShortTandemRepeatVariation
++                | Self::Deletion
+         )
+     }
+ 
+@@ -131,9 +135,7 @@
          match s {
              "-" => Allele::Deletion,
              "*" => Allele::Missing,
@@ -37,7 +55,7 @@ diff -ruN a/fastvep-core/src/position.rs b/fastvep-core/src/position.rs
              _ => Allele::Sequence(s.as_bytes().to_vec()),
          }
      }
-@@ -198,10 +196,7 @@
+@@ -198,10 +200,7 @@
      fn test_allele_from_str() {
          assert_eq!(Allele::from_str("-"), Allele::Deletion);
          assert_eq!(Allele::from_str("*"), Allele::Missing);

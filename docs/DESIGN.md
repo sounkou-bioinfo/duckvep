@@ -356,7 +356,7 @@ zone-map pruning.
 - **GFF importer** — `read_gff_transcripts(gff3)` (+ `read_gff_exons`) table
   functions reuse `parse_gff3`; build with `CREATE TABLE transcripts AS SELECT *
   FROM read_gff_transcripts('x.gff3')`. Portable/offline, any organism. ✅
-- **Ensembl cache builder** — `correctness/cache-build/` (`build-cache.sh` +
+- **Ensembl cache builder** — `correctness/cache-build/` (`build-cache.R` +
   `assemble.sql`) loads Ensembl's published flat-file MySQL **dumps** (no live
   server, no flakiness) and assembles a columnar Parquet cache inheriting the
   curated flags (MANE, cds_start_NF/cds_end_NF, selenocysteine, regulatory build).

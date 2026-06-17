@@ -87,7 +87,7 @@ Changelog, most recent first. (R-package style.)
   neighbour — the capability fastVEP lacks. The kernel is the existing multi-edit
   `CodingContext`; merging is in transcript/CDS coordinates (strand-aware,
   intron-collapsed), and grouping by `(sample, haplotype, transcript)` stays in SQL.
-* **Hill-climb harness:** `correctness/haplotype_concordance.sh` validates the multi-edit
+* **Hill-climb harness:** `correctness/haplotype_concordance.R` validates the multi-edit
   path against the *proven* single-variant kernel with no new oracle — a same-length MNV
   is exactly a phased SNV set, so the haplotype of its split components must equal the
   whole MNV's coding terms. Currently **98.8% (1740/1761)** on the ClinVar sample; the

@@ -29,7 +29,7 @@ exact pattern for importing any supplementary-annotation source
 ## Usage
 
 ``` sh
-correctness/cache-build/build-cache.sh [species] [release] [build] [host] [port]
+correctness/cache-build/build-cache.R [species] [release] [build]
 ```
 
 Organism- and build-agnostic — the database name is built from the args,
@@ -37,10 +37,10 @@ so this works for **every species and assembly in Ensembl**:
 
 | target                          | command                                       |
 |---------------------------------|-----------------------------------------------|
-| GRCh38 (default)                | `build-cache.sh homo_sapiens 116 38`          |
-| GRCh37 (frozen)                 | `build-cache.sh homo_sapiens 113 37`          |
-| mouse                           | `build-cache.sh mus_musculus 116 39`          |
-| one chromosome (fast iteration) | `CHROM=17 build-cache.sh homo_sapiens 116 38` |
+| GRCh38 (default)                | `build-cache.R homo_sapiens 116 38`          |
+| GRCh37 (frozen)                 | `build-cache.R homo_sapiens 113 37`          |
+| mouse                           | `build-cache.R mus_musculus 116 39`          |
+| one chromosome (fast iteration) | `CHROM=17 build-cache.R homo_sapiens 116 38` |
 
 Output (gitignored) lands in `data/cache/<species>.<release>.<build>/`:
 `transcripts.parquet`, `exons.parquet`, `translations.parquet`,
@@ -49,7 +49,7 @@ db).
 
 ## Files
 
-- `build-cache.sh` — downloads dumps + loads them into a local DuckDB
+- `build-cache.R` — downloads dumps + loads them into a local DuckDB
   (stage 1), then runs `assemble.sql` (stage 2).
 - `assemble.sql` — pure-local joins turning the raw Ensembl tables into
   the columnar cache. This is where curated flags become boolean
