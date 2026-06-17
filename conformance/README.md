@@ -55,7 +55,7 @@ Until then this framework is a strong *falsifier + bound*, not yet a proof.
 
 | component | what | status |
 |---|---|---|
-| **class model** | parse `Constants.pm` OverlapConsequence table + `VariationEffect.pm` predicate signatures → the equivalence-class axes | TODO (derive from VEP source) |
+| **class model** | parse `Constants.pm` OverlapConsequence table + `VariationEffect.pm` predicate signatures → the equivalence-class axes | **partial** — the 41-term spec (SO term, accession, IMPACT, rank, tier, predicate) is extracted from VEP 116's `Constants.pm` into [`data/so_consequences.tsv`](data/so_consequences.tsv) by [`extract_so_spec.pl`](extract_so_spec.pl); deriving the predicate-equivalence classes from the `VariationEffect.pm` sub signatures is the remaining step |
 | **formal generator** | tile equivalence classes on a real transcript (exon/intron boundaries, splice, start/stop) × allele shapes (SNV×3, 1bp ins, 1/2bp del frameshift, 3bp del in-frame, 2bp MNV) | **`generate_witnesses.R`** ✅ R-native via **Rduckhts** (GFF structure + FASTA ranges; duckhts stable C API loads in any DuckDB build). TP53 → 968 witnesses / 36 classes. Still single-transcript: extend to multi-transcript/opposite-strand + a full covering array. |
 | **statistical corpus** | gold labels from Ensembl `transcript_variation` MySQL for the release; variant distributions from TOPMed/gnomAD/ClinVar + the pinned GIAB diverse cohort | ClinVar in place; Ensembl-MySQL puller TODO |
 | **differential oracle** | VEP `--gff` ⟂ duckvep, exact SO-term-set match per pair | `../correctness/vep_concordance.R` (dumps `annotations.parquet`) |
