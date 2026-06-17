@@ -29,12 +29,36 @@ test_release: test_extension_release
 clean: clean_build clean_rust
 clean_all: clean_configure clean
 
-# Render README.md from README.Rmd with live SQL via duckknit (needs `make debug`).
-readme:
+# Rendered docs are generated from their .Rmd + the data files they import, so the output is a
+# real file target with explicit prerequisites: editing the .Rmd, the render script, or any
+# imported CSV invalidates the rendered .md and `make` re-runs only what is stale. The phony
+# names (readme/benchmarks/correctness) remain as convenience aliases. README.md also embeds
+# live SQL via duckknit, so it additionally needs the built extension (`make debug`).
+
+README.md: README.Rmd scripts/render-readme.R \
+           build/debug/duckvep.duckdb_extension \
+           correctness/data/concordance_by_impact.csv \
+           correctness/data/error_transitions.csv \
+           benchmarks/data/timings.csv
 	Rscript scripts/render-readme.R
+readme: README.md
 
-benchmarks:
-	Rscript scripts/render-benchmarks.R
-
-correctness:
+# render-correctness.R renders both correctness.md and cache-build/README.md.
+correctness/correctness.md: correctness/correctness.Rmd correctness/cache-build/README.Rmd \
+           scripts/render-correctness.R \
+           correctness/data/concordance_by_impact.csv \
+           correctness/data/discordance_by_consequence.csv \
+           correctness/data/error_transitions.csv \
+           correctness/data/methodology_audit.csv \
+           correctness/data/so_term_transitions.csv \
+           correctness/cache-build/data/cache_stats.csv
 	Rscript scripts/render-correctness.R
+correctness: correctness/correctness.md
+
+benchmarks/results.md: benchmarks/results.Rmd scripts/render-benchmarks.R \
+           benchmarks/data/footprint.csv \
+           benchmarks/data/thread_scaling.csv \
+           benchmarks/data/throughput.csv \
+           benchmarks/data/timings.csv
+	Rscript scripts/render-benchmarks.R
+benchmarks: benchmarks/results.md

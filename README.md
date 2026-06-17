@@ -4,51 +4,54 @@
 
 # duckvep — VEP-style variant consequences in DuckDB
 
-A loadable DuckDB extension (Rust) that implements Ensembl-VEP-style
-consequence prediction and HGVS as SQL functions over genomics formats
-read with [noodles](https://github.com/zaeleus/noodles). The consequence
-engine is a Rust port of [fastVEP](https://github.com/Huang-lab/fastVEP)
-with accuracy patches (see [docs/PATCHES.md](docs/PATCHES.md));
-annotation databases are plain Parquet/DuckDB tables joined by the
-optimizer.
+<!-- badges: start -->
 
-Status: a native DuckDB extension under active development. Local builds
-require DuckDB v1.5.3 and unsigned extension loading. Concordance with
-Ensembl VEP is measured, not assumed; known divergences are concentrated
-in start/stop-codon and indel/MNV coordinate handling and are tracked
-under [`correctness/`](correctness/correctness.md) and
+[![Lifecycle:
+experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
+<!-- badges: end -->
+
+duckvep is a loadable DuckDB extension, written in Rust, that implements
+Ensembl-VEP-style consequence prediction and HGVS as SQL functions. It
+reads genomics formats with
+[noodles](https://github.com/zaeleus/noodles) and treats annotation
+databases as ordinary Parquet/DuckDB tables that the query optimizer
+joins. The consequence engine is a Rust port of
+[fastVEP](https://github.com/Huang-lab/fastVEP) with accuracy patches
+documented in [docs/PATCHES.md](docs/PATCHES.md). It is under active
+development; local builds require DuckDB v1.5.3 with unsigned extension
+loading.
+
+Concordance with Ensembl VEP is measured rather than assumed. On a
+controlled `--gff` setup, where VEP, duckvep and the vendored fastVEP
+read the same gene model and results are keyed to the original input
+variant, duckvep diverges from VEP on 239 of roughly 1.44M
+variant/transcript pairs (N=50,000 ClinVar variants); 92 of those are
+duckvep-specific, meaning fastVEP matches VEP where duckvep does not,
+against 5,063 divergences for fastVEP. The remaining cases are boundary
+indels where VEP 3’-shifts the allele before calling consequence. The
+reports under [`conformance/`](conformance/) are stratified by
+consequence term, variant type and length bin with exact 95% confidence
+intervals; the framework is a differential falsifier and an empirical
+bound, not a proof. Known gaps are tracked in
+[`correctness/`](correctness/correctness.md) and
 [`conformance/`](conformance/).
 
-- **Conformance is measured against Ensembl VEP.** On a controlled
-  `--gff` setup (VEP, duckvep and the vendored fastVEP read the same
-  gene model), keyed to the original input variant, on N=50,000 ClinVar
-  variants (~1.44M variant/transcript pairs): duckvep diverges from VEP
-  on **239 pairs**, of which **92 are duckvep-specific** (fastVEP
-  matches VEP there) — versus **5,063** for fastVEP. The remaining
-  duckvep divergences are boundary indels where VEP 3’-shifts the allele
-  before calling consequence. Reports are stratified by term × variant
-  type × length bin with exact 95% CIs under
-  [`conformance/`](conformance/); the framework is a differential
-  falsifier and empirical bound, not a proof.
-- **Haplotype-aware (experimental).** `vep_haplotype_consequence`
-  applies *phased* variants together (bcftools-`csq` / haplosaurus), so
-  a silent SNV flips to missense when phased with its neighbour.
-- **Annotations are joins, not flags.** Any source (gnomAD, ClinVar,
-  conservation, custom BED) is a Parquet/DuckDB table joined on
-  `normalize_variant`’s canonical key, composed in SQL (a `sources.sql`
-  manifest + an `annotate_vcf()` macro) rather than a CLI flag per
-  source. duckvep can coexist with the **duckhts** extension in one
-  DuckDB session.
-- **Columnar transcript cache** built from Ensembl MySQL dumps (MANE /
-  `cds_start_NF` / selenocysteine flags inherited). Pure-Rust
-  implementation; a WASM target exists but is experimental and not yet
-  covered by CI.
+Beyond single-variant calls, `vep_haplotype_consequence` applies phased
+variants together, in the style of bcftools-`csq` and haplosaurus, so a
+silent SNV becomes missense when phased with its neighbour; this path is
+experimental. Annotation sources — gnomAD, ClinVar, conservation, a
+custom BED file — are Parquet or DuckDB tables joined on
+`normalize_variant`’s key and composed in SQL through a `sources.sql`
+manifest and an `annotate_vcf()` macro, rather than a command-line flag
+per source, and duckvep can share a DuckDB session with the duckhts
+extension. The transcript cache is built from Ensembl MySQL dumps and
+inherits the curated MANE, `cds_start_NF` and selenocysteine flags. The
+implementation is pure Rust; a WASM target exists but is experimental
+and not yet covered by CI.
 
 See [docs/DESIGN.md](docs/DESIGN.md), [NEWS.md](NEWS.md),
-[docs/PATCHES.md](docs/PATCHES.md),
-[correctness/](correctness/correctness.md). Next: port VEP’s
-`TranscriptVariationAllele` coordinate layer to reduce the remaining
-indel/MNV divergences.
+[docs/PATCHES.md](docs/PATCHES.md) and
+[correctness/](correctness/correctness.md).
 
 ## Build
 
@@ -381,6 +384,20 @@ Full throughput / footprint / HGVS-concordance tables, and the
 methodology, are in **[`benchmarks/results.md`](benchmarks/results.md)**
 (`make benchmarks`). Setup and inputs:
 [`scripts/fetch-data.R`](scripts/fetch-data.R) (pinned versions).
+
+## Roadmap
+
+The main accuracy work is to port VEP’s `TranscriptVariationAllele`
+coordinate layer (the cDNA/CDS/protein mapper, `codon()`/`peptide()`,
+and the start/stop/frameshift predicates). VEP 3’-shifts an indel before
+calling consequence; duckvep does not yet, which is the source of the 92
+duckvep-specific boundary-indel divergences in the conformance report.
+Porting that layer replaces the current windowed-peptide surrogate with
+VEP’s own coordinate model and is what would turn the differential
+conformance framework from a falsifier into a soundness argument.
+Secondary items — multi-transcript/opposite-strand witnesses, the
+haplotype path’s compound-block flush, and a native-DuckDB transcript
+cache — are tracked in [docs/refinements.md](docs/refinements.md).
 
 ## License
 
