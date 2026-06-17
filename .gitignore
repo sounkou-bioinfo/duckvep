@@ -27,3 +27,4 @@ data/cache/
 # regenerable synthetic corpus
 correctness/data/*.vcf
 data/giab/*.controlled.gff3.gz*
+conformance/data/*.vcf
