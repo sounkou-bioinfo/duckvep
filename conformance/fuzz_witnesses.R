@@ -10,12 +10,13 @@ suppressMessages({ library(optparse); library(duckdb); library(DBI) })
 options(rlang_backtrace_on_error = "none")
 
 root <- system2("git", c("rev-parse", "--show-toplevel"), stdout = TRUE)
+ncores <- parallel::detectCores(); if (is.na(ncores)) ncores <- 1L   # detectCores() can return NA
 op <- OptionParser()
 op <- add_option(op, "--vcf",   default = file.path(root, "conformance/data/witnesses.vcf"))
 op <- add_option(op, "--gff",   default = file.path(root, "data/giab/GRCh38.116.controlled.gff3.gz"))
 op <- add_option(op, "--fasta", default = file.path(root, "data/giab/GRCh38.primary.fa"))
 op <- add_option(op, "--ext",   default = Sys.getenv("DUCKVEP_EXT", file.path(root, "build/release/duckvep.duckdb_extension")))
-op <- add_option(op, "--fork",  default = as.character(min(8L, parallel::detectCores())))  # VEP is the slow step; fork 8 (capped to cores)
+op <- add_option(op, "--fork",  default = as.character(max(1L, min(8L, ncores))))  # VEP is the slow step; fork 8 (capped to cores)
 opt <- parse_args(op)
 vep_cmd <- strsplit(Sys.getenv("VEP_CMD", "conda run -n vep vep"), " ")[[1]]
 
@@ -59,14 +60,20 @@ if (vrc != 0 || !file.exists(vep_json) || file.info(vep_json)$size == 0)
 vep <- dbGetQuery(con, sprintf("
   SELECT CAST(split_part(input,chr(9),2) AS BIGINT) opos, split_part(input,chr(9),4) oref,
          split_part(input,chr(9),5) oalt, tc.transcript_id tx,
-         list_aggregate(list_sort(tc.consequence_terms),'string_agg','&') vc
+         COALESCE(list_aggregate(list_sort(tc.consequence_terms),'string_agg','&'),'') vc
   FROM read_json('%s', format='newline_delimited', sample_size=-1), UNNEST(transcript_consequences) u(tc)", vep_json))
+# vmap carries cnt = #distinct originals sharing this VEP normalized key. Ambiguous keys (cnt>1)
+# can't be disambiguated for the fastVEP bridge, so we drop them (and warn) rather than silently
+# pick one — silently picking could lose/misattribute fastVEP rows and flatter the metric (pi).
 vmap <- dbGetQuery(con, sprintf("
-  SELECT opos, oref, oalt, vkey FROM (   -- one row per vkey so the fastVEP bridge join can't cross-product
+  SELECT opos, oref, oalt, vkey, count(*) OVER (PARTITION BY vkey) cnt FROM (
     SELECT CAST(split_part(input,chr(9),2) AS BIGINT) opos, split_part(input,chr(9),4) oref,
-           split_part(input,chr(9),5) oalt, start||' '||allele_string vkey,
-           row_number() OVER (PARTITION BY start||' '||allele_string ORDER BY start) rn
-    FROM read_json('%s', format='newline_delimited', sample_size=-1)) WHERE rn=1", vep_json))
+           split_part(input,chr(9),5) oalt, start||' '||allele_string vkey
+    FROM read_json('%s', format='newline_delimited', sample_size=-1))", vep_json))
+if (any(vmap$cnt > 1))
+  message(sprintf("WARNING: %d ambiguous VEP normalized keys (colliding originals) excluded from the fastVEP bridge",
+                  length(unique(vmap$vkey[vmap$cnt > 1]))))
+vmap <- vmap[vmap$cnt == 1, c("opos","oref","oalt","vkey")]   # only unambiguous keys bridge
 
 # fastVEP (the vendored engine) on the same witnesses -> term-fair "duckvep-specific" flag.
 # fastvep_ok gates ALL "shared with fastVEP" claims: if fastVEP is absent or its JSON fails to
@@ -81,7 +88,7 @@ if (file.exists(FASTVEP)) {
   if (frc == 0 && file.exists(fv_json) && file.info(fv_json)$size > 0) {
     fvn <- tryCatch(dbGetQuery(con, sprintf("       -- read + UNNEST fastVEP JSON in DuckDB
       SELECT f.start||' '||f.allele_string vkey, tc.transcript_id tx,   -- bridge key = VEP-style 'start allele_string'
-             list_aggregate(list_sort(tc.consequence_terms),'string_agg','&') fc
+             COALESCE(list_aggregate(list_sort(tc.consequence_terms),'string_agg','&'),'') fc
       FROM read_json('%s', sample_size=-1) f, UNNEST(f.transcript_consequences) u(tc)", fv_json)),
       error = function(e) { message("WARN: fastVEP JSON parse failed: ", conditionMessage(e)); NULL })
     if (!is.null(fvn) && nrow(fvn)) {

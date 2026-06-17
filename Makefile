@@ -43,17 +43,19 @@ README.md: README.Rmd scripts/render-readme.R \
 	Rscript scripts/render-readme.R
 readme: README.md
 
-# render-correctness.R renders both correctness.md and cache-build/README.md.
-correctness/correctness.md: correctness/correctness.Rmd correctness/cache-build/README.Rmd \
+# render-correctness.R renders both correctness.md and cache-build/README.md (grouped target).
+correctness/correctness.md correctness/cache-build/README.md &: \
+           correctness/correctness.Rmd correctness/cache-build/README.Rmd \
            scripts/render-correctness.R \
            correctness/data/concordance_by_impact.csv \
            correctness/data/discordance_by_consequence.csv \
            correctness/data/error_transitions.csv \
            correctness/data/methodology_audit.csv \
            correctness/data/so_term_transitions.csv \
-           correctness/cache-build/data/cache_stats.csv
+           correctness/cache-build/data/cache_stats.csv \
+           correctness/cache-build/data/cache_build_meta.txt
 	Rscript scripts/render-correctness.R
-correctness: correctness/correctness.md
+correctness: correctness/correctness.md correctness/cache-build/README.md
 
 benchmarks/results.md: benchmarks/results.Rmd scripts/render-benchmarks.R \
            benchmarks/data/footprint.csv \

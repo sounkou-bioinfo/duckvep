@@ -78,7 +78,8 @@ MODEL_GFF <- if (oracle == "gff") build_controlled_gff() else gff3
 ## 3. Ensembl VEP (offline, controlled --gff, forked) -> JSON -> canonical rows.
 ## VEP is now the only slow step (JSON parsing moved to DuckDB). Default --fork 8 (capped to cores):
 ## past ~8 the per-fork GFF-index reload outweighs the gain. Override with --fork.
-fork <- if (nzchar(pa$options$fork)) pa$options$fork else as.character(min(8L, parallel::detectCores()))
+ncores <- parallel::detectCores(); if (is.na(ncores)) ncores <- 1L   # detectCores() can return NA
+fork <- if (nzchar(pa$options$fork)) pa$options$fork else as.character(max(1L, min(8L, ncores)))
 gene_model <- if (oracle == "gff") c("--gff", MODEL_GFF, "--fasta", fasta) else
   c("--offline", "--cache", "--dir_cache", file.path(root, "data/vep_cache"),
     "--cache_version", rel, "--species", "homo_sapiens", "--assembly", "GRCh38", "--fasta", fasta)
@@ -99,23 +100,27 @@ sql_run(sprintf("COPY (
     split_part(input, chr(9), 4) AS oref, split_part(input, chr(9), 5) AS oalt,
     start AS pos, split_part(allele_string, '/', 1) AS ref, COALESCE(tc.variant_allele, '') AS alt,
     tc.transcript_id AS transcript_id, COALESCE(tc.gene_symbol, '') AS gene_symbol,
-    list_aggregate(list_sort(tc.consequence_terms), 'string_agg', '&') AS consequence,
+    COALESCE(list_aggregate(list_sort(tc.consequence_terms), 'string_agg', '&'), '') AS consequence,
     COALESCE(tc.impact, '') AS impact
   FROM read_json('/tmp/vep_off.json', format='newline_delimited', sample_size=-1),
        UNNEST(transcript_consequences) AS u(tc)
 ) TO '/tmp/vep_raw.json' (FORMAT json);
 COPY (
-  -- one row per vkey (guard: if two distinct originals ever normalize to the same VEP
-  -- start+allele_string, keep one so the fastVEP bridge join can't cross-product / inflate).
-  SELECT opos, oref, oalt, vkey FROM (
+  -- vmap carries `cnt` = how many distinct originals share this VEP start+allele_string. The
+  -- fastVEP bridge keys on vkey, so an AMBIGUOUS key (cnt>1) cannot be disambiguated; rather than
+  -- silently pick one (which would drop/misattribute fastVEP rows and could flatter the metric),
+  -- the bridge below uses only cnt=1 keys and we warn loudly on any cnt>1 (pi: don't pick silently).
+  SELECT opos, oref, oalt, vkey, count(*) OVER (PARTITION BY vkey) AS cnt FROM (
     SELECT CAST(split_part(input, chr(9), 2) AS BIGINT) AS opos,
       split_part(input, chr(9), 4) AS oref, split_part(input, chr(9), 5) AS oalt,
-      start || ' ' || allele_string AS vkey,
-      row_number() OVER (PARTITION BY start || ' ' || allele_string ORDER BY start) AS rn
+      start || ' ' || allele_string AS vkey
     FROM read_json('/tmp/vep_off.json', format='newline_delimited', sample_size=-1)
-  ) WHERE rn = 1
+  )
 ) TO '/tmp/vmap.csv' (HEADER);", DATE))
 nvr <- sql_csv("SELECT count(*) AS n FROM read_json('/tmp/vep_raw.json')")$n
+amb <- sql_csv("SELECT count(DISTINCT vkey) AS n FROM read_csv('/tmp/vmap.csv', header=true) WHERE cnt > 1")$n
+if (length(amb) && !is.na(amb) && amb > 0)
+  msg(sprintf("WARNING: %d ambiguous VEP normalized keys (distinct originals colliding) excluded from the fastVEP bridge", amb))
 msg(sprintf("VEP %s (%s GRCh38): %d (variant,transcript) rows", oracle, rel, nvr))
 
 ## 4. duckvep (CLI, one session): annotate the sample. Carry the ORIGINAL (v.pos,v.ref,a.alt)
@@ -150,10 +155,11 @@ if (fv_present) {
     SELECT 'fastvep' AS source, '%s' AS date, m.opos, m.oref, m.oalt,
       f.start AS pos, split_part(f.allele_string, '/', 1) AS ref, split_part(f.allele_string, '/', -1) AS alt,
       tc.transcript_id AS transcript_id, COALESCE(tc.gene_symbol, '') AS gene_symbol,
-      list_aggregate(list_sort(tc.consequence_terms), 'string_agg', '&') AS consequence,
+      COALESCE(list_aggregate(list_sort(tc.consequence_terms), 'string_agg', '&'), '') AS consequence,
       COALESCE(tc.impact, '') AS impact
     FROM read_json('/tmp/fv_raw.json', sample_size=-1) f, UNNEST(f.transcript_consequences) AS u(tc)
-    JOIN read_csv('/tmp/vmap.csv', header=true) m ON (f.start || ' ' || f.allele_string) = m.vkey
+    JOIN (SELECT * FROM read_csv('/tmp/vmap.csv', header=true) WHERE cnt = 1) m   -- only unambiguous keys bridge
+      ON (f.start || ' ' || f.allele_string) = m.vkey
   ) TO '/tmp/fv.json' (FORMAT json);", DATE))
   nfv <- sql_csv("SELECT count(*) AS n FROM read_json('/tmp/fv.json')")$n
   msg(sprintf("fastVEP: %d rows", nfv))
