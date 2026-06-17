@@ -40,6 +40,7 @@ fastvep-consequence = { path = "vendor/fastvep-consequence" }
 fastvep-hgvs = { path = "vendor/fastvep-hgvs" }
 arc-swap = "1.9.1"
 serde_json.workspace = true
+bincode.workspace = true
 arrow = "58"
 parquet = { version = "58", default-features = false, features = ["arrow", "zstd"] }
 

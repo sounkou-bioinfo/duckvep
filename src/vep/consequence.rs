@@ -12,6 +12,7 @@
 //! batches, which is why we avoid it.
 
 use crate::vep::engine::{build_context, AnnotatedRow, EngineContext, DEFAULT_DISTANCE};
+use crate::vep::tcache;
 use arc_swap::ArcSwapOption;
 use duckdb::arrow::array::{Array, AsArray};
 use duckdb::arrow::datatypes::Int64Type;
@@ -66,7 +67,22 @@ impl VScalar for VepLoadCache {
         } else {
             DEFAULT_DISTANCE
         };
-        let ctx = build_context(gff3.value(0), fastav, distance)?;
+        // zstd level for the columnar transcript cache — an EXPLICIT space/build-time
+        // tradeoff (1 = fastest build/largest file … 22 = smallest/slowest), not a
+        // buried constant. Only consulted on a COLD build; ignored when an existing
+        // cache is loaded. The 4-arg overload `vep_load_cache(gff3, fasta, distance,
+        // zstd_level)` sets it; otherwise the default applies.
+        let zstd = if input.num_columns() >= 4 {
+            let z = batch.column(3).as_primitive::<Int64Type>();
+            if z.is_null(0) {
+                tcache::DEFAULT_ZSTD
+            } else {
+                z.value(0) as i32
+            }
+        } else {
+            tcache::DEFAULT_ZSTD
+        };
+        let ctx = build_context(gff3.value(0), fastav, distance, zstd)?;
         cache().store(Some(Arc::new(ctx)));
 
         let v = output.flat_vector();
@@ -83,6 +99,11 @@ impl VScalar for VepLoadCache {
             ScalarFunctionSignature::exact(vec![varchar(), varchar()], varchar()),
             // vep_load_cache(gff3, fasta, distance)  -> explicit up/downstream window
             ScalarFunctionSignature::exact(vec![varchar(), varchar(), bigint()], varchar()),
+            // vep_load_cache(gff3, fasta, distance, zstd_level) -> + cold-build zstd level
+            ScalarFunctionSignature::exact(
+                vec![varchar(), varchar(), bigint(), bigint()],
+                varchar(),
+            ),
         ]
     }
 }

@@ -67,14 +67,16 @@ pub(crate) fn build_context(
     gff3: &str,
     fasta: Option<&str>,
     distance: u64,
+    zstd_level: i32,
 ) -> Result<EngineContext, Box<dyn Error>> {
     // The `model` argument is detected by content (not extension):
     //  - a Parquet transcript cache -> load it directly (the fast path), or
     //  - a GFF3 (plain or gzip) -> parse it, and write a columnar Parquet cache
     //    next to it (`<gff3>.transcripts.parquet`) so later loads take the fast
-    //    path. Parsing ~280k transcripts dominates load (~5.7 s); the cache load
-    //    is ~1 s. `build_sequences` is cheap (~0.3 s) and FASTA-specific, so we
-    //    rebuild it fresh below rather than caching it. (docs/DESIGN.md §5.)
+    //    path. Parsing ~280k transcripts dominates the cold build; the warm cache
+    //    load (bincode `model` column) is ~1.5 s. `build_sequences` is cheap and
+    //    FASTA-specific, so we rebuild it fresh below rather than caching it.
+    //    (docs/DESIGN.md §5; cache format in vep::tcache.)
     let mut transcripts = match detect_model_format(gff3)? {
         ModelFormat::ParquetCache => tcache::load(Path::new(gff3))?,
         format => {
@@ -89,7 +91,7 @@ pub(crate) fn build_context(
                     }
                     _ => parse_gff3(gff_file)?,
                 };
-                let _ = tcache::save(&t, &cache_path);
+                let _ = tcache::save(&t, &cache_path, zstd_level);
                 t
             }
         }
@@ -332,7 +334,9 @@ pub(crate) fn annotate(
     fasta: Option<&str>,
     distance: u64,
 ) -> Result<Vec<AnnotatedRow>, Box<dyn Error>> {
-    let ctx = build_context(gff3, fasta, distance)?;
+    // The library entry point builds the cache (if stale) at the default zstd
+    // level; the SQL surface exposes the level via `vep_load_cache(..., zstd)`.
+    let ctx = build_context(gff3, fasta, distance, tcache::DEFAULT_ZSTD)?;
     annotate_all(&ctx, vcf_path, distance)
 }
 

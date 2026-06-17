@@ -690,6 +690,7 @@ version = "0.3.0"
 dependencies = [
  "arc-swap",
  "arrow",
+ "bincode",
  "duckdb",
  "fastvep-cache",
  "fastvep-consequence",
