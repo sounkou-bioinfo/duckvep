@@ -437,7 +437,50 @@ the optimizer plans and parallelizes.** The consequence kernel is the first and
 heaviest of these; getting its join shape right (range join for SNV/SV, partitioned
 aggregate for haplotypes) is what makes the rest fall out as ordinary SQL.
 
-## 9. Summary
+## 9. The SQL surface (`sql/vep.sql`) and what it measured
+
+The "better SQL" is annotation as joins the optimizer plans, over a source-agnostic
+relation — not a black-box `annotate_vcf(path)`, and not a custom table function in
+the hot path. Contract: `src` yields one row per ALT with
+`(chrom, pos UBIGINT, end_pos UBIGINT, ref, alt)` (real `end_pos` = `INFO/END` for
+SVs). The mantra that survived measurement:
+
+* **`SET VARIABLE`** for paths/params (safe; does not break range-join recognition
+  when kept out of the hot inequality — verified).
+* **`CREATE TEMP TABLE` + `ANALYZE`** to normalize/materialize the variant source
+  **once** (avoids re-scanning `read_vcf`; gives the planner statistics).
+* **native `read_parquet(cache)`** for the transcript side (zone-maps + parallel),
+  **never** `vep_transcripts()` for the bulk join (§8 negative result).
+* **`vep_consequence_pair(...) -> nullable STRUCT`**, not `LIST<STRUCT>` — no
+  `LATERAL UNNEST`, no 47 M one-element lists; `WHERE c IS NOT NULL` filters.
+* **lean join**: only `transcript_id` flows through the 47 M-row join; the STRUCT
+  scalar returns gene/biotype/HGVS (carrying them in the join cost ~30 s at WGS).
+* **full-span predicate** `t.start ≤ v.end_pos + d AND t.end_pos ≥ v.pos − d` for
+  correct interval overlap (SVs and multi-base variants).
+
+Measured (HG002, 46,968,985 pairs, `threads=16`):
+
+| shape | wall | RSS |
+|---|---|---|
+| LIST + UNNEST, inline `read_parquet` | 60.6 s | 2.49 GB |
+| STRUCT, lean inline `read_parquet` | 59.9 s | 2.55 GB |
+| STRUCT, lean `vep_annotate` macro (materialize-once + sorted cache) | 78.7 s | **1.65 GB** |
+
+STRUCT ties LIST on wall but is leaner; the macro's materialize-once `TEMP TABLE`
+adds a serial step (~+30%) for a single query but **drops RSS to ~the resident
+model (1.65 GB)** and is reusable across repeated annotation/SA queries on the same
+variants. The cache is now written **sorted by `(chrom, start)`** so zone-maps are
+tight — this pays off for *selective* region/panel queries (pruning row groups),
+not the full-genome scan (which touches every group).
+
+**EXPLAIN guardrail (honest caveat):** DuckDB plans this as a parallel
+`HASH_JOIN` on `chrom` **+ a range filter**, not a pure IEJoin/range join. It
+parallelizes, but the `chrom` equality dominates (≈24 skewed hash buckets), so the
+range is applied as a post-hash filter. Forcing a true range join (or a tx ordinal
+to partition more evenly) is the next optimization; the current plan is parallel
+and correct but not the textbook range join.
+
+## 10. Summary
 
 * Baseline is **`B = 3 s` (sequential I/O)**, not fastVEP. Optimal kernel is
   **`Θ(P·c)`**; today we sit at ~50·B because of `N·log T` random, cache-missing

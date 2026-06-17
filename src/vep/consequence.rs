@@ -303,13 +303,111 @@ unsafe fn write_consequence_list(
     list.set_len(total);
 }
 
-/// `vep_consequence_pair(chrom, pos, ref, alt, transcript_id) -> LIST<STRUCT>`
+/// Write one `consequence_struct()` per input row into `output` as a nullable
+/// top-level `STRUCT` (NULL where the pair yields no consequence). Used by the
+/// per-pair kernel: the range join already selected exactly one transcript, so
+/// the result is 0-or-1 — a `STRUCT` is the right shape, not a 1-element list.
+/// The inner `consequence` field stays `LIST<VARCHAR>` (one pair can hit several
+/// SO terms, e.g. splice_region & intron).
+unsafe fn write_consequence_struct(
+    output: &mut dyn WritableVector,
+    rows: &[Option<AnnotatedRow>],
+    nrows: usize,
+) {
+    // Per struct row, the slice of SO terms; None rows contribute an empty list.
+    let mut so_flat: Vec<&str> = Vec::new();
+    let mut so_offsets: Vec<usize> = Vec::with_capacity(nrows + 1);
+    so_offsets.push(0);
+    for r in rows {
+        if let Some(r) = r {
+            so_flat.extend(r.consequence.iter().map(String::as_str));
+        }
+        so_offsets.push(so_flat.len());
+    }
+
+    let mut sv = output.struct_vector();
+    // varchar/scalar children are written for every row (empty for None rows);
+    // the struct validity is nulled at the end so DuckDB ignores those slots.
+    macro_rules! vcol {
+        ($i:expr, $f:ident) => {{
+            let v = sv.child($i, nrows);
+            for (j, r) in rows.iter().enumerate() {
+                match r {
+                    Some(r) => v.insert(j, &*r.$f),
+                    None => v.insert(j, ""),
+                }
+            }
+        }};
+    }
+    vcol!(0, transcript_id);
+    vcol!(1, gene_id);
+    vcol!(2, gene_symbol);
+    vcol!(3, biotype);
+    {
+        let mut v = sv.child(4, nrows);
+        let s = v.as_mut_slice::<bool>();
+        for (j, r) in rows.iter().enumerate() {
+            s[j] = r.as_ref().map(|r| r.canonical).unwrap_or(false);
+        }
+    }
+    {
+        // consequence: LIST<VARCHAR> child of the struct (see write_consequence_list
+        // for why we write the inner entry array directly rather than set_entry).
+        {
+            let inner = sv.list_vector_child(5);
+            {
+                let cc = inner.child(so_flat.len().max(1));
+                for (k, s) in so_flat.iter().enumerate() {
+                    cc.insert(k, *s);
+                }
+            }
+            inner.set_len(so_flat.len());
+        }
+        let mut entry_vec = sv.child(5, nrows);
+        let entries = entry_vec.as_mut_slice::<duckdb::ffi::duckdb_list_entry>();
+        for j in 0..nrows {
+            entries[j].offset = so_offsets[j] as u64;
+            entries[j].length = (so_offsets[j + 1] - so_offsets[j]) as u64;
+        }
+    }
+    vcol!(6, impact);
+    vcol!(7, amino_acids);
+    vcol!(8, codons);
+    {
+        let mut v = sv.child(9, nrows);
+        {
+            let s = v.as_mut_slice::<i64>();
+            for (j, r) in rows.iter().enumerate() {
+                s[j] = r.as_ref().and_then(|r| r.protein_pos).unwrap_or(0);
+            }
+        }
+        for (j, r) in rows.iter().enumerate() {
+            if r.as_ref().and_then(|r| r.protein_pos).is_none() {
+                v.set_null(j);
+            }
+        }
+    }
+    vcol!(10, alt);
+    vcol!(11, hgvsc);
+    vcol!(12, hgvsp);
+    vcol!(13, hgvsg);
+
+    // Null the whole struct for rows that produced no consequence.
+    for (j, r) in rows.iter().enumerate() {
+        if r.is_none() {
+            sv.set_null(j);
+        }
+    }
+}
+
+/// `vep_consequence_pair(chrom, pos, [end_pos,] ref, alt, transcript_id) -> STRUCT`
 /// — the **per-pair** kernel. Annotates a variant against ONE named transcript
 /// (looked up by id), so DuckDB can drive annotation from a parallel range join
-/// (`variants JOIN transcripts ON pos BETWEEN start-d AND end+d`) instead of the
-/// serial per-variant spatial lookup. Returns a 0/1-element list (empty when the
-/// pair yields no consequence, e.g. beyond the up/downstream window). See
-/// docs/kernel-algorithm.md §6.
+/// instead of the serial per-variant spatial lookup. Returns a nullable `STRUCT`
+/// (NULL when the pair yields no consequence — filter with `WHERE c IS NOT NULL`),
+/// not a 1-element `LIST`, since the join already picked exactly one transcript.
+/// The 6-arg form carries `end_pos` (the full ref span / `INFO/END`) so symbolic
+/// structural alleles span their interval. See docs/kernel-algorithm.md §6/§8.
 pub struct VepConsequencePair;
 
 impl VScalar for VepConsequencePair {
@@ -321,44 +419,50 @@ impl VScalar for VepConsequencePair {
         output: &mut dyn WritableVector,
     ) -> Result<(), Box<dyn Error>> {
         let batch = data_chunk_to_arrow(input)?;
+        // Arities: (chrom,pos,ref,alt,tid) and the END-aware
+        // (chrom,pos,end_pos,ref,alt,tid) that spans structural variants.
+        let has_end = batch.num_columns() == 6;
         let chrom = batch.column(0).as_string::<i32>();
         let pos = batch.column(1).as_primitive::<Int64Type>();
-        let refa = batch.column(2).as_string::<i32>();
-        let alta = batch.column(3).as_string::<i32>();
-        let tid = batch.column(4).as_string::<i32>();
+        let end = has_end.then(|| batch.column(2).as_primitive::<Int64Type>());
+        let refa = batch.column(if has_end { 3 } else { 2 }).as_string::<i32>();
+        let alta = batch.column(if has_end { 4 } else { 3 }).as_string::<i32>();
+        let tid = batch.column(if has_end { 5 } else { 4 }).as_string::<i32>();
         let nrows = input.len();
 
-        let mut flat: Vec<AnnotatedRow> = Vec::new();
-        let mut list_offsets: Vec<usize> = Vec::with_capacity(nrows + 1);
-        list_offsets.push(0);
+        let mut rows: Vec<Option<AnnotatedRow>> = Vec::with_capacity(nrows);
         {
             let ctx = cache()
                 .load_full()
                 .ok_or("vep_consequence_pair: call vep_load_cache(gff3, fasta) first")?;
             for i in 0..nrows {
                 let p = pos.value(i) as u64;
-                flat.extend(ctx.annotate_pair(
-                    chrom.value(i),
-                    p,
-                    p,
-                    refa.value(i),
-                    alta.value(i),
-                    tid.value(i),
-                ));
-                list_offsets.push(flat.len());
+                let e = end.map(|c| c.value(i) as u64).unwrap_or(p);
+                // One (variant, transcript, allele) yields 0 or 1 consequence row.
+                let mut v =
+                    ctx.annotate_pair(chrom.value(i), p, e, refa.value(i), alta.value(i), tid.value(i));
+                rows.push(v.pop());
             }
         }
-        write_consequence_list(output, &flat, &list_offsets, nrows);
+        write_consequence_struct(output, &rows, nrows);
         Ok(())
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
         let bigint = || LogicalTypeHandle::from(LogicalTypeId::Bigint);
-        let ret = || LogicalTypeHandle::list(&consequence_struct());
-        vec![ScalarFunctionSignature::exact(
-            vec![varchar(), bigint(), varchar(), varchar(), varchar()],
-            ret(),
-        )]
+        let ret = consequence_struct;
+        vec![
+            // (chrom, pos, ref, alt, transcript_id) — end defaults to pos
+            ScalarFunctionSignature::exact(
+                vec![varchar(), bigint(), varchar(), varchar(), varchar()],
+                ret(),
+            ),
+            // (chrom, pos, end_pos, ref, alt, transcript_id) — END-aware (SV span)
+            ScalarFunctionSignature::exact(
+                vec![varchar(), bigint(), bigint(), varchar(), varchar(), varchar()],
+                ret(),
+            ),
+        ]
     }
 }
 

@@ -45,7 +45,7 @@ const BATCH_ROWS: usize = 8192;
 /// file / slowest build.
 pub(crate) const DEFAULT_ZSTD: i32 = 3;
 
-fn build_batch(schema: &Arc<Schema>, chunk: &[Transcript]) -> Result<RecordBatch, Box<dyn Error>> {
+fn build_batch(schema: &Arc<Schema>, chunk: &[&Transcript]) -> Result<RecordBatch, Box<dyn Error>> {
     let mut tid = Vec::with_capacity(chunk.len());
     let (mut chrom, mut gid, mut sym, mut bt, mut model) = (
         Vec::with_capacity(chunk.len()),
@@ -57,7 +57,7 @@ fn build_batch(schema: &Arc<Schema>, chunk: &[Transcript]) -> Result<RecordBatch
     let (mut start, mut end) = (Vec::with_capacity(chunk.len()), Vec::with_capacity(chunk.len()));
     let mut strand = Vec::with_capacity(chunk.len());
     let mut canon = Vec::with_capacity(chunk.len());
-    for t in chunk {
+    for &t in chunk {
         tid.push(t.stable_id.to_string());
         chrom.push(t.chromosome.to_string());
         start.push(t.start as i64);
@@ -113,9 +113,20 @@ pub(crate) fn save(
         .set_compression(Compression::ZSTD(ZstdLevel::try_new(level)?))
         .build();
     let mut w = ArrowWriter::try_new(File::create(path)?, schema.clone(), Some(props))?;
+    // Write the cache SORTED by (chrom, start) so each row group's min/max
+    // statistics (Parquet zone-maps) are tight. The bulk annotation path is a
+    // range join on `chrom` + `start`/`end_pos`; tight zone-maps let DuckDB prune
+    // row groups during the join (docs/kernel-algorithm.md §8). Sorting refs is
+    // cheap (~645k pointers) and keeps the streaming row-group writer.
+    let mut order: Vec<&Transcript> = transcripts.iter().collect();
+    order.sort_by(|a, b| {
+        a.chromosome
+            .cmp(&b.chromosome)
+            .then(a.start.cmp(&b.start))
+    });
     // Stream one row-group batch at a time: each batch's serialized + Arrow copies
     // are dropped before the next is built, so peak memory is O(BATCH_ROWS).
-    for chunk in transcripts.chunks(BATCH_ROWS) {
+    for chunk in order.chunks(BATCH_ROWS) {
         w.write(&build_batch(&schema, chunk)?)?;
     }
     w.close()?;
