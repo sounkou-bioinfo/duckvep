@@ -225,6 +225,9 @@ COPY (WITH v AS (SELECT opos,oref,oalt,transcript_id,consequence vc FROM ann WHE
         ('duckvep_missing_pairs_emission',(SELECT count(*) FROM (SELECT * FROM vk EXCEPT SELECT * FROM dk))),
         ('duckvep_total_divergence',(SELECT count(*) FROM v JOIN dd USING(opos,oref,oalt,transcript_id) WHERE vc<>dc)
            + (SELECT count(*) FROM (SELECT * FROM dk EXCEPT SELECT * FROM vk)) + (SELECT count(*) FROM (SELECT * FROM vk EXCEPT SELECT * FROM dk))),
+        -- duckvep-specific on shared pairs: duckvep != VEP AND fastVEP == VEP (the vendored engine gets it right)
+        ('duckvep_specific_on_shared',(SELECT count(*) FROM v JOIN dd USING(opos,oref,oalt,transcript_id)
+           LEFT JOIN f USING(opos,oref,oalt,transcript_id) WHERE vc<>dc AND fc IS NOT DISTINCT FROM vc)),
         ('fastvep_discordant_on_shared',(SELECT count(*) FROM v JOIN f USING(opos,oref,oalt,transcript_id) WHERE vc<>fc)),
         ('fastvep_only_pairs_emission',(SELECT count(*) FROM (SELECT * FROM fk EXCEPT SELECT * FROM vk))),
         ('fastvep_missing_pairs_emission',(SELECT count(*) FROM (SELECT * FROM vk EXCEPT SELECT * FROM fk))),

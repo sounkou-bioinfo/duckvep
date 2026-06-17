@@ -25,14 +25,16 @@ Concordance with Ensembl VEP is measured rather than assumed. On a
 controlled `--gff` setup, where VEP, duckvep and the vendored fastVEP
 read the same gene model and results are keyed to the original input
 variant, duckvep diverges from VEP on 239 of roughly 1.44M
-variant/transcript pairs (N=50,000 ClinVar variants); 92 of those are
-duckvep-specific, meaning fastVEP matches VEP where duckvep does not,
-against 5,063 divergences for fastVEP. The remaining cases are boundary
-indels where VEP 3’-shifts the allele before calling consequence. The
-reports under [`conformance/`](conformance/) are stratified by
-consequence term, variant type and length bin with exact 95% confidence
-intervals; the framework is a differential falsifier and an empirical
-bound, not a proof. Known gaps are tracked in
+variant/transcript pairs (N=50,000 ClinVar variants): 210 with a
+different consequence on a shared pair plus 29 emission differences. Of
+the shared-pair disagreements, 92 are duckvep-specific (fastVEP matches
+VEP where duckvep does not); fastVEP itself diverges on 5,063 pairs. The
+remaining duckvep cases are boundary indels where VEP 3’-shifts the
+allele before calling consequence. The reports under
+[`conformance/`](conformance/) are stratified by consequence term,
+variant type and length bin with exact 95% confidence intervals; the
+framework is a differential falsifier and an empirical bound, not a
+proof. Known gaps are tracked in
 [`correctness/`](correctness/correctness.md) and
 [`conformance/`](conformance/).
 

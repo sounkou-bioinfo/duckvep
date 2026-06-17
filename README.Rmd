@@ -12,6 +12,20 @@ knitr::opts_chunk$set(mode = "markdown", session = "readme",
                       comment = "", results = "asis")
 ```
 
+```{r conformance-numbers, include=FALSE}
+# Headline conformance figures are READ from the recorded reports, never typed in the prose —
+# so they can't go stale when the harness is re-run (correctness/vep_concordance.R writes them).
+.ma  <- read.csv("correctness/data/methodology_audit.csv", stringsAsFactors = FALSE)
+.mav <- setNames(.ma$value, .ma$metric)
+.ci  <- read.csv("correctness/data/concordance_by_impact.csv", stringsAsFactors = FALSE)
+n_variants  <- format(max(.ci$n_variants), big.mark = ",")
+total_pairs <- sprintf("%.2fM", sum(.ci$pairs[.ci$engine == "duckvep"]) / 1e6)
+k <- function(m) format(.mav[[m]], big.mark = ",")
+dv_total <- k("duckvep_total_divergence"); dv_shared <- k("duckvep_discordant_on_shared")
+dv_emit  <- k("duckvep_only_pairs_emission"); dv_spec  <- k("duckvep_specific_on_shared")
+fv_total <- k("fastvep_total_divergence")
+```
+
 # duckvep — VEP-style variant consequences in DuckDB
 
 <!-- badges: start -->
@@ -28,13 +42,15 @@ v1.5.3 with unsigned extension loading.
 
 Concordance with Ensembl VEP is measured rather than assumed. On a controlled `--gff` setup, where
 VEP, duckvep and the vendored fastVEP read the same gene model and results are keyed to the original
-input variant, duckvep diverges from VEP on 239 of roughly 1.44M variant/transcript pairs (N=50,000
-ClinVar variants); 92 of those are duckvep-specific, meaning fastVEP matches VEP where duckvep does
-not, against 5,063 divergences for fastVEP. The remaining cases are boundary indels where VEP
-3'-shifts the allele before calling consequence. The reports under [`conformance/`](conformance/)
-are stratified by consequence term, variant type and length bin with exact 95% confidence intervals;
-the framework is a differential falsifier and an empirical bound, not a proof. Known gaps are tracked
-in [`correctness/`](correctness/correctness.md) and [`conformance/`](conformance/).
+input variant, duckvep diverges from VEP on `r dv_total` of roughly `r total_pairs` variant/transcript
+pairs (N=`r n_variants` ClinVar variants): `r dv_shared` with a different consequence on a shared pair
+plus `r dv_emit` emission differences. Of the shared-pair disagreements, `r dv_spec` are
+duckvep-specific (fastVEP matches VEP where duckvep does not); fastVEP itself diverges on `r fv_total`
+pairs. The remaining duckvep cases are boundary indels where VEP 3'-shifts the allele before calling
+consequence. The reports under [`conformance/`](conformance/) are stratified by consequence term,
+variant type and length bin with exact 95% confidence intervals; the framework is a differential
+falsifier and an empirical bound, not a proof. Known gaps are tracked in
+[`correctness/`](correctness/correctness.md) and [`conformance/`](conformance/).
 
 Beyond single-variant calls, `vep_haplotype_consequence` applies phased variants together, in the
 style of bcftools-`csq` and haplosaurus, so a silent SNV becomes missense when phased with its
@@ -285,7 +301,7 @@ inputs: [`scripts/fetch-data.R`](scripts/fetch-data.R) (pinned versions).
 The main accuracy work is to port VEP's `TranscriptVariationAllele` coordinate layer (the
 cDNA/CDS/protein mapper, `codon()`/`peptide()`, and the start/stop/frameshift predicates). VEP
 3'-shifts an indel before calling consequence; duckvep does not yet, which is the source of the
-92 duckvep-specific boundary-indel divergences in the conformance report. Porting that layer
+`r dv_spec` duckvep-specific boundary-indel divergences in the conformance report. Porting that layer
 replaces the current windowed-peptide surrogate with VEP's own coordinate model and is what would
 turn the differential conformance framework from a falsifier into a soundness argument. Secondary
 items — multi-transcript/opposite-strand witnesses, the haplotype path's compound-block flush, and
