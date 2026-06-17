@@ -322,6 +322,36 @@ runs into the bandwidth wall of the random-access (cgranges) index** → **the
 sweep-line is what makes the parallel cores actually pay off**. Parallelism and
 the streaming inversion are complements, not alternatives.
 
+### Negative result: a custom transcript table function is *worse* SQL
+
+The obvious "better SQL" idea — expose the resident model as a `vep_transcripts()`
+table function and `JOIN` it directly (one source of truth, no parquet re-read) —
+measured **worse on every axis**:
+
+| join source | wall | CPU | peak RSS |
+|---|---|---|---|
+| `read_parquet(cache)` (native scan) | 61 s | 1333% (~13 cores) | 2.49 GB |
+| `vep_transcripts()` (table function) | 185 s | 222% (~2 cores) | 6.24 GB |
+
+Same count, but **3× slower, 2.5× the memory, barely parallel** (1.9 M page
+faults). The cause is the same as the serial `read_vcf`: a custom table function
+is an **eager, serial, statistics-less scan**. `read_parquet` hands DuckDB
+**row-group zone-maps (min/max)** so the range-join optimizer can **prune and
+partition**, plus a **parallel** scan; the table function offers neither, so the
+planner falls back to a worse, serial, memory-heavy plan.
+
+The lesson: **better SQL means leaning *harder* on DuckDB's native operators, not
+wrapping data in custom UDFs.** `read_parquet` *is* the better SQL. The real
+levers are (1) keep the native parquet scan; (2) store the cache **sorted by
+`(chrom, start)`** so zone-maps are tight and pruning is maximal; (3) shrink the
+per-pair scalar to return a nullable **`STRUCT`** instead of `LIST<STRUCT>` (kills
+47 M one-element-list allocations; lets `WHERE c IS NOT NULL` push down). The
+double-resident model is not worth a table function to "fix" — the engine must be
+resident for the sequence kernel regardless, and the parquet scan's cost is what
+*buys* the parallelism. `vep_transcripts()` remains useful for *interactive*
+gene-model queries (panels, biotype filters, SA-style joins on 645k rows), just
+not as the bulk-annotation join driver.
+
 ## 8. One join, four granularities: SV, haplotype, supplementary annotation
 
 Consequence prediction is not a special problem — it is one instance of "match

@@ -31,6 +31,12 @@ fn cache() -> &'static ArcSwapOption<EngineContext> {
     CACHE.get_or_init(ArcSwapOption::empty)
 }
 
+/// Lock-free snapshot of the loaded engine, for other modules (e.g. the
+/// `vep_transcripts()` table function) that need to read the shared gene model.
+pub(crate) fn loaded_engine() -> Option<std::sync::Arc<EngineContext>> {
+    cache().load_full()
+}
+
 fn varchar() -> LogicalTypeHandle {
     LogicalTypeHandle::from(LogicalTypeId::Varchar)
 }

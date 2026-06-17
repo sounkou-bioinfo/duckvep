@@ -17,6 +17,7 @@ use crate::vep::consequence::{
     VepConsequence, VepConsequencePair, VepHaplotypeConsequence, VepLoadCache,
 };
 use crate::vep::normalize::NormalizeVariant;
+use crate::vep::transcripts::VepTranscripts;
 
 #[duckdb_entrypoint_c_api()]
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
@@ -28,6 +29,8 @@ pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>
         .expect("failed to register vep_annotate");
     con.register_table_function::<ReadGffTranscripts>("read_gff_transcripts")
         .expect("failed to register read_gff_transcripts");
+    con.register_table_function::<VepTranscripts>("vep_transcripts")
+        .expect("failed to register vep_transcripts");
     con.register_scalar_function::<VepLoadCache>("vep_load_cache")
         .expect("failed to register vep_load_cache");
     con.register_scalar_function::<VepConsequence>("vep_consequence")

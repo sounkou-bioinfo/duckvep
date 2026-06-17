@@ -129,6 +129,12 @@ pub(crate) fn build_context(
 }
 
 impl EngineContext {
+    /// Iterate every transcript in the loaded model — backs the `vep_transcripts()`
+    /// table function so the gene model is a first-class SQL relation.
+    pub(crate) fn transcript_iter(&self) -> impl Iterator<Item = &Transcript> {
+        self.transcripts.iter()
+    }
+
     /// END-aware kernel. `end` is the variant interval end (`INFO/END` for SVs);
     /// for SNVs/indels it is `pos + len(ref) - 1`. Structural alt alleles
     /// (symbolic `<DEL>`/`<DUP>`/`<CNV>`/`<INV>`, breakends) are dispatched to the

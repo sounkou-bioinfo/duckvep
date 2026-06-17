@@ -129,6 +129,13 @@ impl IndexedTranscriptProvider {
         self.by_chrom.get(chrom).and_then(|trs| trs.get(*i))
     }
 
+    /// Iterate every transcript in the model — backs the `vep_transcripts()`
+    /// table function, which exposes the resident gene model as a SQL relation so
+    /// the range join reads it directly instead of re-reading the parquet cache.
+    pub fn iter(&self) -> impl Iterator<Item = &Transcript> {
+        self.by_chrom.values().flat_map(|v| v.iter())
+    }
+
     /// Resolve a query chromosome to its stored `(transcripts, suffix_max_end)`
     /// buckets, tolerating a `chr` prefix mismatch between the VCF and the gene
     /// model — VEP normalizes `chr1`↔`1` and `chrM`↔`MT`. Without this, a
