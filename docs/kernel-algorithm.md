@@ -416,7 +416,32 @@ full object path on all 47 M; the sweep engine runs cheap masks on 47 M and the
 codon kernel only on the CDS bucket. Projected: I/O-bound VCF read (~3–7 s) + ~1 s
 kernel, vs today's 45 s. (Caveat: masks are coarse — splice = within-8bp, UTR not
 5′/3′-split — semantics get faithful in the real port; the *cost structure* is what
-this proves.) So the "join is 70% of wall" finding does **not** mean candidate
+this proves.)
+
+**Prototype D — codon kernel on the CDS bucket (`examples/codon_bench.rs`).** All
+457 M CDS bases packed nt2 (2 bits/base → 114 MB, 4× smaller than ASCII); 256 k
+codon classifications (the measured CDS-bucket size) with random access (the
+realistic scattered-CDS cache pattern): fetch ref codon, apply alt, translate
+ref+alt via a 64-entry LUT, classify syn/missense/stop. **13 ms single-threaded**
+(memory-latency-bound, as libsais predicts — but tiny because the bucket is small).
+
+**The complete cost picture, measured (HG002 WGS, single thread):**
+
+| stage | unit | wall |
+|---|---|---|
+| candidate generation (sweep) | 47 M pairs | 0.047 s |
+| structural classification (masks) | 47 M pairs | 0.673 s |
+| codon kernel | 256 k CDS | 0.013 s |
+| **total compute** | | **~0.73 s** |
+
+vs DuckDB's current path **45 s / 12 cores** → **~60× faster wall, ~700× fewer
+core-seconds**. The whole VEP consequence computation is **~0.73 s of compute**; the
+45 s is ~98% overhead (general-purpose join materialization + object-heavy per-pair
+kernel + string marshalling). The engine becomes **I/O-bound on the VCF read** —
+exactly the §1 disk baseline. This is the full empirical justification for the
+big-bang sweep-engine over SoA: build the tiled sweep + branch-light masks +
+bucketed codon kernel + late opt-in HGVS, with fastVEP demoted to a regression
+oracle. So the "join is 70% of wall" finding does **not** mean candidate
 generation is expensive — it means DuckDB's general-purpose hash-join is
 catastrophically wasteful for an interval sweep. Overlap discovery is intrinsically
 ~50 ms. With the sweep, candidate generation **evaporates**, the engine becomes

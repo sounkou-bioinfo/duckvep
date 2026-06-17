@@ -17,6 +17,7 @@ use crate::vep::consequence::{
     VepConsequence, VepConsequencePair, VepConsequencePairIdx, VepHaplotypeConsequence, VepLoadCache,
 };
 use crate::vep::normalize::NormalizeVariant;
+use crate::vep::cdsseq::VepCdsSeq;
 use crate::vep::exons::VepExons;
 use crate::vep::transcripts::VepTranscripts;
 
@@ -34,6 +35,8 @@ pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>
         .expect("failed to register vep_transcripts");
     con.register_table_function::<VepExons>("vep_exons")
         .expect("failed to register vep_exons");
+    con.register_table_function::<VepCdsSeq>("vep_cds_seq")
+        .expect("failed to register vep_cds_seq");
     con.register_scalar_function::<VepLoadCache>("vep_load_cache")
         .expect("failed to register vep_load_cache");
     con.register_scalar_function::<VepConsequence>("vep_consequence")
