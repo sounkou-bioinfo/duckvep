@@ -118,10 +118,12 @@ directly. See `vendor/NOTICE.md`.
 
 **Scope decision:** duckvep targets the organisms Ensembl's VEP MySQL (or a
 compatible service / local mirror) offers — we do **not** chase general-organism
-GFF3. Riding on Ensembl's canonical core schema buys **exact `ensembl-vep` and
-`haplosaurus` compatibility by construction**: same transcript set, same
-attributes, same HGVS exceptions — not a re-derived approximation. (VEP's own
-cache is Perl `Storable` *derived from this same DB*; we skip that format
+GFF3. Riding on Ensembl's canonical core schema buys **transcript/attribute
+compatibility** with `ensembl-vep`/`haplosaurus`: the same transcript set, attributes,
+and HGVS exceptions feed the engine. (Engine-level consequence compatibility is a
+separate matter — it still requires the `TranscriptVariationAllele` coordinate-layer
+port; see docs/refinements.md.) (VEP's own cache is Perl `Storable` *derived from this
+same DB*; we skip that format
 entirely.)
 
 **Runtime artifact = a local DuckDB database** holding the slices we require,
@@ -288,19 +290,21 @@ Adding a source = produce a Parquet + one line in the SQL manifest (§4).
 
 ### 3.4 Variant normalization (required, not optional)
 
-A join-based annotation design is only correct if both sides are normalized the
-**same** way — otherwise `(chrom,pos,ref,alt)` equi-joins silently miss
-(`AT/A` vs left-aligned `T/`). So normalization is a first-class, reference-aware
-kernel (like the duckhts/bcftools-norm functions), applied at **both**
-`fastvep build` time (sources) and query time (variants):
+A join-based annotation design is only correct if both sides are normalized by the
+**same function/version** — otherwise `(chrom,pos,ref,alt)` equi-joins silently miss
+(`AT/A` vs a differently-aligned `T/`). So normalization is a first-class kernel applied
+at **both** `fastvep build` time (sources) and query time (variants):
 
 ```sql
-normalize_variant(chrom, pos, ref, alt, fasta)  -- left-align + parsimony/trim → STRUCT
-split_multiallelic(ref, alt)                     -- → LIST of biallelic records
+normalize_variant(pos, ref, alt)  -- anchor-trim to minimal form → STRUCT  (FASTA left-align: planned)
+split_multiallelic(ref, alt)      -- → LIST of biallelic records
 ```
 
-Canonicalization rule (left-align + minimal representation) is fixed and
-documented so sources built today match queries run later.
+The shipped `normalize_variant` is **trim-only** (anchor/parsimony trim), not yet a
+reference-aware left-aligner. Two consequences: (1) annotation joins are valid only between
+sources normalized with this same function; (2) it is **not** a valid key for differential
+VEP conformance — VEP and duckvep 3'-shift indels differently, so the conformance harness keys
+on the original input variant, not the normalized form (see `correctness/vep_concordance.R`).
 
 ### 3.5 Haplotype-aware consequence (bcftools csq-style) — roadmap
 
@@ -336,13 +340,15 @@ metadata, or into the bundled `duckdb` file. This replaces `sa-build` and every
 
 ---
 
-## 5. The cache is a native DuckDB file (core-only runtime)
+## 5. The transcript cache (columnar)
 
-The runtime cache is a **native DuckDB database** (`.duckdb`) holding relational
-tables, read with `ATTACH … (READ_ONLY)`. **Runtime requires DuckDB core only —
-no Parquet, no MySQL, no extensions** (verified: a GFF-built cache reads back in
-plain `duckdb` with no `-unsigned` and nothing loaded). This replaces the bincode
-`transcript_cache.rs`.
+**Implemented today:** `vep_load_cache` parses a GFF3 once and writes a columnar
+`<gff3>.transcripts.parquet`; later loads read that Parquet directly (no re-parse).
+This replaces the bincode `transcript_cache.rs`.
+
+**Planned:** a self-contained native DuckDB database (`.duckdb`) read with
+`ATTACH … (READ_ONLY)` so the runtime needs DuckDB core only (no Parquet dependency).
+Not yet the default path.
 
 **Schema (relational, mirrors Ensembl):** `transcripts(transcript_id, chrom,
 start, end_pos, strand, biotype, gene_id, gene_symbol, canonical, coding, tsl,
@@ -360,7 +366,8 @@ zone-map pruning.
   `assemble.sql`) loads Ensembl's published flat-file MySQL **dumps** (no live
   server, no flakiness) and assembles a columnar Parquet cache inheriting the
   curated flags (MANE, cds_start_NF/cds_end_NF, selenocysteine, regulatory build).
-  Organism/build-agnostic. Exact ensembl-vep fidelity. ✅ (see correctness/cache-build/README.md)
+  Organism/build-agnostic; inherits Ensembl's curated transcript attributes (engine-level
+  consequence fidelity still depends on the coordinate-layer port). ✅ (see correctness/cache-build/README.md)
 
 MySQL/Parquet are *build-time only*; either way the runtime artifact is the same
 core-only `.duckdb`.
@@ -432,8 +439,9 @@ web server.
 - **SQL behavior:** DuckDB sqllogictest under `test/sql/`.
 - **Living docs:** `README.Rmd` rendered with **duckknit** (rundel/duckknit) —
   example SQL runs against the built extension, outputs are real.
-- **Parity:** harness diffing `duckvep` output vs current `fastvep annotate`
-  (golden VCF/tab/JSON) on `tests/`, `validation/human`, `validation/mouse`.
+- **Parity:** harness diffing `duckvep` output vs `fastvep annotate` (golden
+  VCF/tab/JSON) on `tests/`, `validation/human`, `validation/mouse` as a regression
+  guard. The accuracy *oracle* is Ensembl VEP run controlled `--gff`, not fastVEP.
 - **Full-size GIAB:** fetch scripts for HG001/HG002 (GRCh38) truth VCFs; a
   bench harness (hyperfine for end-to-end, criterion for hot Rust paths)
   measuring throughput vs fastVEP and VEP. Full-size runs are gated (env flag /

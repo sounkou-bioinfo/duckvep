@@ -35,8 +35,8 @@ correctness/cache-build/build-cache.R [species] [release] [build]
 Organism- and build-agnostic — the database name is built from the args,
 so this works for **every species and assembly in Ensembl**:
 
-| target                          | command                                       |
-|---------------------------------|-----------------------------------------------|
+| target                          | command                                      |
+|---------------------------------|----------------------------------------------|
 | GRCh38 (default)                | `build-cache.R homo_sapiens 116 38`          |
 | GRCh37 (frozen)                 | `build-cache.R homo_sapiens 113 37`          |
 | mouse                           | `build-cache.R mus_musculus 116 39`          |

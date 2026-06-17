@@ -2,47 +2,53 @@
 <!-- README.md is generated from README.Rmd — edit the .Rmd and run `make readme`.
      SQL blocks below are executed live against the built extension via duckknit. -->
 
-# duckvep — Ensembl VEP as DuckDB SQL
+# duckvep — VEP-style variant consequences in DuckDB
 
-A loadable DuckDB extension (Rust) that runs the **Ensembl VEP
-consequence engine** (+ HGVS) as SQL functions over genomics formats
-read with [noodles](https://github.com/zaeleus/noodles), and treats
-annotation databases as plain Parquet/DuckDB tables joined by the
+A loadable DuckDB extension (Rust) that implements Ensembl-VEP-style
+consequence prediction and HGVS as SQL functions over genomics formats
+read with [noodles](https://github.com/zaeleus/noodles). The consequence
+engine is a Rust port of [fastVEP](https://github.com/Huang-lab/fastVEP)
+with accuracy patches (see [docs/PATCHES.md](docs/PATCHES.md));
+annotation databases are plain Parquet/DuckDB tables joined by the
 optimizer.
 
-- **Conformance, measured — not claimed.** On a *controlled* `--gff`
-  oracle (all engines read the same gene model), **stratified by
-  consequence term × variant type × length bin with exact 95% CIs** over
-  a diverse real corpus (ClinVar + GIAB AJ/Han/male/female + 1000G),
-  every divergence is *shared* with the vendored fastVEP — **0
-  duckvep-specific *on that distribution***. And the honest part:
-  [`conformance/`](conformance/)'s **formal tier** — systematic
-  equivalence-class witnesses generated via duckhts (TP53: 968 witnesses
-  → 39,048 pairs) — pins the engine's real frontier at **71 divergences,
-  all `start_codon`/`stop_codon`, 0 duckvep-specific** (fastVEP diverges
-  from VEP identically on each). It is a *falsifier + empirical bound*,
-  **not a proof**: formal + statistical + real-world meet at one
-  differential fuzzer that becomes a proof only as the engine is ported
-  1:1 from VEP. (An earlier "boundary-indel" tail was a normalized-key
-  artifact, removed by keying all engines to the original witness identity.)
-- **Haplotype-aware.** `vep_haplotype_consequence` applies *phased*
-  variants together (bcftools-`csq` / haplosaurus), so a silent SNV
-  flips to missense when phased with its neighbour.
+Status: a native DuckDB extension under active development. Local builds
+require DuckDB v1.5.3 and unsigned extension loading. Concordance with
+Ensembl VEP is measured, not assumed; known divergences are concentrated
+in start/stop-codon and indel/MNV coordinate handling and are tracked
+under [`correctness/`](correctness/correctness.md) and
+[`conformance/`](conformance/).
+
+- **Conformance is measured against Ensembl VEP.** On a controlled
+  `--gff` setup (VEP, duckvep and the vendored fastVEP read the same
+  gene model), keyed to the original input variant, on N=50,000 ClinVar
+  variants (~1.44M variant/transcript pairs): duckvep diverges from VEP
+  on **239 pairs**, of which **92 are duckvep-specific** (fastVEP
+  matches VEP there) — versus **5,063** for fastVEP. The remaining
+  duckvep divergences are boundary indels where VEP 3’-shifts the allele
+  before calling consequence. Reports are stratified by term × variant
+  type × length bin with exact 95% CIs under
+  [`conformance/`](conformance/); the framework is a differential
+  falsifier and empirical bound, not a proof.
+- **Haplotype-aware (experimental).** `vep_haplotype_consequence`
+  applies *phased* variants together (bcftools-`csq` / haplosaurus), so
+  a silent SNV flips to missense when phased with its neighbour.
 - **Annotations are joins, not flags.** Any source (gnomAD, ClinVar,
   conservation, custom BED) is a Parquet/DuckDB table joined on
-  `normalize_variant`’s canonical key — exact-variant and interval
-  annotation at any scale, composed in SQL (a `sources.sql` manifest +
-  an `annotate_vcf()` macro), not a CLI flag per source. Composes with
-  the **duckhts** extension in one session.
-- **Columnar transcript cache** built directly from Ensembl MySQL dumps
-  (MANE / `cds_start_NF` / selenocysteine flags inherited). Pure-Rust
-  stack → targets **WASM** (not yet wired in CI).
+  `normalize_variant`’s canonical key, composed in SQL (a `sources.sql`
+  manifest + an `annotate_vcf()` macro) rather than a CLI flag per
+  source. duckvep can coexist with the **duckhts** extension in one
+  DuckDB session.
+- **Columnar transcript cache** built from Ensembl MySQL dumps (MANE /
+  `cds_start_NF` / selenocysteine flags inherited). Pure-Rust
+  implementation; a WASM target exists but is experimental and not yet
+  covered by CI.
 
 See [docs/DESIGN.md](docs/DESIGN.md), [NEWS.md](NEWS.md),
 [docs/PATCHES.md](docs/PATCHES.md),
-[correctness/](correctness/correctness.md). Next: the VEP
-coordinate-layer (`TranscriptVariationAllele`) port to close the
-high-impact indel/MNV tail and turn conformance into a proof.
+[correctness/](correctness/correctness.md). Next: port VEP’s
+`TranscriptVariationAllele` coordinate layer to reduce the remaining
+indel/MNV divergences.
 
 ## Build
 
@@ -51,8 +57,8 @@ make debug      # builds build/debug/duckvep.duckdb_extension (native)
 make test       # runs the SQL test suite
 ```
 
-The extension also builds to **WASM**, so the same readers run in
-DuckDB-WASM in the browser with no server.
+A WASM target exists, but browser/DuckDB-WASM packaging is experimental
+and not yet covered by CI.
 
 ## Load it
 
@@ -79,7 +85,7 @@ LIMIT 5;
 | 17    | 43120000 | 43120000 | C   | \[T\] | 30.0 | \[PASS\] |
 | 17    | 43043000 | 43043000 | T   | \[C\] | 30.0 | \[PASS\] |
 
-### Structural variants are first-class
+### Structural variants
 
 Symbolic (`<DEL>`, `<CNV>`), breakend, and multiallelic alleles survive
 as list elements, and `end_pos` makes interval filters work:
@@ -171,9 +177,11 @@ Then `vep_consequence(chrom, pos, ref, alt)` is a scan-driven scalar
 returning a native `LIST<STRUCT>` — `UNNEST` it. Driven by DuckDB’s
 scan, so variants come from `read_vcf`, `read_parquet`, or any relation.
 
-Each struct also carries HGVS notation — `hgvsg` (genomic), `hgvsc`
-(coding) and `hgvsp` (protein, when a FASTA is loaded) — exact-matching
-fastVEP’s HGVS on chr17 (HGVSc 19,828/19,828, HGVSp 9,449/9,449):
+Each struct also carries HGVS notation: `hgvsg` (genomic), `hgvsc`
+(coding) and `hgvsp` (protein, when a FASTA is loaded). On the chr17
+benchmark dataset the HGVSc and HGVSp output matches fastVEP for all
+recorded comparisons (see
+[`benchmarks/results.md`](benchmarks/results.md)):
 
 ``` sql
 SELECT c.transcript_id, c.consequence, c.impact, c.hgvsg, c.hgvsc
@@ -190,9 +198,9 @@ LIMIT 4;
 | ENST00000471181 | \[non_coding_transcript_variant\] | MODIFIER | 17:g.43124090A\>G |                           |
 | ENST00000352993 | \[non_coding_transcript_variant\] | MODIFIER | 17:g.43124090A\>G |                           |
 
-Or annotate a whole VCF in one call with `vep_annotate(vcf, gff3 := …)`
-— one row per (variant, transcript, allele), at parity with Ensembl VEP
-/ fastVEP (same engine):
+Or annotate a whole VCF in one call with `vep_annotate(vcf, gff3 := …)`,
+one row per (variant, transcript, allele). Concordance against Ensembl
+VEP is reported below:
 
 ``` sql
 SELECT pos, ref, alt, gene_symbol, transcript_id, consequence, impact
@@ -250,15 +258,14 @@ FROM (VALUES ('chr1', 100, 'A', ['G']),
 
 ## Composing with duckhts
 
-duckvep composes with
+duckvep can be used with
 **[duckhts](https://github.com/sounkou-bioinfo/duckhts)** (htslib-backed
-format readers, a DuckDB **community extension**) by just loading both
-and writing a `JOIN` — no glue code, no shared format. duckhts brings
+format readers, a DuckDB community extension) in the same DuckDB
+session: load both extensions and join their SQL outputs. duckhts brings
 `read_gff` (a queryable attribute `MAP`, tabix region scans),
-`read_vcf`/ `read_bcf`, etc.; duckvep brings the VEP engine. They share
-nothing but the DuckDB ABI and SQL. This block is **executed live** in
-this README — gene metadata comes from duckhts, consequence + HGVS from
-duckvep:
+`read_vcf`/`read_bcf`, etc.; duckvep brings the consequence engine. The
+block below is executed live in this README: gene metadata comes from
+duckhts, consequence and HGVS from duckvep.
 
 ``` sql
 INSTALL duckhts FROM community;
@@ -292,38 +299,39 @@ A FASTA-backed, tabix-region version (adding `hgvsp`) is in
 
 ## Correctness
 
-Our accuracy oracle is **Ensembl VEP itself**. Concordance is measured
+The accuracy oracle is **Ensembl VEP**. Concordance is measured
 version-matched (same Ensembl release for VEP code, VEP cache and the
-gene model) and is **always split by IMPACT × variant class** — an
-aggregate % hides where the misses are (high-impact, clinically
-actionable sites). The full report, rendered directly from recorded
-CSVs, is **[`correctness/correctness.md`](correctness/correctness.md)**
+gene model), keyed to the original input variant, and split by IMPACT ×
+variant class so an aggregate percentage cannot hide where the misses
+are (high-impact, clinically actionable sites). The full report,
+rendered directly from recorded CSVs, is
+**[`correctness/correctness.md`](correctness/correctness.md)**
 (`make correctness`).
 
-Headline — error rate **per 100K pairs** vs offline Ensembl VEP, duckvep
-and fastVEP side by side, **generated from
-`correctness/data/concordance_by_impact.csv`** (not hand-written): SNVs
-are near-perfect at every impact tier; the open frontier is high-impact
-indels/MNVs (shared with fastVEP — an engine gap, not a duckvep bug).
+The table below reports error rate **per 100K pairs** vs offline Ensembl
+VEP, duckvep and fastVEP side by side, generated from
+`correctness/data/concordance_by_impact.csv`. SNVs have low error rates
+at every impact tier; the remaining discordance is concentrated in
+indels and MNVs at exon/splice boundaries.
 
 | impact   | class | duckvep /100K | fastVEP /100K |
 |:---------|:------|:--------------|:--------------|
-| HIGH     | del   | 31/100K       | 9662/100K     |
-| HIGH     | ins   | 0/100K        | 6096/100K     |
-| HIGH     | mnv   | 0/100K        | 48784/100K    |
-| HIGH     | snv   | 0/100K        | 0/100K        |
-| MODERATE | del   | 0/100K        | 1531/100K     |
-| MODERATE | ins   | 114/100K      | 1765/100K     |
-| MODERATE | mnv   | 0/100K        | 28470/100K    |
+| HIGH     | del   | 65/100K       | 8713/100K     |
+| HIGH     | ins   | 775/100K      | 4930/100K     |
+| HIGH     | mnv   | 0/100K        | 37179/100K    |
+| HIGH     | snv   | 2/100K        | 46/100K       |
+| MODERATE | del   | 0/100K        | 5042/100K     |
+| MODERATE | ins   | 2618/100K     | 5707/100K     |
+| MODERATE | mnv   | 0/100K        | 20957/100K    |
 | MODERATE | snv   | 0/100K        | 0/100K        |
-| LOW      | del   | 41/100K       | 16477/100K    |
-| LOW      | ins   | 0/100K        | 22959/100K    |
-| LOW      | mnv   | 0/100K        | 22886/100K    |
-| LOW      | snv   | 0/100K        | 16/100K       |
-| MODIFIER | del   | 0/100K        | 37/100K       |
-| MODIFIER | ins   | 0/100K        | 219/100K      |
-| MODIFIER | mnv   | 0/100K        | 198/100K      |
-| MODIFIER | snv   | 0/100K        | 2/100K        |
+| LOW      | del   | 426/100K      | 15449/100K    |
+| LOW      | ins   | 0/100K        | 11556/100K    |
+| LOW      | mnv   | 0/100K        | 575/100K      |
+| LOW      | snv   | 0/100K        | 17/100K       |
+| MODIFIER | del   | 0/100K        | 55/100K       |
+| MODIFIER | ins   | 160/100K      | 47/100K       |
+| MODIFIER | mnv   | 0/100K        | 0/100K        |
+| MODIFIER | snv   | 0/100K        | 5/100K        |
 
 Error rate **per 100,000 (variant, transcript) pairs** vs Ensembl VEP
 (version-matched), by impact × class, duckvep vs fastVEP — generated
@@ -336,31 +344,30 @@ fastVEP matches VEP (`regression` = duckvep worse than upstream;
 `shared` = inherited engine gap) — top by pair count, generated from
 `correctness/data/error_transitions.csv`:
 
-| type   | impact   | VEP calls                                                                                                                           | duckvep calls                                                                                                                                           |   n |
-|:-------|:---------|:------------------------------------------------------------------------------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------|----:|
-| shared | HIGH     | 5_prime_UTR_variant&start_lost                                                                                                      | 5_prime_UTR_variant&coding_sequence_variant                                                                                                             |   3 |
-| shared | LOW      | 3_prime_UTR_variant&stop_retained_variant                                                                                           | 3_prime_UTR_variant&coding_sequence_variant                                                                                                             |   2 |
-| shared | MODERATE | coding_sequence_variant&inframe_insertion                                                                                           | stop_retained_variant                                                                                                                                   |   2 |
-| shared | LOW      | synonymous_variant                                                                                                                  | start_lost                                                                                                                                              |   1 |
-| shared | LOW      | NMD_transcript_variant&stop_retained_variant                                                                                        | NMD_transcript_variant&stop_lost                                                                                                                        |   1 |
-| shared | HIGH     | 3_prime_UTR_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant&stop_retained_variant | 3_prime_UTR_variant&coding_sequence_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant                   |   1 |
-| shared | HIGH     | transcript_ablation                                                                                                                 | 3_prime_UTR_variant&5_prime_UTR_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant&stop_retained_variant |   1 |
-| shared | HIGH     | transcript_ablation                                                                                                                 | 3_prime_UTR_variant&5_prime_UTR_variant&coding_sequence_variant                                                                                         |   1 |
+| type       | impact   | VEP calls                                                      | duckvep calls                                                                                |   n |
+|:-----------|:---------|:---------------------------------------------------------------|:---------------------------------------------------------------------------------------------|----:|
+| shared     | LOW      | stop_retained_variant                                          | stop_lost                                                                                    |  28 |
+| shared     | HIGH     | NMD_transcript_variant&frameshift_variant&stop_gained          | NMD_transcript_variant&frameshift_variant&intron_variant&splice_acceptor_variant&stop_gained |  28 |
+| regression | HIGH     | frameshift_variant                                             | frameshift_variant&splice_region_variant                                                     |  21 |
+| regression | MODERATE | NMD_transcript_variant&inframe_insertion&splice_region_variant | NMD_transcript_variant&protein_altering_variant&splice_region_variant                        |  20 |
+| regression | MODERATE | inframe_insertion&splice_region_variant                        | protein_altering_variant&splice_region_variant                                               |  19 |
+| shared     | HIGH     | frameshift_variant&stop_gained                                 | frameshift_variant&intron_variant&splice_acceptor_variant&stop_gained                        |  16 |
+| shared     | HIGH     | protein_altering_variant&stop_gained                           | protein_altering_variant&splice_region_variant&stop_gained                                   |  12 |
+| regression | MODIFIER | 5_prime_UTR_variant&NMD_transcript_variant                     | 5_prime_UTR_variant&NMD_transcript_variant&intron_variant&splice_acceptor_variant            |  10 |
 
-So the open work splits cleanly: **regressions** (the splice sub-term
-precedence our interval rewrite broke — being fixed to match Ensembl
-`VariationEffect.pm`) and **shared engine gaps**
-(`frameshift&stop_gained`, `missense`→`synonymous`). Full per-SO-term
-and transition tables:
-[`correctness/correctness.md`](correctness/correctness.md). duckvep’s
-accuracy patches over the vendored engine are in
+The open work splits into **duckvep-specific regressions** (mainly
+splice sub-term precedence on boundary indels, where VEP 3’-shifts the
+allele before calling consequence) and **shared engine gaps** inherited
+from the vendored engine (`frameshift&stop_gained`, `missense`→
+`synonymous`). Full per-SO-term and transition tables are in
+[`correctness/correctness.md`](correctness/correctness.md); the accuracy
+patches over the vendored engine are in
 [`docs/PATCHES.md`](docs/PATCHES.md).
 
 ## Benchmarks
 
-Wall-clock + peak memory, duckvep vs fastVEP CLI (same consequence
-engine; the difference is data-engineering — caching, streaming,
-columnar), **generated from `benchmarks/data/timings.csv`**:
+Wall-clock and peak memory for duckvep and the fastVEP CLI on the
+benchmark inputs, generated from `benchmarks/data/timings.csv`:
 
 | dataset                   |  variants | tool                            | wall    | peak RSS (MB) |
 |:--------------------------|----------:|:--------------------------------|:--------|--------------:|

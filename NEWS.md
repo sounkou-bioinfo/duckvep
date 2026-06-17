@@ -10,16 +10,18 @@ Changelog, most recent first. (R-package style.)
   fastVEP shown alongside — never a single aggregate. duckvep beats fastVEP on
   **every HIGH-impact SO term**. Percentages use enough precision that a non-zero
   discordance never reads as 100%.
-* **The consequence engine was rebuilt to mirror Ensembl's own structure**, taking
-  N=50000 ClinVar discordance vs **controlled** Ensembl VEP 116 (VEP run with `--gff` on
-  the *same* gene model the engines read — so only the engine differs) from **~3,876 → 15
-  consequence discordances (a 99% reduction)**, **39 total divergence** counting emission
-  misses/extras first-class, vs fastVEP's **6,340**. **Every remaining discordance is now a
-  *shared* gap fastVEP has too — ZERO are duckvep-specific** (term-fair flag, per the SO-term
-  split): duckvep diverges from VEP only where fastVEP also does.
-  (The earlier cache-oracle "35" was an undercount — the controlled `--gff` oracle, run on
-  the identical transcript set, surfaced ~23 discordances the cache had hidden. See
-  `correctness/correctness.md`.) The VEP-faithful abstractions:
+* **The consequence engine was rebuilt to better match Ensembl's output structure**, taking
+  N=50000 ClinVar divergence vs **controlled** Ensembl VEP 116 (VEP run with `--gff` on the
+  *same* gene model the engines read, keyed to the original input variant — so only the engine
+  differs) to **239 total divergence** (210 discordant on shared pairs + 29 emission), vs
+  fastVEP's **5,063** — duckvep has ~21× fewer divergences than the vendored engine. Of those
+  239, **92 are duckvep-specific** (fastVEP matches VEP there): boundary indels where VEP
+  3'-shifts the allele before calling consequence and duckvep does not. (An earlier "39 total /
+  0 duckvep-specific" headline was a **normalized-key measurement artifact** — VEP and duckvep
+  align indels differently, so a normalized-key join compared mismatched pairs and hid these
+  regressions as emission. Keying both engines to the original input variant
+  (`correctness/vep_concordance.R`) reveals the true counts; see `correctness/correctness.md`.)
+  The VEP-faithful abstractions:
   * **`CodingContext` (haplotype-ready):** coding consequences are a predicate SET
     over a peptide/codon context built from `CdsEdit`s applied to the reference CDS.
     One variant = one edit; a phased haplotype = many edits on the same CDS before
@@ -88,10 +90,9 @@ Changelog, most recent first. (R-package style.)
   `CodingContext`; merging is in transcript/CDS coordinates (strand-aware,
   intron-collapsed), and grouping by `(sample, haplotype, transcript)` stays in SQL.
 * **Hill-climb harness:** `correctness/haplotype_concordance.R` validates the multi-edit
-  path against the *proven* single-variant kernel with no new oracle — a same-length MNV
+  path against the current single-variant kernel with no new oracle — a same-length MNV
   is exactly a phased SNV set, so the haplotype of its split components must equal the
-  whole MNV's coding terms. Currently **98.8% (1740/1761)** on the ClinVar sample; the
-  21 divergences are the `coding_unknown`/X-guard interaction with the multi-edit window.
+  whole MNV's coding terms. 100% (1761/1761) **on this MNV-split ClinVar harness**.
 * **Marked experimental** — known gaps tracked in code: no bcftools-`hap_finalize`
   compound-block *flush* (independent codon edits far apart are over-merged); a net-zero
   indel haplotype (deletion + restoring insertion) reads as non-indel; the string input
@@ -99,12 +100,13 @@ Changelog, most recent first. (R-package style.)
 
 ### New SQL functions
 
-* `normalize_variant(pos, ref, alt) → STRUCT(pos, ref, alt)` — canonical minimal
-  variant form (right-trim + left-trim), the load-bearing join key matching
-  Ensembl VEP's representation. Makes cross-annotator comparison valid for every
-  class (incl. indels) and underpins future supplementary-annotation joins.
-* HGVS `g./c./p.` on `vep_consequence` and `vep_annotate` (100% concordant with
-  fastVEP).
+* `normalize_variant(pos, ref, alt) → STRUCT(pos, ref, alt)` — duckvep's minimal
+  (anchor-trimmed) variant form, the join key for annotation sources normalized by
+  this same function. Note it is **not** a universal cross-engine key: VEP and duckvep
+  3'-shift indels differently, so differential VEP conformance keys on the original
+  input variant, not the normalized form (see `correctness/vep_concordance.R`).
+* HGVS `g./c./p.` on `vep_consequence` and `vep_annotate` (matches fastVEP's recorded
+  HGVSc/HGVSp on the chr17 benchmark; see `benchmarks/results.md`).
 * Structural variants: `vep_consequence` gains an END-aware
   `(chrom, pos, end, ref, alt)` form; `<DEL>/<DUP>/<CNV>/<INV>/<BND>/<CN*>` →
   Ensembl SV consequence vocabulary.
@@ -115,7 +117,8 @@ Changelog, most recent first. (R-package style.)
   published MySQL flat-file dumps and assembles a columnar Parquet cache inheriting
   the curated flags (MANE Select / Plus Clinical, `cds_start_NF`/`cds_end_NF`,
   selenocysteine, TSL, APPRIS, CCDS, regulatory build). Organism/build-agnostic.
-* Composes with **duckhts** (community extension) in one DuckDB session.
+* Can coexist with **duckhts** (community extension) in one DuckDB session; duckvep is
+  self-contained and does not depend on it.
 * Reproducible, structured layout: `benchmarks/` (perf) and `correctness/`
   (concordance + synthetic hard-variant corpus), each rendered from recorded CSVs
   and linked from the README.

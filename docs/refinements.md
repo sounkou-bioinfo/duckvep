@@ -8,13 +8,15 @@ upstream fastVEP (with patch files) are in [`PATCHES.md`](PATCHES.md).
 
 ## Port faithfulness — the architectural pivot (paper-relevant headline)
 
-A pi port-faithfulness review (vs VEP-116 Perl) found that the engine reached **0
-duckvep-specific divergences / 15 consequence / 39 total** vs controlled VEP-116 by
-matching VEP's **output** through a *windowed-peptide surrogate + boolean proxies*
-(`peptide_defined`, `pep_determinable`, `at_start`, `vep_start_overlap`, `cil_stop_term`),
-**not** VEP's actual machinery. The corpus number is a lower bound on faithfulness, not
-proof of it. The real road to 100% (and to closing the residual tail at the root) is to
-**port VEP's coordinate/codon/peptide layer**, in priority order:
+A pi port-faithfulness review (vs VEP-116 Perl) established that the engine matches VEP's
+**output** through a *windowed-peptide surrogate + boolean proxies* (`peptide_defined`,
+`pep_determinable`, `at_start`, `vep_start_overlap`, `cil_stop_term`), **not** VEP's actual
+machinery. On N=50000 controlled ClinVar, keyed to the original input variant, this surrogate
+leaves **239 total divergence / 92 duckvep-specific** (vs fastVEP's 5,063) — the 92 are boundary
+indels where VEP 3'-shifts the allele before calling consequence. (An earlier "39 total / 0
+duckvep-specific" was a normalized-key artifact that hid these; see [[vep-boundary-divergence-frontier]].)
+The road to a faithful port — and to closing this residual indel tail at the root — is to **port
+VEP's coordinate/codon/peptide layer**, in priority order:
 
 1. **`TranscriptVariationAllele` coordinate + codon/peptide layer** (`BaseTranscriptVariation.pm`,
    `TranscriptVariationAllele.pm`): mapper `Coordinate`/`Gap` cDNA/CDS/protein arrays (not scalar

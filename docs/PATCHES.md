@@ -29,7 +29,9 @@ The largest structural change. Upstream `predict_coding_consequence` returned a
 (`frameshift_variant&stop_gained`, the generic `coding_sequence_variant`, the
 intron co-occurrence on boundary indels) and MNV codon handling all required
 special cases — and computing a frame off the *un-normalized* allele kept
-re-introducing anchor-base bugs. Replaced with the shape Ensembl actually uses:
+re-introducing anchor-base bugs. Replaced with an output-oriented predicate-set model inspired
+by Ensembl's `@OverlapConsequences` (it matches VEP's output, but is **not** a faithful port of
+VEP's `TranscriptVariationAllele` coordinate/predicate machinery — that port is the open work):
 
 - A **`CdsEdit`** = `{cds_idx, ref_bases, alt_bases}` in transcript orientation,
   derived from the **normalized** (anchor-trimmed) allele — so the reading frame
@@ -184,19 +186,24 @@ concordance vs VEP (TP53 symbolic harness) 2/4 → **4/4**. Tests in `sv_predict
 `VepAlleleContext` start eligibility over the union cDNA span (so a haplotype overlapping the
 start codon gets `start_lost`), and applies the SAME essential-splice resolution the
 single-variant path uses (any variant reaching `splice::is_splice_donor/acceptor` →
-`coding_sequence_variant`, since the peptide is undeterminable). MNV-split concordance — vs the
-proven single-variant kernel AND the real VEP-116 oracle — **98.8% → 100%** (1761/1761).
-Experimental; latent over-broad edges (distant-missense over-merge, stop-exception) tracked.
+`coding_sequence_variant`, since the peptide is undeterminable). MNV-split concordance, vs the
+current single-variant kernel and the VEP-116 oracle, is 100% (1761/1761) **on this MNV-split
+harness** (`correctness/haplotype_concordance.R`). Experimental; latent over-broad edges
+(distant-missense over-merge, stop-exception) tracked.
 
-**Impact — current, valid, version-matched figures are in the generated report
-[`correctness/correctness.md`](correctness/correctness.md)** (split by impact ×
-class, per-100K error rates, read from `correctness/data/*.csv` so they never drift).
-Headline vs **controlled Ensembl VEP 116** (N=50000 ClinVar, `--gff` same gene model):
-**15 consequence discordant on shared pairs / 39 total divergence**, vs fastVEP's **6,340** —
-and **ZERO duckvep-specific** (every remaining discordance is a *shared* gap fastVEP has too;
-duckvep diverges from VEP only where fastVEP does). The open frontier is the high-impact
-indel/MNV tail — e.g. a frameshift/3′UTR-straddle deletion at the stop (KDM5A 313154) and
-multi-exon start-codon deletions — all **shared with fastVEP**.
+**Impact — current, version-matched figures are regenerated into
+[`correctness/correctness.md`](correctness/correctness.md)** (split by impact × class, per-100K
+error rates, read from `correctness/data/*.csv` so they never drift). Headline vs **controlled
+Ensembl VEP 116** (N=50000 ClinVar, `--gff` same gene model, keyed to the original input variant —
+see note below): duckvep diverges on **210 shared pairs + 29 emission = 239 total**, of which
+**92 are duckvep-specific** (fastVEP matches VEP there), vs fastVEP's **5,063**. So duckvep has
+~21× fewer divergences than fastVEP but is **not** divergence-free: the 92 duckvep-specific cases
+are boundary indels where VEP 3'-shifts the allele before calling consequence and duckvep does not.
+(An earlier "39 total / 0 duckvep-specific" figure was a **normalized-key measurement artifact** —
+VEP and duckvep left/right-align indels differently, so a normalized-key join compared mismatched
+pairs and hid these regressions as emission; keying both engines to the original input variant in
+`correctness/vep_concordance.R` reveals the true counts.) The open frontier is this indel/MNV tail,
+plus shared gaps fastVEP has too (KDM5A 313154 stop, multi-exon start-codon deletions).
 
 > **The honest framing (pi port-faithfulness review):** these patches make duckvep
 > *VEP-116-concordant on N=50000 ClinVar* — they do **not** yet make it a faithful

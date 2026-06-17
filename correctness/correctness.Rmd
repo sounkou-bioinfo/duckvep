@@ -52,8 +52,9 @@ appear — concentrated, for fastVEP, in HIGH-impact indels and MNVs (table belo
 
 ## Concordance vs Ensembl VEP — split by IMPACT × class
 
-`discordant / pairs` (lower discordant is better). duckvep is the same engine as
-fastVEP plus our accuracy patches, so the head-to-head is fair.
+`discordant / pairs` (lower discordant is better). duckvep is the vendored fastVEP
+engine plus accuracy patches, so the head-to-head is fair; both are keyed to the
+original input variant against the same controlled VEP 116.
 
 ```{r}
 d <- csv("correctness/data/concordance_by_impact.csv")
@@ -83,10 +84,10 @@ classes despite very different pair counts.
 
 **Reading it** (all figures inline-generated from the CSV above):
 
-- **SNVs are near-perfect at every impact tier** — duckvep error rate HIGH
+- **SNVs have low error rates at every impact tier** — duckvep error rate HIGH
   `r gr("duckvep","HIGH","snv")`, MODERATE `r gr("duckvep","MODERATE","snv")`,
-  LOW `r gr("duckvep","LOW","snv")`, MODIFIER `r gr("duckvep","MODIFIER","snv")` —
-  and ahead of fastVEP (MODERATE `r gr("fastvep","MODERATE","snv")` vs duckvep
+  LOW `r gr("duckvep","LOW","snv")`, MODIFIER `r gr("duckvep","MODIFIER","snv")`,
+  and below fastVEP (MODERATE `r gr("fastvep","MODERATE","snv")` vs duckvep
   `r gr("duckvep","MODERATE","snv")`), thanks to the incomplete-CDS / non-ATG-start
   patches (see `../docs/PATCHES.md`).
 - **Indels and MNVs are the residual frontier**, concentrated at HIGH impact —
@@ -94,13 +95,13 @@ classes despite very different pair counts.
   `r gr("duckvep","HIGH","ins")`, HIGH mnv `r gr("duckvep","HIGH","mnv")` (vs SNV
   `r gr("duckvep","HIGH","snv")`). These are the clinically actionable sites an
   aggregate % would bury.
-- **duckvep and fastVEP are now validly comparable on indels** — normalizing both
-  sides makes the indel `pairs` match across engines (HIGH del fastVEP
-  `r gv("fastvep","HIGH","del")` vs duckvep `r gv("duckvep","HIGH","del")`; before
-  normalization fastVEP joined only a small unrepresentative subset). The two are
-  nearly identical, so the indel/MNV frontier is **shared engine behavior** vs
-  Ensembl VEP — a real engine gap to close, not duckvep-specific and not a
-  measurement artifact.
+- **The indel/MNV frontier is partly duckvep-specific.** Engines are compared keyed to
+  the original input variant (not each engine's normalized form — VEP and duckvep 3'-shift
+  indels differently, so a normalized-key join compares mismatched pairs and hides real
+  regressions; that earlier join was a measurement artifact). On this keying, duckvep
+  diverges on 210 shared pairs + 29 emission = 239 total, of which **92 are duckvep-specific**
+  (fastVEP matches VEP), vs fastVEP's 5,063. The 92 are boundary indels where VEP 3'-shifts
+  the allele before calling consequence; the rest are gaps shared with fastVEP.
 
 ## Where the misses are — per consequence (SO term)
 
@@ -109,8 +110,8 @@ real culprits are **specific consequence categories** (splice acceptor/donor,
 polypyrimidine tract, frameshift). This table explodes VEP's `&`-joined call and
 attributes each discordant pair to the SO terms VEP assigned — the finest
 "where is it actually failing" view. **Both engines are shown** (top HIGH terms by
-duckvep discordant count) so it is clear these are *shared* gaps vs Ensembl, not
-duckvep-specific; generated from `correctness/data/discordance_by_consequence.csv`:
+duckvep discordant count) so the split between duckvep-specific regressions and gaps
+shared with fastVEP is visible; generated from `correctness/data/discordance_by_consequence.csv`:
 
 ```{r echo=FALSE, message=FALSE}
 b <- csv("correctness/data/discordance_by_consequence.csv")
