@@ -52,6 +52,7 @@ correctness/correctness.md correctness/cache-build/README.md &: \
            correctness/data/error_transitions.csv \
            correctness/data/methodology_audit.csv \
            correctness/data/so_term_transitions.csv \
+           correctness/data/conformance_history.csv \
            correctness/cache-build/data/cache_stats.csv \
            correctness/cache-build/data/cache_build_meta.txt
 	Rscript scripts/render-correctness.R

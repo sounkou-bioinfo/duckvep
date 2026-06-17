@@ -238,3 +238,22 @@ COPY (WITH v AS (SELECT opos,oref,oalt,transcript_id,consequence vc FROM ann WHE
   fv_union, OUTDIR, DATE, nrow(samp), dpath, DATE, dpath, DATE, dpath, DATE, dpath, dpath)
 sql_run(summary_sql)
 msg(sprintf("dump: %s/annotations.parquet  |  reports: %s/*.csv", OUTDIR, dpath))
+
+## 7. Append a timestamped headline row to the committed conformance-convergence history, so each
+## run is a point on the "divergence vs time" plot (correctness/correctness.md). The `methodology`
+## tag guards against plotting incomparable keyings together.
+hist_path <- file.path(dpath, "conformance_history.csv")
+ma <- read.csv(file.path(dpath, "methodology_audit.csv"), stringsAsFactors = FALSE)
+mav <- setNames(ma$value, ma$metric)
+ci <- read.csv(file.path(dpath, "concordance_by_impact.csv"), stringsAsFactors = FALSE)
+row <- data.frame(
+  timestamp = format(Sys.time(), "%Y-%m-%dT%H:%M:%S"), date = DATE,
+  methodology = "original-identity-keyed", n_variants = max(ci$n_variants),
+  pairs = sum(ci$pairs[ci$engine == "duckvep"]),
+  duckvep_total = mav[["duckvep_total_divergence"]], duckvep_specific = mav[["duckvep_specific_on_shared"]],
+  duckvep_discordant_shared = mav[["duckvep_discordant_on_shared"]],
+  duckvep_emission = mav[["duckvep_only_pairs_emission"]] + mav[["duckvep_missing_pairs_emission"]],
+  fastvep_total = mav[["fastvep_total_divergence"]], stringsAsFactors = FALSE)
+h <- if (file.exists(hist_path)) rbind(read.csv(hist_path, stringsAsFactors = FALSE), row) else row
+write.csv(h, hist_path, row.names = FALSE)
+msg(sprintf("appended conformance history -> %s (%d runs recorded)", hist_path, nrow(h)))

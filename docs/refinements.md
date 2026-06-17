@@ -42,10 +42,22 @@ figure was a normalized-key measurement artifact (the two engines align indels d
 removed by keying VEP/duckvep/fastVEP to the original witness identity — so the real frontier is
 ~26× smaller and is start/stop-codon engine accuracy, not splice-boundary indel bugs.
 
-- **High-impact indel / MNV tail** — a frameshift / 3′UTR-straddle deletion at the stop
-  (KDM5A 313154: VEP `stop_lost`, duckvep `stop_retained` — the windowed peptide is too short
-  to see the read-through; needs the full `peptide()` from item 1 above), and multi-exon
-  start-codon deletions. Shared with fastVEP (engine accuracy, not duckvep-specific).
+- **The 92 duckvep-specific divergences are ALL insertions**, in two sub-patterns, both rooted in
+  the missing pre-consequence allele normalization (trim + 3′-shift in transcript orientation):
+  (a) ~53 add spurious `splice_region`/`splice_acceptor`/`splice_donor`/`intron_variant` terms —
+  duckvep computes the splice/region overlap on the untrimmed span `[pos, pos+len(ref)-1]`, while
+  VEP trims/3′-shifts the allele off the boundary first (e.g. `6002600 CTT>AGAGAC…` 117 bp delins:
+  VEP `5_prime_UTR_variant`, duckvep adds `intron_variant&splice_acceptor_variant`); (b) ~39 are
+  `inframe_insertion → protein_altering_variant` — the unshifted insertion straddles a codon
+  boundary so duckvep can't resolve a clean codon insertion and falls back to the generic term.
+  FIX = normalize/3′-shift the allele before the splice/region overlap and the codon projection
+  (the [[port-faithfulness-pivot-to-TVA]] `shift_hash`); code is in
+  `vendor/fastvep-consequence/src/{splice.rs,predictor.rs}`. This is THE convergence target the
+  `correctness/correctness.md` convergence plot tracks.
+- **High-impact indel / MNV tail (shared with fastVEP)** — a frameshift / 3′UTR-straddle deletion
+  at the stop (KDM5A 313154: VEP `stop_lost`, duckvep `stop_retained` — the windowed peptide is too
+  short to see the read-through; needs the full `peptide()` from item 1), and multi-exon
+  start-codon deletions. Engine accuracy, not duckvep-specific.
 - **`mature_miRNA_variant`** — a feature region not yet in the cache (a join away).
 - **chrX/Y haploid + PAR** — now have a **female sample (HG004) + HG003/HG005 + 1000G** in the
   pinned diverse cohort (`scripts/fetch-data.R`, `DIVERSE=1`); add chrX-diploid + PAR

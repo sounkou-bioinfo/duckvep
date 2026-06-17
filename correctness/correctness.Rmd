@@ -58,6 +58,8 @@ original input variant against the same controlled VEP 116.
 
 ```{r}
 d <- csv("correctness/data/concordance_by_impact.csv")
+.ma <- csv("correctness/data/methodology_audit.csv"); mav <- setNames(.ma$value, .ma$metric)
+k <- function(m) format(mav[[m]], big.mark = ",")   # headline divergence figures, read from the audit CSV
 d$disc <- d$pairs - d$agree
 d$per100k <- round(d$disc / d$pairs * 1e5)          # error rate per 100,000 pairs
 d$cell <- sprintf("%d (%d/100K)", d$disc, d$per100k)  # raw count + normalized rate
@@ -99,9 +101,38 @@ classes despite very different pair counts.
   the original input variant (not each engine's normalized form — VEP and duckvep 3'-shift
   indels differently, so a normalized-key join compares mismatched pairs and hides real
   regressions; that earlier join was a measurement artifact). On this keying, duckvep
-  diverges on 210 shared pairs + 29 emission = 239 total, of which **92 are duckvep-specific**
-  (fastVEP matches VEP), vs fastVEP's 5,063. The 92 are boundary indels where VEP 3'-shifts
-  the allele before calling consequence; the rest are gaps shared with fastVEP.
+  diverges on `r k("duckvep_discordant_on_shared")` shared pairs +
+  `r format(mav[["duckvep_only_pairs_emission"]] + mav[["duckvep_missing_pairs_emission"]], big.mark=",")`
+  emission = `r k("duckvep_total_divergence")` total, of which **`r k("duckvep_specific_on_shared")`
+  are duckvep-specific** (fastVEP matches VEP), vs fastVEP's `r k("fastvep_total_divergence")`. Those
+  are boundary indels where VEP 3'-shifts the allele before calling consequence; the rest are gaps
+  shared with fastVEP.
+
+## Convergence toward conformance
+
+Each `correctness/vep_concordance.R` run appends a timestamped row of the headline divergence
+counts to `correctness/data/conformance_history.csv`, so progress is tracked over time (lower is
+better; duckvep vs the vendored fastVEP, both against the same controlled VEP 116):
+
+```{r convergence, fig.width=8, fig.height=4, dpi=130}
+h <- csv("correctness/data/conformance_history.csv")
+h <- h[h$methodology == "original-identity-keyed", ]      # only comparable keyings on one axis
+h$timestamp <- as.POSIXct(h$timestamp, format = "%Y-%m-%dT%H:%M:%S")
+long <- rbind(
+  data.frame(timestamp = h$timestamp, metric = "duckvep total divergence",   value = h$duckvep_total),
+  data.frame(timestamp = h$timestamp, metric = "duckvep-specific (vs fastVEP)", value = h$duckvep_specific),
+  data.frame(timestamp = h$timestamp, metric = "fastVEP total divergence",    value = h$fastvep_total))
+library(ggplot2)
+ggplot(long, aes(timestamp, value, colour = metric)) +
+  geom_line(linewidth = 0.7) + geom_point(size = 2) +
+  scale_y_continuous(trans = "log10", labels = scales::comma) +
+  labs(x = NULL, y = "divergences vs VEP 116 (log scale)", colour = NULL,
+       title = "Convergence toward Ensembl VEP conformance") +
+  theme_minimal(base_size = 12) + theme(legend.position = "bottom")
+```
+
+A single point is the current run; the curve fills in as the engine is iterated (e.g. closing the
+duckvep-specific boundary-indel tail). The raw history table is `conformance_history.csv`.
 
 ## Where the misses are — per consequence (SO term)
 

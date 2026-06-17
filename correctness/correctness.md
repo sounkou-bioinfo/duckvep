@@ -96,9 +96,23 @@ across classes despite very different pair counts.
   regressions; that earlier join was a measurement artifact). On this
   keying, duckvep diverges on 210 shared pairs + 29 emission = 239
   total, of which **92 are duckvep-specific** (fastVEP matches VEP), vs
-  fastVEP’s 5,063. The 92 are boundary indels where VEP 3’-shifts the
+  fastVEP’s 5,063. Those are boundary indels where VEP 3’-shifts the
   allele before calling consequence; the rest are gaps shared with
   fastVEP.
+
+## Convergence toward conformance
+
+Each `correctness/vep_concordance.R` run appends a timestamped row of
+the headline divergence counts to
+`correctness/data/conformance_history.csv`, so progress is tracked over
+time (lower is better; duckvep vs the vendored fastVEP, both against the
+same controlled VEP 116):
+
+![](correctness_files/figure-gfm/convergence-1.png)<!-- -->
+
+A single point is the current run; the curve fills in as the engine is
+iterated (e.g. closing the duckvep-specific boundary-indel tail). The
+raw history table is `conformance_history.csv`.
 
 ## Where the misses are — per consequence (SO term)
 
