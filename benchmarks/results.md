@@ -30,19 +30,25 @@ Add organisms by running
 
 ## Head-to-head vs fastVEP (full output, same gene model)
 
-| dataset                   | variants | tool                            | wall_clock | peak_rss_mb | output | note                            |
-|:--------------------------|---------:|:--------------------------------|:-----------|------------:|:-------|:--------------------------------|
-| GIAB HG002 (whole genome) |  4048342 | fastVEP CLI                     | 0:19.46    |        1113 | full   | streams + re-parses GFF3        |
-| GIAB HG002 (whole genome) |  4048342 | duckvep (warm cache; streaming) | 0:09.02    |        1985 | full   | cached GFF3; streaming read_vcf |
-| ClinVar chr17             |   267534 | fastVEP CLI                     | 0:06.07    |         694 | full   | +fasta                          |
-| ClinVar chr17             |   267534 | duckvep (cold / parses GFF3)    | 0:07.23    |        1370 | full   | +fasta; parity with fastVEP     |
-| ClinVar chr17             |   267534 | duckvep (warm cache)            | 0:01.88    |        1276 | full   | +fasta; caching win             |
+| dataset                   | variants | tool                            | wall_clock | peak_rss_mb | output | note                                            |
+|:--------------------------|---------:|:--------------------------------|:-----------|------------:|:-------|:------------------------------------------------|
+| GIAB HG002 (whole genome) |  4048342 | fastVEP CLI                     | 0:19.46    |        1113 | full   | streams + re-parses GFF3                        |
+| GIAB HG002 (whole genome) |  4048342 | duckvep (cold; parses GFF3)     | 0:26.55    |        4810 | full   | one-time cache build (slower than fastVEP cold) |
+| GIAB HG002 (whole genome) |  4048342 | duckvep (warm cache; streaming) | 0:08.70    |        1677 | full   | cached GFF3; streaming read_vcf                 |
+| ClinVar chr17             |   267534 | fastVEP CLI                     | 0:06.07    |         694 | full   | +fasta                                          |
+| ClinVar chr17             |   267534 | duckvep (cold / parses GFF3)    | 0:07.23    |        1370 | full   | +fasta; parity with fastVEP                     |
+| ClinVar chr17             |   267534 | duckvep (warm cache)            | 0:01.88    |        1276 | full   | +fasta; caching win                             |
 
-duckvep’s edge is **caching** the parsed transcript model (warm); a
-*cold* run (parsing the GFF3) is ~parity with fastVEP — same engine.
-Streaming `read_vcf` keeps memory bounded (full GIAB 2.0 GB vs 7.3 GB
-eager). Offline Ensembl-VEP timing is pending its cache install;
-concordance vs the live VEP is below.
+duckvep’s edge is **caching** the parsed transcript model. On a
+whole-genome run the *first* (**cold**) pass is actually **slower than
+fastVEP** (26.6 s vs 19.5 s on GIAB HG002) because it parses the GFF3
+*and* writes a reusable columnar cache; every subsequent (**warm**) run
+skips that and is ~2.2× faster (8.7 s). So the win is amortized: it pays
+off when you annotate more than one VCF against the same gene model, not
+on a single one-off run. Streaming `read_vcf` keeps the warm run’s
+memory bounded (~1.7 GB vs 7.3 GB eager); the cold cache-build peaks
+higher (~4.8 GB) while the GFF3 is in memory. Offline Ensembl-VEP timing
+is pending its cache install; concordance vs the live VEP is below.
 
 ## Footprint
 

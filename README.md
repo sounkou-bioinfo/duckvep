@@ -377,7 +377,8 @@ benchmark inputs, generated from `benchmarks/data/timings.csv`:
 | dataset                   |  variants | tool                            | wall    | peak RSS (MB) |
 |:--------------------------|----------:|:--------------------------------|:--------|--------------:|
 | GIAB HG002 (whole genome) | 4,048,342 | fastVEP CLI                     | 0:19.46 |         1,113 |
-| GIAB HG002 (whole genome) | 4,048,342 | duckvep (warm cache; streaming) | 0:09.02 |         1,985 |
+| GIAB HG002 (whole genome) | 4,048,342 | duckvep (cold; parses GFF3)     | 0:26.55 |         4,810 |
+| GIAB HG002 (whole genome) | 4,048,342 | duckvep (warm cache; streaming) | 0:08.70 |         1,677 |
 | ClinVar chr17             |   267,534 | fastVEP CLI                     | 0:06.07 |           694 |
 | ClinVar chr17             |   267,534 | duckvep (cold / parses GFF3)    | 0:07.23 |         1,370 |
 | ClinVar chr17             |   267,534 | duckvep (warm cache)            | 0:01.88 |         1,276 |

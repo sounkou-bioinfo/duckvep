@@ -108,10 +108,11 @@ the headline divergence counts to
 `correctness/data/conformance_history.csv`, so progress is tracked over
 time. The plot decomposes duckvep’s **total** divergence from VEP 116
 into the part that is genuinely ours to fix (**duckvep-specific** —
-fastVEP gets these right), the part **shared with fastVEP** (an
-inherited engine gap), and **emission** differences (extra/missing
-pairs). The goal is to drive the whole stack — and especially the
-duckvep-specific band — to zero.
+fastVEP gets these right), the part **shared with fastVEP** (the
+genuinely hard cases where even the unmodified base engine misses VEP —
+not “inherited”, since we actively modify the engine), and **emission**
+differences (extra/missing pairs). The goal is to drive the whole stack
+— and especially the duckvep-specific band — to zero.
 
 ![](correctness_files/figure-gfm/convergence-1.png)<!-- -->
 
@@ -164,8 +165,8 @@ same for duckvep and fastVEP.
 The exact discordances: VEP’s call → duckvep’s call. The `type` column
 flags whether fastVEP matches VEP — `regression` = **duckvep is worse
 than the upstream engine** (something our patches broke), `shared` =
-both engines differ from VEP (an inherited engine gap). Generated from
-`correctness/data/error_transitions.csv`.
+both engines differ from VEP (a hard case the base engine also misses).
+Generated from `correctness/data/error_transitions.csv`.
 
 | type       | impact   | VEP calls                                                                              | duckvep calls                                                                                                                |   n |
 |:-----------|:---------|:---------------------------------------------------------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------|----:|

@@ -113,9 +113,10 @@ classes despite very different pair counts.
 Each `correctness/vep_concordance.R` run appends a timestamped row of the headline divergence
 counts to `correctness/data/conformance_history.csv`, so progress is tracked over time. The plot
 decomposes duckvep's **total** divergence from VEP 116 into the part that is genuinely ours to fix
-(**duckvep-specific** — fastVEP gets these right), the part **shared with fastVEP** (an inherited
-engine gap), and **emission** differences (extra/missing pairs). The goal is to drive the whole
-stack — and especially the duckvep-specific band — to zero.
+(**duckvep-specific** — fastVEP gets these right), the part **shared with fastVEP** (the genuinely
+hard cases where even the unmodified base engine misses VEP — not "inherited", since we actively
+modify the engine), and **emission** differences (extra/missing pairs). The goal is to drive the
+whole stack — and especially the duckvep-specific band — to zero.
 
 ```{r convergence, fig.width=8, fig.height=4.4, dpi=130}
 h <- csv("correctness/data/conformance_history.csv")
@@ -125,11 +126,11 @@ h <- h[order(h$timestamp), ]
 # duckvep_total = duckvep-specific + shared-with-fastVEP + emission (the three bands sum to total)
 comp <- rbind(
   data.frame(t = h$timestamp, band = "duckvep-specific (ours; fastVEP is right)", value = h$duckvep_specific),
-  data.frame(t = h$timestamp, band = "shared with fastVEP (inherited engine gap)", value = h$duckvep_discordant_shared - h$duckvep_specific),
+  data.frame(t = h$timestamp, band = "shared with fastVEP (both miss VEP)", value = h$duckvep_discordant_shared - h$duckvep_specific),
   data.frame(t = h$timestamp, band = "emission (extra / missing pairs)", value = h$duckvep_emission))
 # stack order: duckvep-specific at the bottom (anchored at 0, easiest to read its shrinkage)
 comp$band <- factor(comp$band, levels = c("emission (extra / missing pairs)",
-  "shared with fastVEP (inherited engine gap)", "duckvep-specific (ours; fastVEP is right)"))
+  "shared with fastVEP (both miss VEP)", "duckvep-specific (ours; fastVEP is right)"))
 library(ggplot2)
 ggplot(comp, aes(t, value, fill = band)) +
   geom_area(position = "stack", alpha = 0.92) +
@@ -137,10 +138,10 @@ ggplot(comp, aes(t, value, fill = band)) +
   geom_text(data = h, aes(timestamp, duckvep_total, label = duckvep_total), inherit.aes = FALSE,
             vjust = -0.8, size = 3.4) +
   scale_fill_manual(values = c("duckvep-specific (ours; fastVEP is right)" = "#d62728",
-                               "shared with fastVEP (inherited engine gap)" = "#9e9e9e",
+                               "shared with fastVEP (both miss VEP)" = "#9e9e9e",
                                "emission (extra / missing pairs)" = "#aec7e8"),
                     breaks = c("duckvep-specific (ours; fastVEP is right)",
-                               "shared with fastVEP (inherited engine gap)",
+                               "shared with fastVEP (both miss VEP)",
                                "emission (extra / missing pairs)")) +
   labs(x = NULL, y = "duckvep divergences vs VEP 116", fill = NULL,
        title = "Convergence toward Ensembl VEP conformance",
@@ -200,8 +201,8 @@ is the same for duckvep and fastVEP.
 
 The exact discordances: VEP's call → duckvep's call. The `type` column flags
 whether fastVEP matches VEP — `regression` = **duckvep is worse than the upstream
-engine** (something our patches broke), `shared` = both engines differ from VEP (an
-inherited engine gap). Generated from `correctness/data/error_transitions.csv`.
+engine** (something our patches broke), `shared` = both engines differ from VEP (a
+hard case the base engine also misses). Generated from `correctness/data/error_transitions.csv`.
 
 ```{r echo=FALSE, message=FALSE}
 et <- csv("correctness/data/error_transitions.csv")

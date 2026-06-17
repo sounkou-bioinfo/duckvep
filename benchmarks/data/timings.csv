@@ -1,6 +1,7 @@
 dataset,variants,tool,wall_clock,peak_rss_mb,output,note
 GIAB HG002 (whole genome),4048342,fastVEP CLI,0:19.46,1113,full,streams + re-parses GFF3
-GIAB HG002 (whole genome),4048342,duckvep (warm cache; streaming),0:09.02,1985,full,cached GFF3; streaming read_vcf
+GIAB HG002 (whole genome),4048342,duckvep (cold; parses GFF3),0:26.55,4810,full,one-time cache build (slower than fastVEP cold)
+GIAB HG002 (whole genome),4048342,duckvep (warm cache; streaming),0:08.70,1677,full,cached GFF3; streaming read_vcf
 ClinVar chr17,267534,fastVEP CLI,0:06.07,694,full,+fasta
 ClinVar chr17,267534,duckvep (cold / parses GFF3),0:07.23,1370,full,+fasta; parity with fastVEP
 ClinVar chr17,267534,duckvep (warm cache),0:01.88,1276,full,+fasta; caching win
