@@ -64,7 +64,7 @@ Changelog, most recent first. (R-package style.)
   exon 5′ edge is `non_coding_transcript_variant`, not `…_exon_variant`).
 * **Regression corpus is mandatory:** every fixed divergence is captured — unit
   tests + `test/sql/vep_splice.test` + `test/data/regression_cases.tsv` (generated
-  from the concordance dump by `correctness/gen-regression-cases.sh`, run by
+  from the concordance dump by `correctness/gen-regression-cases.R`, run by
   `Rscript test/run-regression-cases.R`). See `docs/PATCHES.md`.
 * **Boundary predicates are migrating to a `VepAlleleContext`** — a phase-correct
   coordinate/protein projection (cDNA/CDS/protein coords, start/stop-codon windows,
