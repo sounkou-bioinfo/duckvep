@@ -380,13 +380,21 @@ stream = one morsel.
 | C. join + per-pair consequence kernel | 45.0 s | 12 |
 
 The **DuckDB range join is ~70% of the wall (31 s); the Rust kernel adds ~30%
-(~14 s)** in this config. So the object-heavy per-pair kernel (string-id HashMap
-lookup, `annotate_over` allocations) is real but **not the dominant wall-clock
-cost** — the join is. The highest-leverage single change is therefore a compact
-**`tx_idx` integer join key** (shrinks the 47 M-row join payload *and* removes the
-per-pair string lookup), ahead of a full kernel rewrite. (Caveat: this is the
-no-FASTA kernel; with sequences the coding path costs more, so the kernel share
-grows — a FASTA ladder is still owed.)
+(~14 s)** in this config. So the object-heavy per-pair kernel is real but **not the
+dominant wall-clock cost** — the join is. (Caveat: no-FASTA kernel; the coding path
+grows the kernel share — a FASTA ladder is still owed.)
+
+**`tx_idx` measured NEUTRAL — a falsified prediction.** Both reviews (and I)
+predicted a compact `tx_idx` integer key would be "the no-regret win hitting both
+slices" (smaller join payload + no per-pair string lookup). Built and measured at
+16 threads: `tx_idx` **44.71 s** vs `transcript_id` **44.47 s** — a wash (RSS 1453
+vs 1475 MB). The key size is *not* the join's cost (its cost is the hash-on-`chrom`
+structure + 47 M cardinality + random access), and the `Arc<str>` lookup was
+already cheap next to `annotate_over`'s per-pair allocations. So `tx_idx` is kept
+only as the **SoA foundation** (flat ordinal storage + cache `tx_idx` column — what
+the sweep and compact kernel need), not as a speedup. The two real levers are
+unchanged: **tile/sweep** for the join's 31 s, **no-alloc `ConsequenceLite`** for
+the kernel's 14 s.
 
 Corrected lessons:
 * **Row-group size is a first-class tuning knob.** ~8192 rows/group (→ tens of
