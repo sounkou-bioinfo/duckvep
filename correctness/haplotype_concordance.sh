@@ -11,7 +11,7 @@
 # A mismatch means the multi-edit CodingContext combination diverges from applying the
 # same change as one variant — a real haplotype-kernel bug. Coding-term subset only
 # (the haplotype path emits coding consequences; splice/intron/UTR are per-variant).
-# Requires the full FASTA cache (coding sequences), like test/run-regression-cases.sh.
+# Requires the full FASTA cache (coding sequences), like Rscript test/run-regression-cases.R.
 #
 # Usage: correctness/haplotype_concordance.sh [sample.vcf]
 set -euo pipefail

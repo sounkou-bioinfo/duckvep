@@ -65,7 +65,7 @@ Changelog, most recent first. (R-package style.)
 * **Regression corpus is mandatory:** every fixed divergence is captured — unit
   tests + `test/sql/vep_splice.test` + `test/data/regression_cases.tsv` (generated
   from the concordance dump by `correctness/gen-regression-cases.sh`, run by
-  `test/run-regression-cases.sh`). See `docs/PATCHES.md`.
+  `Rscript test/run-regression-cases.R`). See `docs/PATCHES.md`.
 * **Boundary predicates are migrating to a `VepAlleleContext`** — a phase-correct
   coordinate/protein projection (cDNA/CDS/protein coords, start/stop-codon windows,
   circular/codon-table aware) that the start/stop predicates query, instead of the
