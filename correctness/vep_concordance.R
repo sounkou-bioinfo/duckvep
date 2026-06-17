@@ -76,8 +76,9 @@ build_controlled_gff <- function() {
 MODEL_GFF <- if (oracle == "gff") build_controlled_gff() else gff3
 
 ## 3. Ensembl VEP (offline, controlled --gff, forked) -> JSON -> canonical rows.
-## VEP is now the only slow step (JSON parsing moved to DuckDB), so fork across ALL cores by default.
-fork <- if (nzchar(pa$options$fork)) pa$options$fork else as.character(max(1, parallel::detectCores()))
+## VEP is now the only slow step (JSON parsing moved to DuckDB). Default --fork 8 (capped to cores):
+## past ~8 the per-fork GFF-index reload outweighs the gain. Override with --fork.
+fork <- if (nzchar(pa$options$fork)) pa$options$fork else as.character(min(8L, parallel::detectCores()))
 gene_model <- if (oracle == "gff") c("--gff", MODEL_GFF, "--fasta", fasta) else
   c("--offline", "--cache", "--dir_cache", file.path(root, "data/vep_cache"),
     "--cache_version", rel, "--species", "homo_sapiens", "--assembly", "GRCh38", "--fasta", fasta)

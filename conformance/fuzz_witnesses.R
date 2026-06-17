@@ -15,7 +15,7 @@ op <- add_option(op, "--vcf",   default = file.path(root, "conformance/data/witn
 op <- add_option(op, "--gff",   default = file.path(root, "data/giab/GRCh38.116.controlled.gff3.gz"))
 op <- add_option(op, "--fasta", default = file.path(root, "data/giab/GRCh38.primary.fa"))
 op <- add_option(op, "--ext",   default = Sys.getenv("DUCKVEP_EXT", file.path(root, "build/release/duckvep.duckdb_extension")))
-op <- add_option(op, "--fork",  default = as.character(max(1, parallel::detectCores())))  # VEP is the slow step; fork across all cores
+op <- add_option(op, "--fork",  default = as.character(min(8L, parallel::detectCores())))  # VEP is the slow step; fork 8 (capped to cores)
 opt <- parse_args(op)
 vep_cmd <- strsplit(Sys.getenv("VEP_CMD", "conda run -n vep vep"), " ")[[1]]
 
