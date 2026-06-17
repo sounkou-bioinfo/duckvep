@@ -142,11 +142,65 @@ impl EngineContext {
         ref_str: &str,
         alt_raw: &str,
     ) -> Vec<AnnotatedRow> {
-        let mut rows = Vec::new();
         if alt_raw.is_empty() || alt_raw == "." {
-            return rows;
+            return Vec::new();
         }
         let end = end.max(pos + (ref_str.len() as u64).saturating_sub(1));
+        let query_start = pos.saturating_sub(self.distance).max(1);
+        let query_end = end + self.distance;
+        // JUSTIFIED default: a `get_transcripts` Err (or a contig absent from the index)
+        // means there are no candidate transcripts for THIS variant — annotation is
+        // best-effort per variant, so we yield no rows for it rather than aborting the whole
+        // scan.
+        let overlapping = self
+            .transcripts
+            .get_transcripts(chrom, query_start, query_end)
+            .unwrap_or_default();
+        if overlapping.is_empty() {
+            return Vec::new();
+        }
+        self.annotate_over(chrom, pos, end, ref_str, alt_raw, &overlapping)
+    }
+
+    /// Per-pair entry: annotate a variant against ONE named transcript (looked up
+    /// by stable id) rather than the spatial overlap set. This lets DuckDB supply
+    /// the (variant, transcript) candidate pairs from a **parallel range join**
+    /// (`vep_consequence_pair`), instead of the serial per-variant spatial lookup
+    /// that pins the scalar to one core. Same engine; only the candidate set
+    /// differs. See docs/kernel-algorithm.md §6.
+    pub(crate) fn annotate_pair(
+        &self,
+        chrom: &str,
+        pos: u64,
+        end: u64,
+        ref_str: &str,
+        alt_raw: &str,
+        transcript_id: &str,
+    ) -> Vec<AnnotatedRow> {
+        if alt_raw.is_empty() || alt_raw == "." {
+            return Vec::new();
+        }
+        let end = end.max(pos + (ref_str.len() as u64).saturating_sub(1));
+        let Some(t) = self.transcripts.get_by_id(transcript_id) else {
+            return Vec::new();
+        };
+        self.annotate_over(chrom, pos, end, ref_str, alt_raw, std::slice::from_ref(&t))
+    }
+
+    /// Shared core: predict consequences for a variant against a GIVEN candidate
+    /// transcript set (from a spatial overlap query or a single by-id lookup) and
+    /// materialize the output rows. The candidate-set discovery is the only thing
+    /// the spatial and per-pair entries differ on.
+    fn annotate_over(
+        &self,
+        chrom: &str,
+        pos: u64,
+        end: u64,
+        ref_str: &str,
+        alt_raw: &str,
+        overlapping: &[&Transcript],
+    ) -> Vec<AnnotatedRow> {
+        let mut rows = Vec::new();
         let ref_allele = Allele::from_str(ref_str);
         let alt_alleles: Vec<Allele> = alt_raw.split(',').map(Allele::from_str).collect();
         // Partition alts: structural (symbolic/breakend) vs ordinary sequence.
@@ -156,19 +210,6 @@ impl EngineContext {
             .partition(|a| classify_sv_type(a).is_structural());
 
         let position = GenomicPosition::new(chrom.to_string(), pos, end, Strand::Forward);
-        let query_start = pos.saturating_sub(self.distance).max(1);
-        let query_end = end + self.distance;
-        // JUSTIFIED default: a `get_transcripts` Err (or a contig absent from the index)
-        // means there are no candidate transcripts for THIS variant — annotation is
-        // best-effort per variant, so we yield no rows for it rather than aborting the whole
-        // scan. The empty result is then handled by the `is_empty()` early return below.
-        let overlapping = self
-            .transcripts
-            .get_transcripts(chrom, query_start, query_end)
-            .unwrap_or_default();
-        if overlapping.is_empty() {
-            return rows;
-        }
         // NOTE: we deliberately do NOT fetch the reference region here. Coding
         // consequences read each transcript's cached `translateable_seq` (built once at
         // cache load), and `predict_allele` ignores the `ref_seq` argument. Fetching
@@ -179,7 +220,7 @@ impl EngineContext {
         if !seq_alleles.is_empty() {
             transcript_consequences.extend(
                 self.predictor
-                    .predict(&position, &ref_allele, &seq_alleles, &overlapping, None)
+                    .predict(&position, &ref_allele, &seq_alleles, overlapping, None)
                     .transcript_consequences,
             );
         }
@@ -192,7 +233,7 @@ impl EngineContext {
                 end,
                 classify_sv_type(sv),
                 std::slice::from_ref(sv),
-                &overlapping,
+                overlapping,
                 self.distance,
                 self.distance,
             ));

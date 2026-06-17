@@ -59,9 +59,24 @@ dominates**: an optimal kernel is `Θ(P · c)` where `c` is the per-pair
 consequence cost. The whole game is (a) keeping the overlap-discovery cost off the
 critical path and (b) keeping `c` small and cache-resident.
 
+**The naive baseline is the `N × T` double loop** — test every variant against
+every transcript, `O(N·T)`, "a nested loop hoping the cache helps." Every method
+below is just a way to skip the pairs that can't overlap; none changes that the
+*useful* work is the join. So the only levers that move the needle at scale are
+the **memory-access pattern** (does the skip-structure stay in cache?) and
+**parallelism** (can the loop run on all cores without contending on shared
+memory?). Hold onto that: the asymptotics are a sideshow; cache and cores decide.
+
 ## 3. Two strategies for the stabbing join
 
 ### (A) Random-access interval index — *what duckvep does today*
+
+This is the **implicit interval tree** of cgranges (Heng Li) — a sorted array
+augmented with subtree/suffix max-end, queried by binary search. It is the
+field-standard structure (bedtools, mosdepth, htslib region queries) and what
+fastVEP itself uses for supplementary-annotation interval joins. duckvep's
+`IndexedTranscriptProvider` (sorted-by-start array + `suffix_max_end`) is exactly
+a cgranges-style implicit interval tree.
 
 Data structure (`IndexedTranscriptProvider`): per chromosome, an array of
 transcripts sorted by `start`, plus a `suffix_max_end[i] = max(end[i..])` array
@@ -231,7 +246,57 @@ Both make the natural one-shot query parallel without manual staging, and both
 keep haplotype reconstruction inside an independent unit. The current
 per-variant-LIST scalar is the thing to retire.
 
-## 7. Summary
+## 7. Prototype: measured (range join + per-pair scalar)
+
+`vep_consequence_pair(chrom,pos,ref,alt,transcript_id)` annotates a variant
+against ONE named transcript, so DuckDB can drive the candidate pairs from a
+parallel range join and the kernel stops being a serial per-variant scalar:
+
+```sql
+SELECT vep_consequence_pair(v.chrom, v.pos, v.ref, a.alt, t.transcript_id)
+FROM read_vcf('HG002.vcf.gz') v, UNNEST(v.alt) a(alt)
+JOIN transcripts t
+  ON t.chrom = v.chrom AND v.pos BETWEEN t.start - 5000 AND t.end_pos + 5000;
+```
+
+| path | wall | cores | core-s | pairs | note |
+|---|---|---:|---:|---|---|
+| per-variant scalar, serial `read_vcf` | 179 s | 1 | **177** | 46,968,929 | most core-efficient; **1 core** |
+| per-variant scalar, **staged** table | 42 s | 13 | 562 | 46,968,929 | parallel via materialization |
+| **per-pair + range join (sorted)** | 59 s | 15.6 | 916 | 46,968,776 | fully parallel, order-free |
+| **per-pair + range join (shuffled)** | 72 s | 15.9 | 1138 | 46,968,776 | **+22%** = DuckDB's internal sort |
+| fastVEP (rayon, no HGVS) | 58 s | 7.6 | 441 | 46,968,887 | reference |
+
+What the prototype proves and disproves:
+
+* **Parallelism was the only blocker.** The per-pair scalar over a range join hits
+  15.6 cores (vs 1 for serial `read_vcf`). The serial table function — not the
+  kernel — was the cap.
+* **Order-independence is a real property.** Sorted and totally shuffled (random
+  positions *and* chromosome order) give the **identical** pair count; the range
+  join sorts internally, so a worst-case-unordered BCF is still correct and still
+  parallel, paying only +22% for the sort. A hand-rolled streaming sweep would
+  instead *require* pre-sorted input.
+* **But "just parallelize" is not the answer — cache is.** Core-seconds get
+  *worse* under parallelism (177 → 562 → 916 → 1138), and the per-pair scalar is
+  the worst: 47 M invocations, each an id lookup + a 1-element list marshalled.
+  Several cores hammering the shared 72 MB random-access index saturate memory
+  bandwidth (the §1 sequential-vs-random point, now visible as the core-second
+  blow-up). This is precisely why the **sweep-line** (cache-resident `O(D=518)`
+  active set, sequential access) is the real fix and not merely "add threads":
+  it attacks the bandwidth wall that parallelism alone runs straight into.
+* **Known gap:** the join predicate keys on `v.pos` only, so it drops 153/47 M
+  pairs where a multi-base variant overlaps a transcript past its POS anchor. The
+  fix is an interval predicate on the full variant span
+  (`t.start ≤ v.pos+len(ref)-1+d AND t.end ≥ v.pos-d`); it does not change the
+  performance story.
+
+So the ladder is: **serial scalar (1 core)** → **range join unlocks cores but
+runs into the bandwidth wall of the random-access (cgranges) index** → **the
+sweep-line is what makes the parallel cores actually pay off**. Parallelism and
+the streaming inversion are complements, not alternatives.
+
+## 8. Summary
 
 * Baseline is **`B = 3 s` (sequential I/O)**, not fastVEP. Optimal kernel is
   **`Θ(P·c)`**; today we sit at ~50·B because of `N·log T` random, cache-missing

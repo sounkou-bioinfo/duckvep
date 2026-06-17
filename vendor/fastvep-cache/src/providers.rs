@@ -72,6 +72,10 @@ pub struct IndexedTranscriptProvider {
     /// Suffix-max-end arrays: `suffix_max_end[chrom][i]` = max(end) for transcripts[i..].
     /// Enables early termination in backward scan.
     suffix_max_end: HashMap<Arc<str>, Vec<u64>>,
+    /// Stable-id → `(chrom key, index within by_chrom[chrom])`. Lets the per-pair
+    /// kernel resolve a transcript named by a DuckDB range join in O(1) without a
+    /// spatial scan (see `get_by_id`).
+    by_id: HashMap<Arc<str>, (Arc<str>, usize)>,
 }
 
 impl IndexedTranscriptProvider {
@@ -100,14 +104,29 @@ impl IndexedTranscriptProvider {
             }
             suffix_max_end.insert(Arc::clone(chrom), sme);
         }
+        // Build the stable-id index AFTER the per-chrom sort (indices are final).
+        let mut by_id = HashMap::new();
+        for (chrom, trs) in &by_chrom {
+            for (i, t) in trs.iter().enumerate() {
+                by_id.insert(Arc::clone(&t.stable_id), (Arc::clone(chrom), i));
+            }
+        }
         Self {
             by_chrom,
             suffix_max_end,
+            by_id,
         }
     }
 
     pub fn transcript_count(&self) -> usize {
         self.by_chrom.values().map(|v| v.len()).sum()
+    }
+
+    /// Resolve a transcript by stable id in O(1) — the per-pair kernel's lookup
+    /// when DuckDB's range join has already named the (variant, transcript) pair.
+    pub fn get_by_id(&self, stable_id: &str) -> Option<&Transcript> {
+        let (chrom, i) = self.by_id.get(stable_id)?;
+        self.by_chrom.get(chrom).and_then(|trs| trs.get(*i))
     }
 
     /// Resolve a query chromosome to its stored `(transcripts, suffix_max_end)`

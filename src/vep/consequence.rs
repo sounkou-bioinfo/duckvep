@@ -180,92 +180,7 @@ impl VScalar for VepConsequence {
                 list_offsets.push(flat.len());
             }
         }
-        let total = flat.len();
-
-        // Flatten the nested consequence (LIST<VARCHAR>) child: one inner list per
-        // struct row, `so_offsets[j]..so_offsets[j+1]` slicing the shared values.
-        let mut so_flat: Vec<&str> = Vec::new();
-        let mut so_offsets: Vec<usize> = Vec::with_capacity(total + 1);
-        so_offsets.push(0);
-        for r in &flat {
-            so_flat.extend(r.consequence.iter().map(String::as_str));
-            so_offsets.push(so_flat.len());
-        }
-
-        let mut list = output.list_vector();
-        {
-            let sv = list.struct_child(total);
-            macro_rules! vcol {
-                ($i:expr, $f:ident) => {{
-                    let v = sv.child($i, total);
-                    for (j, r) in flat.iter().enumerate() {
-                        v.insert(j, &*r.$f);
-                    }
-                }};
-            }
-            vcol!(0, transcript_id);
-            vcol!(1, gene_id);
-            vcol!(2, gene_symbol);
-            vcol!(3, biotype);
-            {
-                let mut v = sv.child(4, total);
-                let s = v.as_mut_slice::<bool>();
-                for (j, r) in flat.iter().enumerate() {
-                    s[j] = r.canonical;
-                }
-            }
-            {
-                // consequence: a LIST<VARCHAR> child of the struct. Write the
-                // inner VARCHAR values (reserves the inner child to so_flat.len),
-                // set its size, then fill the per-row entry array. We must NOT use
-                // `ListVector::set_entry` here: its slice is bounded by the wrapper's
-                // hardcoded vector size (2048), but `total` can exceed that. Instead
-                // we view the inner list vector's own data — the contiguous
-                // `duckdb_list_entry` (offset,length) array — as a FlatVector sized
-                // to `total` (the struct's reserved capacity) and write it directly.
-                {
-                    let inner = sv.list_vector_child(5);
-                    {
-                        let cc = inner.child(so_flat.len().max(1));
-                        for (k, s) in so_flat.iter().enumerate() {
-                            cc.insert(k, *s);
-                        }
-                    }
-                    inner.set_len(so_flat.len());
-                }
-                let mut entry_vec = sv.child(5, total);
-                let entries = entry_vec.as_mut_slice::<duckdb::ffi::duckdb_list_entry>();
-                for j in 0..total {
-                    entries[j].offset = so_offsets[j] as u64;
-                    entries[j].length = (so_offsets[j + 1] - so_offsets[j]) as u64;
-                }
-            }
-            vcol!(6, impact);
-            vcol!(7, amino_acids);
-            vcol!(8, codons);
-            {
-                let mut v = sv.child(9, total);
-                {
-                    let s = v.as_mut_slice::<i64>();
-                    for (j, r) in flat.iter().enumerate() {
-                        s[j] = r.protein_pos.unwrap_or(0);
-                    }
-                }
-                for (j, r) in flat.iter().enumerate() {
-                    if r.protein_pos.is_none() {
-                        v.set_null(j);
-                    }
-                }
-            }
-            vcol!(10, alt);
-            vcol!(11, hgvsc);
-            vcol!(12, hgvsp);
-            vcol!(13, hgvsg);
-        }
-        for i in 0..nrows {
-            list.set_entry(i, list_offsets[i], list_offsets[i + 1] - list_offsets[i]);
-        }
-        list.set_len(total);
+        write_consequence_list(output, &flat, &list_offsets, nrows);
         Ok(())
     }
 
@@ -281,6 +196,163 @@ impl VScalar for VepConsequence {
                 ret(),
             ),
         ]
+    }
+}
+
+/// Write a flat `[AnnotatedRow]` (grouped per input row by `list_offsets`) into
+/// `output` as `LIST<STRUCT>` matching `consequence_struct()`. Shared by the
+/// per-variant (`vep_consequence`) and per-pair (`vep_consequence_pair`) kernels
+/// so the intricate nested-vector marshalling lives in exactly one place.
+unsafe fn write_consequence_list(
+    output: &mut dyn WritableVector,
+    flat: &[AnnotatedRow],
+    list_offsets: &[usize],
+    nrows: usize,
+) {
+    let total = flat.len();
+
+    // Flatten the nested consequence (LIST<VARCHAR>) child: one inner list per
+    // struct row, `so_offsets[j]..so_offsets[j+1]` slicing the shared values.
+    let mut so_flat: Vec<&str> = Vec::new();
+    let mut so_offsets: Vec<usize> = Vec::with_capacity(total + 1);
+    so_offsets.push(0);
+    for r in flat {
+        so_flat.extend(r.consequence.iter().map(String::as_str));
+        so_offsets.push(so_flat.len());
+    }
+
+    let mut list = output.list_vector();
+    {
+        let sv = list.struct_child(total);
+        macro_rules! vcol {
+            ($i:expr, $f:ident) => {{
+                let v = sv.child($i, total);
+                for (j, r) in flat.iter().enumerate() {
+                    v.insert(j, &*r.$f);
+                }
+            }};
+        }
+        vcol!(0, transcript_id);
+        vcol!(1, gene_id);
+        vcol!(2, gene_symbol);
+        vcol!(3, biotype);
+        {
+            let mut v = sv.child(4, total);
+            let s = v.as_mut_slice::<bool>();
+            for (j, r) in flat.iter().enumerate() {
+                s[j] = r.canonical;
+            }
+        }
+        {
+            // consequence: a LIST<VARCHAR> child of the struct. Write the
+            // inner VARCHAR values (reserves the inner child to so_flat.len),
+            // set its size, then fill the per-row entry array. We must NOT use
+            // `ListVector::set_entry` here: its slice is bounded by the wrapper's
+            // hardcoded vector size (2048), but `total` can exceed that. Instead
+            // we view the inner list vector's own data — the contiguous
+            // `duckdb_list_entry` (offset,length) array — as a FlatVector sized
+            // to `total` (the struct's reserved capacity) and write it directly.
+            {
+                let inner = sv.list_vector_child(5);
+                {
+                    let cc = inner.child(so_flat.len().max(1));
+                    for (k, s) in so_flat.iter().enumerate() {
+                        cc.insert(k, *s);
+                    }
+                }
+                inner.set_len(so_flat.len());
+            }
+            let mut entry_vec = sv.child(5, total);
+            let entries = entry_vec.as_mut_slice::<duckdb::ffi::duckdb_list_entry>();
+            for j in 0..total {
+                entries[j].offset = so_offsets[j] as u64;
+                entries[j].length = (so_offsets[j + 1] - so_offsets[j]) as u64;
+            }
+        }
+        vcol!(6, impact);
+        vcol!(7, amino_acids);
+        vcol!(8, codons);
+        {
+            let mut v = sv.child(9, total);
+            {
+                let s = v.as_mut_slice::<i64>();
+                for (j, r) in flat.iter().enumerate() {
+                    s[j] = r.protein_pos.unwrap_or(0);
+                }
+            }
+            for (j, r) in flat.iter().enumerate() {
+                if r.protein_pos.is_none() {
+                    v.set_null(j);
+                }
+            }
+        }
+        vcol!(10, alt);
+        vcol!(11, hgvsc);
+        vcol!(12, hgvsp);
+        vcol!(13, hgvsg);
+    }
+    for i in 0..nrows {
+        list.set_entry(i, list_offsets[i], list_offsets[i + 1] - list_offsets[i]);
+    }
+    list.set_len(total);
+}
+
+/// `vep_consequence_pair(chrom, pos, ref, alt, transcript_id) -> LIST<STRUCT>`
+/// — the **per-pair** kernel. Annotates a variant against ONE named transcript
+/// (looked up by id), so DuckDB can drive annotation from a parallel range join
+/// (`variants JOIN transcripts ON pos BETWEEN start-d AND end+d`) instead of the
+/// serial per-variant spatial lookup. Returns a 0/1-element list (empty when the
+/// pair yields no consequence, e.g. beyond the up/downstream window). See
+/// docs/kernel-algorithm.md §6.
+pub struct VepConsequencePair;
+
+impl VScalar for VepConsequencePair {
+    type State = ();
+
+    unsafe fn invoke(
+        _: &Self::State,
+        input: &mut DataChunkHandle,
+        output: &mut dyn WritableVector,
+    ) -> Result<(), Box<dyn Error>> {
+        let batch = data_chunk_to_arrow(input)?;
+        let chrom = batch.column(0).as_string::<i32>();
+        let pos = batch.column(1).as_primitive::<Int64Type>();
+        let refa = batch.column(2).as_string::<i32>();
+        let alta = batch.column(3).as_string::<i32>();
+        let tid = batch.column(4).as_string::<i32>();
+        let nrows = input.len();
+
+        let mut flat: Vec<AnnotatedRow> = Vec::new();
+        let mut list_offsets: Vec<usize> = Vec::with_capacity(nrows + 1);
+        list_offsets.push(0);
+        {
+            let ctx = cache()
+                .load_full()
+                .ok_or("vep_consequence_pair: call vep_load_cache(gff3, fasta) first")?;
+            for i in 0..nrows {
+                let p = pos.value(i) as u64;
+                flat.extend(ctx.annotate_pair(
+                    chrom.value(i),
+                    p,
+                    p,
+                    refa.value(i),
+                    alta.value(i),
+                    tid.value(i),
+                ));
+                list_offsets.push(flat.len());
+            }
+        }
+        write_consequence_list(output, &flat, &list_offsets, nrows);
+        Ok(())
+    }
+
+    fn signatures() -> Vec<ScalarFunctionSignature> {
+        let bigint = || LogicalTypeHandle::from(LogicalTypeId::Bigint);
+        let ret = || LogicalTypeHandle::list(&consequence_struct());
+        vec![ScalarFunctionSignature::exact(
+            vec![varchar(), bigint(), varchar(), varchar(), varchar()],
+            ret(),
+        )]
     }
 }
 
