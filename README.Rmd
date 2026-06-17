@@ -12,27 +12,32 @@ knitr::opts_chunk$set(mode = "markdown", session = "readme",
                       comment = "", results = "asis")
 ```
 
-# duckvep — DuckDB-native VEP: SQL genomics readers, VEP UDFs, Parquet sources
+# duckvep — Ensembl VEP as DuckDB SQL
 
-A loadable DuckDB extension (Rust,
-[`duckdb-rs`](https://github.com/duckdb/duckdb-rs)) that reads genomics formats
-via [noodles](https://github.com/zaeleus/noodles), exposes the VEP consequence /
-HGVS / ACMG engine as SQL functions, and treats annotation databases as plain
-Parquet/DuckDB tables joined by the optimizer — instead of hand-rolled file
-formats. See [docs/DESIGN.md](docs/DESIGN.md) for the design, [NEWS.md](NEWS.md) for the
-changelog, and [docs/PATCHES.md](docs/PATCHES.md) for our accuracy patches.
+A loadable DuckDB extension (Rust) that runs the **Ensembl VEP consequence engine** (+ HGVS) as
+SQL functions over genomics formats read with [noodles](https://github.com/zaeleus/noodles), and
+treats annotation databases as plain Parquet/DuckDB tables joined by the optimizer.
 
-> **Status (v0.3.0).** Implemented: `read_vcf`/`vcf_samples`; `vep_consequence`
-> (scan-driven scalar, incl. an END-aware form for structural variants) and
-> `vep_annotate`; HGVS g./c./p.; `normalize_variant` (canonical minimal key for
-> valid cross-annotator joins); a columnar Parquet transcript cache **built
-> directly from Ensembl MySQL dumps** (inheriting MANE / `cds_start_NF` /
-> selenocysteine / regulatory flags). Accuracy patches make duckvep *more*
-> Ensembl-VEP-concordant than fastVEP (see [docs/PATCHES.md](docs/PATCHES.md)); concordance is
-> reported version-matched and **split by impact × class** (see
-> [correctness/](correctness/correctness.md)). Next: close the high-impact
-> indel/MNV engine gap; supplementary-annotation joins; chrM/PAR/sex-chromosome
-> correctness. Composes with the **duckhts** community extension in one session.
+- **Conformance, measured — not claimed.** Concordance with Ensembl VEP 116 is run on a
+  *controlled* `--gff` oracle (all engines read the same gene model, so only the engine differs),
+  **stratified by consequence term × variant type × length bin with exact 95% CIs**, on a diverse
+  real corpus (ClinVar + GIAB AJ/Han/male/female + 1000G). Every divergence is *shared* with the
+  vendored fastVEP — **zero are duckvep-specific**. [`conformance/`](conformance/) adds the formal
+  tier (equivalence-class covering witnesses) that becomes a *proof* as the engine is ported 1:1
+  from VEP — formal + statistical + real-world meet at one differential fuzzer.
+- **Haplotype-aware.** `vep_haplotype_consequence` applies *phased* variants together
+  (bcftools-`csq` / haplosaurus), so a silent SNV flips to missense when phased with its neighbour.
+- **Annotations are joins, not flags.** Any source (gnomAD, ClinVar, conservation, custom BED) is
+  a Parquet/DuckDB table joined on `normalize_variant`'s canonical key — exact-variant and interval
+  annotation at any scale, composed in SQL (a `sources.sql` manifest + an `annotate_vcf()` macro),
+  not a CLI flag per source. Composes with the **duckhts** extension in one session.
+- **Columnar transcript cache** built directly from Ensembl MySQL dumps (MANE / `cds_start_NF` /
+  selenocysteine flags inherited). Pure-Rust stack → targets **WASM** (not yet wired in CI).
+
+See [docs/DESIGN.md](docs/DESIGN.md), [NEWS.md](NEWS.md), [docs/PATCHES.md](docs/PATCHES.md),
+[correctness/](correctness/correctness.md). Next: the VEP coordinate-layer
+(`TranscriptVariationAllele`) port to close the high-impact indel/MNV tail and turn conformance
+into a proof.
 
 ## Build
 

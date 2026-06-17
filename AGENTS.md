@@ -7,10 +7,18 @@ quick operational guide.
 
 ## What this is
 
-A DuckDB extension (`duckdb-rs`) that reads genomics formats via **noodles**,
-exposes the VEP consequence / HGVS / ACMG engine as SQL UDFs, and treats
-annotation databases as plain Parquet/DuckDB tables joined by the optimizer —
-instead of hand-rolled file formats. Successor to fastVEP (`../DuckfastVEP`).
+A DuckDB extension (Rust) that runs the **Ensembl VEP consequence engine** (+ HGVS) as SQL
+functions over noodles-read genomics formats, with annotation DBs as Parquet/DuckDB tables joined
+by the optimizer. Successor to fastVEP (`../DuckfastVEP`), vendored under `vendor/` and patched
+toward VEP. The differentiators are in [README.md](README.md): a measured **conformance** story
+(controlled `--gff` oracle, 0 duckvep-specific; `conformance/` = formal class-coverage +
+statistical stratified CIs that meet at a differential fuzzer), **haplotype** predictions, and
+**annotations as joins** (a `sources.sql` manifest, not a CLI flag per source).
+
+**Current state / roadmap lives in [`docs/refinements.md`](docs/refinements.md)** — don't
+re-list it here (it drifts). Headline open item: the **`TranscriptVariationAllele`
+coordinate-layer port** (replace the windowed-peptide surrogate) — the road to closing the
+indel/MNV tail and turning conformance into a proof.
 
 ## Build, test, run
 
@@ -49,6 +57,14 @@ cargo fmt && cargo clippy   # keep clean before committing
   human-hardcoded packed key (see docs/DESIGN.md §1).
 - **Wrap-then-delete:** reach output parity with fastVEP before deleting any of
   the old hand-rolled formats.
+- **No Python — R + DuckDB SQL + Perl glue.** Harness, reports and scripts are R
+  (`optparse` for args); data wrangling is DuckDB SQL; R gives stats/CIs/plots for
+  free (`binom.test`, …). The extension (unstable ABI, **v1.5.3**) loads natively
+  only in the matching duckdb-r **release** build —
+  `remotes::install_github("duckdb/duckdb-r@v1.5.3", MAKEFLAGS="-j15")` (the
+  r-universe `1.5.3.9004` dev build reports a git-hash version and is rejected; the
+  `.tools/duckdb` CLI is the same v1.5.3 and always works). When joining SO-term
+  sets in R, use `sort(method="radix")` (byte order) to match DuckDB `list_sort`.
 - Match surrounding style; run `cargo fmt`/`clippy` clean.
 
 ## Directives (accuracy & philosophy)
@@ -77,54 +93,19 @@ cargo fmt && cargo clippy   # keep clean before committing
 - **Generic over special-cased.** Prefer deepening a shared mechanism over adding a
   per-case bandaid (the engine is organism-agnostic; the data plane is just columns).
 
-## Feature roadmap (parity with fastVEP, then beyond — all via SQL/Parquet)
+## Roadmap & current state — see the living docs, not this file
 
-Have: `read_vcf`/`vcf_samples`, `vep_consequence`/`vep_annotate`, 49-term
-consequence vocabulary, structural variants (`<DEL>/<DUP>/<CNV>/<INV>/<INS>/<BND>/<STR>`,
-copy-number), HGVS g./c./p., columnar Parquet transcript cache, duckhts composition.
+To avoid drift, the moving targets live where they're generated/maintained:
+- **Accuracy patches & the honest framing** → [`docs/PATCHES.md`](docs/PATCHES.md);
+  open gaps & the architectural pivot → [`docs/refinements.md`](docs/refinements.md).
+- **Measured concordance** (split by impact × class, per-SO-term) → generated under
+  [`correctness/`](correctness/); **stratified conformance + CIs** → [`conformance/`](conformance/).
+- **Changelog** → [`NEWS.md`](NEWS.md).
 
-Next (each a table function or a join, not a new file format):
-- **Supplementary annotations** — ClinVar, gnomAD, dbSNP, COSMIC, 1000G, TOPMed,
-  MitoMap as Parquet/DuckDB tables joined on `(chrom,pos,ref,alt)`. Replaces
-  fastSA `.osa`/`.osa2`.
-- **Prediction scores** — PhyloP, GERP, REVEL, SpliceAI, PrimateAI, DANN; SIFT/
-  PolyPhen via dbNSFP — all Parquet joins.
-- **Gene-level** — OMIM, gnomAD constraint (pLI/LOEUF), ClinGen validity.
-- **ACMG-AMP** (Richards 2015 + ClinGen SVI), filter engine (`filter_vep` syntax),
-  output formats (VCF 49-field CSQ / tab / JSON / Nirvana-style), multi-sample
-  FORMAT parsing, regulatory build, mitochondrial (NCBI codon table 2), `--merged`
-  Ensembl+RefSeq cache, custom VCF/BED annotations, gzipped input (done).
-
-## Open correctness gaps (paper-relevant — add regression tests + examples)
-
-- **High-impact indel/MNV engine gap** — the measured frontier vs Ensembl VEP
-  (shared with fastVEP). The real next engine work (frameshift→stop, MNV codon
-  handling). See [`correctness/correctness.md`](correctness/correctness.md).
-- **Mitochondrial codon table** — `predictor.rs` uses `CodonTable::standard()`
-  only; chrM/MT transcripts need **NCBI table 2** (TGA=Trp not stop, ATA=Met,
-  AGA/AGG=stop). Source: Ensembl `transcript_attrib` code `codon_table` (value 2
-  for mito) — add it to the cache + thread a per-transcript codon table into the
-  predictor. Currently mis-calls every MT coding variant.
-- **chrX/Y haploid + pseudoautosomal regions (PAR)** — PAR genes appear on both
-  X and Y; hemizygous calling and PAR boundaries are untested. HG002 is male; add
-  a **female sample (e.g. NA12878)** so chrX diploid + PAR are exercised.
-- Regression tests for all three belong in the `correctness/` suite (genome-wide
-  cache + primary FASTA), with worked examples.
-
-## Haplotype-aware consequences (haplosaurus) — flexibility note
-
-Ensembl **haplo**/haplosaurus computes protein haplotypes: the joint consequence
-of *multiple phased variants on the same transcript* (e.g. two SNVs in one codon,
-or a frameshift+SNV that interact) — not each variant in isolation. Status:
-- The consequence kernel (`predictor::predict`, `engine::annotate_variant`) is
-  **per-variant** today: it applies one variant's alt alleles to the transcript
-  and translates. It does **not** apply a *set* of variants jointly. This is the
-  one structural gap for haplo.
-- But the architecture is well-suited: `read_vcf` already exposes **phased GT**
-  (`0|1` preserved) and `vcf_samples`, so variants can be `GROUP BY`-ed into
-  (sample, haplotype, transcript) sets in pure SQL. The missing piece is a kernel
-  that applies an ordered set of variants to the spliced CDS and translates the
-  resulting peptide — a generalization of the single-variant apply, not a rewrite.
-- Action: design `vep_haplotype(transcript, [variants])` (or a table function over
-  phased genotypes) as a multi-variant apply over `translateable_seq`. Verify the
-  engine's sequence-application path is factored to accept N edits before building.
+Already shipped (don't re-scope as TODO): mitochondrial codon table (NCBI table 2) + non-ATG
+starts; the genomic start/stop boundary models; structural variants; HGVS; the columnar
+Ensembl-MySQL cache; and **haplotype-aware consequence** — `vep_haplotype_consequence` applies a
+phased set jointly over the CDS (100% on the MNV-split harness, experimental edges tracked in
+refinements). The residual indel/MNV tail is **shared with fastVEP** and is the target of the
+`TranscriptVariationAllele` coordinate-layer port. A diverse real cohort (GIAB AJ/Han/M/F + 1000G
++ GIAB SV Tier1) is pinned in `scripts/fetch-data.sh` (`DIVERSE=1`) for chrX/PAR/sex + SV coverage.

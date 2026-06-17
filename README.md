@@ -2,32 +2,42 @@
 <!-- README.md is generated from README.Rmd — edit the .Rmd and run `make readme`.
      SQL blocks below are executed live against the built extension via duckknit. -->
 
-# duckvep — DuckDB-native VEP: SQL genomics readers, VEP UDFs, Parquet sources
+# duckvep — Ensembl VEP as DuckDB SQL
 
-A loadable DuckDB extension (Rust,
-[`duckdb-rs`](https://github.com/duckdb/duckdb-rs)) that reads genomics
-formats via [noodles](https://github.com/zaeleus/noodles), exposes the
-VEP consequence / HGVS / ACMG engine as SQL functions, and treats
+A loadable DuckDB extension (Rust) that runs the **Ensembl VEP
+consequence engine** (+ HGVS) as SQL functions over genomics formats
+read with [noodles](https://github.com/zaeleus/noodles), and treats
 annotation databases as plain Parquet/DuckDB tables joined by the
-optimizer — instead of hand-rolled file formats. See
-[docs/DESIGN.md](docs/DESIGN.md) for the design, [NEWS.md](NEWS.md) for
-the changelog, and [docs/PATCHES.md](docs/PATCHES.md) for our accuracy
-patches.
+optimizer.
 
-> **Status (v0.3.0).** Implemented: `read_vcf`/`vcf_samples`;
-> `vep_consequence` (scan-driven scalar, incl. an END-aware form for
-> structural variants) and `vep_annotate`; HGVS g./c./p.;
-> `normalize_variant` (canonical minimal key for valid cross-annotator
-> joins); a columnar Parquet transcript cache **built directly from
-> Ensembl MySQL dumps** (inheriting MANE / `cds_start_NF` /
-> selenocysteine / regulatory flags). Accuracy patches make duckvep
-> *more* Ensembl-VEP-concordant than fastVEP (see
-> [docs/PATCHES.md](docs/PATCHES.md)); concordance is reported
-> version-matched and **split by impact × class** (see
-> [correctness/](correctness/correctness.md)). Next: close the
-> high-impact indel/MNV engine gap; supplementary-annotation joins;
-> chrM/PAR/sex-chromosome correctness. Composes with the **duckhts**
-> community extension in one session.
+- **Conformance, measured — not claimed.** Concordance with Ensembl VEP
+  116 is run on a *controlled* `--gff` oracle (all engines read the same
+  gene model, so only the engine differs), **stratified by consequence
+  term × variant type × length bin with exact 95% CIs**, on a diverse
+  real corpus (ClinVar + GIAB AJ/Han/male/female + 1000G). Every
+  divergence is *shared* with the vendored fastVEP — **zero are
+  duckvep-specific**. [`conformance/`](conformance/) adds the formal
+  tier (equivalence-class covering witnesses) that becomes a *proof* as
+  the engine is ported 1:1 from VEP — formal + statistical + real-world
+  meet at one differential fuzzer.
+- **Haplotype-aware.** `vep_haplotype_consequence` applies *phased*
+  variants together (bcftools-`csq` / haplosaurus), so a silent SNV
+  flips to missense when phased with its neighbour.
+- **Annotations are joins, not flags.** Any source (gnomAD, ClinVar,
+  conservation, custom BED) is a Parquet/DuckDB table joined on
+  `normalize_variant`’s canonical key — exact-variant and interval
+  annotation at any scale, composed in SQL (a `sources.sql` manifest +
+  an `annotate_vcf()` macro), not a CLI flag per source. Composes with
+  the **duckhts** extension in one session.
+- **Columnar transcript cache** built directly from Ensembl MySQL dumps
+  (MANE / `cds_start_NF` / selenocysteine flags inherited). Pure-Rust
+  stack → targets **WASM** (not yet wired in CI).
+
+See [docs/DESIGN.md](docs/DESIGN.md), [NEWS.md](NEWS.md),
+[docs/PATCHES.md](docs/PATCHES.md),
+[correctness/](correctness/correctness.md). Next: the VEP
+coordinate-layer (`TranscriptVariationAllele`) port to close the
+high-impact indel/MNV tail and turn conformance into a proof.
 
 ## Build
 
@@ -293,22 +303,22 @@ indels/MNVs (shared with fastVEP — an engine gap, not a duckvep bug).
 
 | impact   | class | duckvep /100K | fastVEP /100K |
 |:---------|:------|:--------------|:--------------|
-| HIGH     | del   | 234/100K      | 9641/100K     |
-| HIGH     | ins   | 73/100K       | 6110/100K     |
-| HIGH     | mnv   | 0/100K        | 48711/100K    |
+| HIGH     | del   | 31/100K       | 9662/100K     |
+| HIGH     | ins   | 0/100K        | 6096/100K     |
+| HIGH     | mnv   | 0/100K        | 48784/100K    |
 | HIGH     | snv   | 0/100K        | 0/100K        |
-| MODERATE | del   | 0/100K        | 1535/100K     |
-| MODERATE | ins   | 114/100K      | 1767/100K     |
-| MODERATE | mnv   | 0/100K        | 28631/100K    |
-| MODERATE | snv   | 0/100K        | 5/100K        |
-| LOW      | del   | 122/100K      | 16454/100K    |
-| LOW      | ins   | 335/100K      | 22920/100K    |
-| LOW      | mnv   | 4975/100K     | 22886/100K    |
-| LOW      | snv   | 2/100K        | 15/100K       |
-| MODIFIER | del   | 9/100K        | 43/100K       |
-| MODIFIER | ins   | 0/100K        | 220/100K      |
-| MODIFIER | mnv   | 200/100K      | 200/100K      |
-| MODIFIER | snv   | 3/100K        | 3/100K        |
+| MODERATE | del   | 0/100K        | 1531/100K     |
+| MODERATE | ins   | 114/100K      | 1765/100K     |
+| MODERATE | mnv   | 0/100K        | 28470/100K    |
+| MODERATE | snv   | 0/100K        | 0/100K        |
+| LOW      | del   | 41/100K       | 16477/100K    |
+| LOW      | ins   | 0/100K        | 22959/100K    |
+| LOW      | mnv   | 0/100K        | 22886/100K    |
+| LOW      | snv   | 0/100K        | 16/100K       |
+| MODIFIER | del   | 0/100K        | 37/100K       |
+| MODIFIER | ins   | 0/100K        | 219/100K      |
+| MODIFIER | mnv   | 0/100K        | 198/100K      |
+| MODIFIER | snv   | 0/100K        | 2/100K        |
 
 Error rate **per 100,000 (variant, transcript) pairs** vs Ensembl VEP
 (version-matched), by impact × class, duckvep vs fastVEP — generated
@@ -321,16 +331,16 @@ fastVEP matches VEP (`regression` = duckvep worse than upstream;
 `shared` = inherited engine gap) — top by pair count, generated from
 `correctness/data/error_transitions.csv`:
 
-| type   | impact   | VEP calls                                                                                                                           | duckvep calls                                                                                                                         |   n |
-|:-------|:---------|:------------------------------------------------------------------------------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------|----:|
-| shared | HIGH     | 3_prime_UTR_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant&stop_retained_variant | 3_prime_UTR_variant&coding_sequence_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant |  18 |
-| shared | HIGH     | intron_variant&splice_acceptor_variant&stop_retained_variant                                                                        | coding_sequence_variant&intron_variant&splice_acceptor_variant                                                                        |  14 |
-| shared | LOW      | NMD_transcript_variant&intron_variant&splice_donor_region_variant                                                                   | NMD_transcript_variant&intron_variant&splice_donor_5th_base_variant                                                                   |  12 |
-| shared | LOW      | non_coding_transcript_variant&splice_region_variant                                                                                 | non_coding_transcript_exon_variant&splice_region_variant                                                                              |  12 |
-| shared | MODIFIER | coding_sequence_variant                                                                                                             | synonymous_variant                                                                                                                    |  10 |
-| shared | LOW      | intron_variant&splice_region_variant                                                                                                | intron_variant&splice_polypyrimidine_tract_variant&splice_region_variant                                                              |   8 |
-| shared | LOW      | intron_variant&splice_donor_region_variant                                                                                          | intron_variant&splice_donor_5th_base_variant                                                                                          |   6 |
-| shared | MODIFIER | mature_miRNA_variant                                                                                                                | non_coding_transcript_exon_variant                                                                                                    |   6 |
+| type   | impact   | VEP calls                                                                                                                           | duckvep calls                                                                                                                                           |   n |
+|:-------|:---------|:------------------------------------------------------------------------------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------|----:|
+| shared | HIGH     | 5_prime_UTR_variant&start_lost                                                                                                      | 5_prime_UTR_variant&coding_sequence_variant                                                                                                             |   3 |
+| shared | LOW      | 3_prime_UTR_variant&stop_retained_variant                                                                                           | 3_prime_UTR_variant&coding_sequence_variant                                                                                                             |   2 |
+| shared | MODERATE | coding_sequence_variant&inframe_insertion                                                                                           | stop_retained_variant                                                                                                                                   |   2 |
+| shared | LOW      | synonymous_variant                                                                                                                  | start_lost                                                                                                                                              |   1 |
+| shared | LOW      | NMD_transcript_variant&stop_retained_variant                                                                                        | NMD_transcript_variant&stop_lost                                                                                                                        |   1 |
+| shared | HIGH     | 3_prime_UTR_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant&stop_retained_variant | 3_prime_UTR_variant&coding_sequence_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant                   |   1 |
+| shared | HIGH     | transcript_ablation                                                                                                                 | 3_prime_UTR_variant&5_prime_UTR_variant&intron_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant&stop_retained_variant |   1 |
+| shared | HIGH     | transcript_ablation                                                                                                                 | 3_prime_UTR_variant&5_prime_UTR_variant&coding_sequence_variant                                                                                         |   1 |
 
 So the open work splits cleanly: **regressions** (the splice sub-term
 precedence our interval rewrite broke — being fixed to match Ensembl
