@@ -44,15 +44,13 @@ VCF
 conda run -n vep vep -i "$SVVCF" --gff "$CTRL" --fasta "$FASTA" --symbol --json \
   -o /tmp/sv_vep.json --force_overwrite --no_stats 2>/dev/null
 [[ -s /tmp/sv_vep.json ]] || { echo "FAIL: VEP produced no output" >&2; exit 1; }
-python3 - "$TR" <<'PY' > /tmp/sv_vep.tsv
-import json,sys
-tr=sys.argv[1]
-for l in open('/tmp/sv_vep.json'):
-    r=json.loads(l)
-    for t in r.get('transcript_consequences',[]):
-        if t.get('transcript_id')==tr:
-            print(r.get('id','?'), '&'.join(sorted(t['consequence_terms'])), sep='\t')
-PY
+Rscript -e '
+  suppressMessages(library(jsonlite)); tr <- commandArgs(TRUE)[1]
+  for (l in readLines("/tmp/sv_vep.json")) { r <- fromJSON(l, simplifyVector = FALSE)
+    for (t in r$transcript_consequences) if (!is.null(t$transcript_id) && t$transcript_id == tr)
+      cat(if (!is.null(r$id)) r$id else "?",
+          paste(sort(unlist(t$consequence_terms), method = "radix"), collapse = "&"),
+          sep = "\t", fill = TRUE) }' "$TR" > /tmp/sv_vep.tsv
 
 # duckvep reads the SAME controlled GFF as VEP (so the only free variable is the engine).
 "$DUCKDB" -unsigned -noheader -list -c "

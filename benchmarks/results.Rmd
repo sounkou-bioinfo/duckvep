@@ -15,7 +15,7 @@ kbl <- function(df, ...) knitr::kable(df, ...)
 
 R Markdown report — every table below is read **directly from a recorded CSV**
 under `benchmarks/data/` (regenerate the data with `scripts/benchmark.sh` /
-`correctness/vep_concordance.py`, then `make benchmarks`). duckvep wraps the same
+`correctness/vep_concordance.R`, then `make benchmarks`). duckvep wraps the same
 consequence engine as fastVEP, so head-to-heads are fair; the differences are
 data-engineering (caching, streaming, columnar), not the science. **Setup:**
 Ensembl GFF3 gene models; release builds (`opt-level=3`, `lto=fat`); steady state

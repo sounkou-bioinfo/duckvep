@@ -18,6 +18,6 @@ t=$( { /usr/bin/time -f "%e" "$DUCKDB" -unsigned -c \
   "LOAD '$EXT'; SELECT vep_load_cache('$GFF3','$FASTA');
    SELECT count(*) FROM (SELECT UNNEST(vep_consequence(v.chrom,v.pos,v.ref,a.alt))
                          FROM read_vcf('$VCF') v, UNNEST(v.alt) a(alt));" >/dev/null; } 2>&1 )
-vs=$(python3 -c "print(round($nvar/$t))")
+vs=$(awk "BEGIN{printf \"%.0f\", $nvar/$t}")
 echo "$ORG,$ASM,$ntx,$nvar,custom,$t,consequence" >> "$ROOT/benchmarks/data/throughput.csv"
 echo "$ORG ($ASM): $nvar variants / ${t}s = $vs v/s ($ntx transcripts)"

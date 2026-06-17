@@ -51,7 +51,7 @@ Until then this framework is a strong *falsifier + bound*, not yet a proof.
 | **class model** | parse `Constants.pm` OverlapConsequence table + `VariationEffect.pm` predicate signatures → the equivalence-class axes | TODO (derive from VEP source) |
 | **formal generator** | covering array over the classes on a synthetic transcript (known exons/introns/UTRs/start+stop/codon-table/NF flags) | `../tools/gen_hard_variants.rs` (splice/exon cells; extend to full tiling) |
 | **statistical corpus** | gold labels from Ensembl `transcript_variation` MySQL for the release; variant distributions from TOPMed/gnomAD/ClinVar + the pinned GIAB diverse cohort | ClinVar in place; Ensembl-MySQL puller TODO |
-| **differential oracle** | VEP `--gff` ⟂ duckvep, exact SO-term-set match per pair | `../correctness/vep_concordance.py` (dumps `annotations.parquet`) |
+| **differential oracle** | VEP `--gff` ⟂ duckvep, exact SO-term-set match per pair | `../correctness/vep_concordance.R` (dumps `annotations.parquet`) |
 | **stratified CI report** | per (consequence class × variant type × length bin): N, discordant, Clopper-Pearson 95% upper bound (rule-of-three at k=0) | **`stratified_conformance.R`** ✅ runnable now (DuckDB SQL + `binom.test`) |
 | **coverage report** | every reachable class hit? (formal completeness) | TODO (needs the class model + labeler) |
 

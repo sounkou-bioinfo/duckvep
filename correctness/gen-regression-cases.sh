@@ -3,7 +3,7 @@
 # real-data (variant, transcript) cases where duckvep AGREES with Ensembl VEP, one+
 # per hard category (the categories each accuracy fix targets). The expected value is
 # VEP's call (= duckvep's, since concordant), so the corpus is "code as memory" — never
-# hand-typed. Re-run after a fresh `correctness/vep_concordance.py` to refresh it.
+# hand-typed. Re-run after a fresh `correctness/vep_concordance.R` to refresh it.
 #
 # Usage: correctness/gen-regression-cases.sh [annotations.parquet] [sample.vcf]
 set -euo pipefail

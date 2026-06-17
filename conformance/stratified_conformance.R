@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 # Stratified VEP-conformance report — the STATISTICAL tier of the conformance framework.
 # Data wrangling in DuckDB SQL (over the dated `annotations.parquet` dump from
-# correctness/vep_concordance.py: VEP-116 --gff + duckvep + fastVEP, one row per
+# correctness/vep_concordance.R: VEP-116 --gff + duckvep + fastVEP, one row per
 # (source, pos, ref, alt, transcript_id) with the SO-term set); statistics + report in R.
 #
 # Per (consequence class x variant type x length bin) stratum: N shared (variant,transcript)
@@ -19,7 +19,7 @@ dump <- if (length(args) >= 1) args[1] else
   system2("bash", c("-c", shQuote(sprintf("ls -t %s/data/vep_dumps/*/annotations.parquet | head -1", root))),
           stdout = TRUE)
 if (length(dump) == 0 || !file.exists(dump))
-  stop("no annotations.parquet dump found — run correctness/vep_concordance.py first")
+  stop("no annotations.parquet dump found — run correctness/vep_concordance.R first")
 outdir <- file.path(root, "conformance", "data"); dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
 
 con <- dbConnect(duckdb())
