@@ -66,21 +66,40 @@ for (i in seq_len(nrow(recs))) {
 }
 vep <- do.call(rbind, V)
 
+# fastVEP (the vendored engine) on the same witnesses -> term-fair "duckvep-specific" flag.
+FASTVEP <- Sys.getenv("FASTVEP", file.path(root, "../DuckfastVEP/target/release/fastvep"))
+fv <- NULL
+if (file.exists(FASTVEP)) {
+  raw <- system2(FASTVEP, c("annotate", "-i", opt$vcf, "--gff3", opt$gff, "--fasta", opt$fasta,
+                            "--output-format", "json"), stdout = TRUE, stderr = FALSE)
+  arr <- tryCatch(fromJSON(paste(raw, collapse = "\n"), simplifyVector = FALSE), error = function(e) list())
+  F <- list()
+  for (r in arr) for (tc in r$transcript_consequences) { p <- strsplit(r$allele_string, "/")[[1]]
+    F[[length(F)+1]] <- data.frame(pos = r$start, ref = p[1], alt = p[length(p)], tx = tc$transcript_id,
+                                   fc = setlist(unlist(tc$consequence_terms)), stringsAsFactors = FALSE) }
+  if (length(F)) fv <- do.call(rbind, F)
+}
+
 # join VEP <-> duckvep on canonical key, attach class, compare sets
 m <- merge(vep, dv, by = c("pos","ref","alt","tx"))
 m <- merge(m, nk[, c("npos","nref","nalt","class")], by.x = c("pos","ref","alt"),
            by.y = c("npos","nref","nalt"), all.x = TRUE)
 m$class[is.na(m$class)] <- "(other)"
 m$ok <- m$vc == m$dc
+# term-fair: a divergence is duckvep-SPECIFIC only when fastVEP matches VEP exactly on this pair.
+m$fc <- if (!is.null(fv)) fv$fc[match(paste(m$pos,m$ref,m$alt,m$tx), paste(fv$pos,fv$ref,fv$alt,fv$tx))] else NA_character_
+m$dv_specific <- !m$ok & !is.na(m$fc) & (m$fc == m$vc)
 
-by <- aggregate(ok ~ class, m, function(x) c(n = length(x), disc = sum(!x)))
-rep <- data.frame(class = by$class, n = by$ok[, "n"], discordant = by$ok[, "disc"])
+agg <- function(v) c(n = length(v), disc = sum(!v))
+by <- aggregate(ok ~ class, m, agg); spec <- aggregate(dv_specific ~ class, m, sum)
+rep <- merge(data.frame(class = by$class, n = by$ok[, "n"], discordant = by$ok[, "disc"]), spec, by = "class")
 rep <- rep[order(-rep$discordant, -rep$n), ]
 cat(sprintf("Differential fuzz over %d witnesses -> %d (variant,transcript) pairs, %d classes covered\n",
             nrow(cls), nrow(m), length(unique(m$class))))
-cat(sprintf("  duckvep ≡ VEP on %d/%d pairs; %d divergences across %d classes\n",
-            sum(m$ok), nrow(m), sum(!m$ok), sum(rep$discordant > 0)))
-for (i in seq_len(nrow(rep))) cat(sprintf("  %-26s n=%-5d disc=%d\n", rep$class[i], rep$n[i], rep$discordant[i]))
+cat(sprintf("  duckvep ≡ VEP on %d/%d pairs; %d divergences (%d duckvep-SPECIFIC; rest shared with fastVEP) across %d classes\n",
+            sum(m$ok), nrow(m), sum(!m$ok), sum(m$dv_specific), sum(rep$discordant > 0)))
+cat(sprintf("  %-26s %6s %6s %9s\n", "class", "n", "disc", "dv_spec"))
+for (i in seq_len(nrow(rep))) cat(sprintf("  %-26s %6d %6d %9d\n", rep$class[i], rep$n[i], rep$discordant[i], rep$dv_specific[i]))
 d <- m[!m$ok, c("class","pos","ref","alt","tx","vc","dc")]
 if (nrow(d)) { cat("--- divergences (fuzz findings) ---\n")
   for (i in seq_len(min(20, nrow(d)))) with(d[i, ],
