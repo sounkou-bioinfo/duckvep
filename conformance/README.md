@@ -53,7 +53,7 @@ Until then this framework is a strong *falsifier + bound*, not yet a proof.
 | **statistical corpus** | gold labels from Ensembl `transcript_variation` MySQL for the release; variant distributions from TOPMed/gnomAD/ClinVar + the pinned GIAB diverse cohort | ClinVar in place; Ensembl-MySQL puller TODO |
 | **differential oracle** | VEP `--gff` ⟂ duckvep, exact SO-term-set match per pair | `../correctness/vep_concordance.R` (dumps `annotations.parquet`) |
 | **stratified CI report** | per (consequence class × variant type × length bin): N, discordant, Clopper-Pearson 95% upper bound (rule-of-three at k=0) | **`stratified_conformance.R`** ✅ runnable now (DuckDB SQL + `binom.test`) |
-| **coverage report** | every reachable class hit? (formal completeness) | TODO (needs the class model + labeler) |
+| **differential fuzzer** | VEP --gff ⟂ duckvep on the witness VCF, exact set match per pair, reported per CLASS | **`fuzz_witnesses.R`** ✅ R-native. TP53 726 witnesses → 29,574 pairs: SNV classes 100% clean; ALL 1,854 divergences are indels-at-boundaries (the indel/MNV tail the random corpus under-samples) |
 
 ## The statistical statement
 

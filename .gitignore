@@ -28,3 +28,4 @@ data/cache/
 correctness/data/*.vcf
 data/giab/*.controlled.gff3.gz*
 conformance/data/*.vcf
+conformance/data/fuzz_results.csv
