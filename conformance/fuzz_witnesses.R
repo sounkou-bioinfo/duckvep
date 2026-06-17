@@ -20,11 +20,13 @@ opt <- parse_args(op)
 vep_cmd <- strsplit(Sys.getenv("VEP_CMD", "conda run -n vep vep"), " ")[[1]]
 setlist <- function(x) paste(sort(x, method = "radix"), collapse = "&")   # byte order, matches DuckDB
 
-# class per ORIGINAL (chrom,pos,ref,alt) from the witness INFO/CLASS
+# class + TARGET transcript per ORIGINAL (chrom,pos,ref,alt) from the witness INFO. The CLASS
+# geometry is defined on TX only; we attach it solely to that transcript's pairs (pi P1-8).
 wl <- readLines(opt$vcf); wl <- wl[!grepl("^#", wl)]
-wf <- do.call(rbind, strsplit(wl, "\t"));
+wf <- do.call(rbind, strsplit(wl, "\t"))
 cls <- data.frame(opos = as.integer(wf[, 2]), oref = wf[, 4], oalt = wf[, 5],
-                  class = sub(".*CLASS=", "", wf[, 8]), stringsAsFactors = FALSE)
+                  class = sub(".*CLASS=([^;]*).*", "\\1", wf[, 8]),
+                  tx    = sub(".*TX=([^;]*).*", "\\1", wf[, 8]), stringsAsFactors = FALSE)
 
 con <- dbConnect(duckdb(config = list(allow_unsigned_extensions = "true")))
 on.exit(dbDisconnect(con, shutdown = TRUE))
@@ -101,7 +103,9 @@ mk <- key(m)
 m$vc <- vep$vc[match(mk, key(vep))]
 m$dc <- dv$dc[match(mk, key(dv))]
 m$fc <- if (fastvep_ok) fv$fc[match(mk, key(fv))] else NA_character_
-m <- merge(m, cls, by = c("opos","oref","oalt"), all.x = TRUE)
+# Join on (opos,oref,oalt,TX) so the class attaches ONLY to the target transcript's pair; every
+# other overlapping transcript at the locus has different geometry and becomes '(other)' (pi P1-8).
+m <- merge(m, cls, by = c("opos","oref","oalt","tx"), all.x = TRUE)
 m$class[is.na(m$class)] <- "(other)"
 
 eq <- function(a, b) (is.na(a) & is.na(b)) | (!is.na(a) & !is.na(b) & a == b)   # NA = "not emitted"

@@ -49,7 +49,13 @@ if (!is.na(cds_lo)) {                                     # start & stop codons 
   stop_codon  <- if (strand == "+") (cds_hi - 2):cds_hi else cds_lo:(cds_lo + 2)
   add(start_codon, "start_codon"); add(stop_codon, "stop_codon")
 }
-pos <- pmax(pos, 1L); keep <- !duplicated(pos); pos <- pos[keep]; lab <- lab[keep]
+# Dedup positions keeping the MOST SPECIFIC label (a position that is both an exon edge and the
+# start codon must keep `start_codon`, not whichever was added first — pi P0/P1-8). Lower rank
+# = more specific = wins.
+pos <- pmax(pos, 1L)
+rank <- c(start_codon = 1, stop_codon = 2, donor = 3, acceptor = 4, exon_edge = 5, exon_mid = 6)
+ord <- order(pos, rank[lab]); pos <- pos[ord]; lab <- lab[ord]
+keep <- !duplicated(pos); pos <- pos[keep]; lab <- lab[keep]
 
 # 3. reference base at each position (FASTA range read via duckhts -> the range's SEQUENCE).
 p0 <- min(pos); span <- sprintf("%s:%d-%d", chrom, p0, max(pos) + 4)
@@ -80,10 +86,14 @@ wdf <- wdf[order(wdf$pos), ]
 
 dir.create(dirname(opt$out), showWarnings = FALSE, recursive = TRUE)
 vc <- file(opt$out, "w")
+# Tag the TARGET transcript: each CLASS describes geometry on THIS transcript only. The fuzzer
+# applies the class label solely to the target transcript's pairs (other overlapping transcripts
+# at the same locus have different geometry, so they are '(other)', not mislabeled — pi P1-8).
 writeLines(c("##fileformat=VCFv4.2", sprintf("##contig=<ID=%s>", chrom),
-  '##INFO=<ID=CLASS,Number=1,Type=String,Description="witness equivalence class">',
+  '##INFO=<ID=CLASS,Number=1,Type=String,Description="witness equivalence class (on the target transcript)">',
+  '##INFO=<ID=TX,Number=1,Type=String,Description="target transcript the CLASS geometry refers to">',
   "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO"), vc)
-writeLines(sprintf("%s\t%d\t.\t%s\t%s\t.\t.\tCLASS=%s", chrom, wdf$pos, wdf$ref, wdf$alt, wdf$class), vc)
+writeLines(sprintf("%s\t%d\t.\t%s\t%s\t.\t.\tCLASS=%s;TX=%s", chrom, wdf$pos, wdf$ref, wdf$alt, wdf$class, opt$tx), vc)
 close(vc)
 cat(sprintf("wrote %d witnesses for %s (%s, %d classes) -> %s\n",
             nrow(wdf), opt$tx, chrom, length(unique(wdf$class)), opt$out))

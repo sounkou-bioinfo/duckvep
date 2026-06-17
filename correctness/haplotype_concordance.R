@@ -93,15 +93,13 @@ if (length(dumps)) {
       WHERE length(v.ref)=length(a.alt) AND length(v.ref)>=2 AND v.ref<>a.alt),
   comps AS (SELECT chrom,pos,r,al, string_agg((pos+(i-1))||':'||substring(r,i,1)||':'||substring(al,i,1),';' ORDER BY i) cs
       FROM mnvs, range(1,length(r)+1) t(i) WHERE substring(r,i,1)<>substring(al,i,1) GROUP BY chrom,pos,r,al),
-  nk AS (SELECT chrom,pos,r,al, normalize_variant(pos,r,al) nv FROM mnvs),
-  vep AS (SELECT pos,ref,alt,transcript_id, list_sort(coding_only(string_split(consequence,'&'))) vc
+  -- the dump now carries the ORIGINAL identity (opos,oref,oalt) for VEP rows, so join directly on it
+  -- (no normalize_variant round-trip / '-' alignment guesswork — the pi P0-5 keying fix).
+  vep AS (SELECT opos,oref,oalt,transcript_id, list_sort(coding_only(string_split(consequence,'&'))) vc
           FROM read_parquet('%s') WHERE source='vep'),
   joined AS (SELECT
-      list_sort(string_split(vep_haplotype_consequence(c.chrom, m.transcript_id, c.cs),'&')) hap, m.vc vep_terms
-    FROM (SELECT vep.*, nk.chrom, nk.pos opos, nk.r oref, nk.al oalt FROM vep JOIN nk
-          ON vep.pos=nk.nv.pos AND vep.ref=CASE WHEN nk.nv.ref='' THEN '-' ELSE nk.nv.ref END
-          AND vep.alt=CASE WHEN nk.nv.alt='' THEN '-' ELSE nk.nv.alt END) m
-    JOIN comps c ON c.chrom=m.chrom AND c.pos=m.opos AND c.r=m.oref AND c.al=m.oalt WHERE len(m.vc)>0)
+      list_sort(string_split(vep_haplotype_consequence(c.chrom, vep.transcript_id, c.cs),'&')) hap, vep.vc vep_terms
+    FROM vep JOIN comps c ON c.pos=vep.opos AND c.r=vep.oref AND c.al=vep.oalt WHERE len(vep.vc)>0)
   SELECT count(*) AS tested, count(*) FILTER (WHERE hap=vep_terms) AS concordant,
          round(100.0*count(*) FILTER (WHERE hap=vep_terms)/count(*),3) AS pct FROM joined;",
     EXT, GFF3, FASTA, CODING_MACRO, SAMPLE, DUMP))

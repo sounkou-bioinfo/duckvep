@@ -4,11 +4,14 @@
 # correctness/vep_concordance.R: VEP-116 --gff + duckvep + fastVEP, one row per
 # (source, pos, ref, alt, transcript_id) with the SO-term set); statistics + report in R.
 #
-# Per (consequence class x variant type x length bin) stratum: N shared (variant,transcript)
-# pairs, duckvep/fastVEP discordances vs the VEP oracle, and the exact Clopper-Pearson 95%
-# upper bound on the duckvep discordance rate (binom.test) — the provable statement
-# ("matches VEP at < U @95%, N=..."). At 0 discordances this is the rule of three (~3/N), so
-# certifying a stratum at <1e-5 needs ~3e5 examples IN that stratum.
+# Per (consequence class x variant type x length bin) stratum: N = UNION of (variant,transcript)
+# pairs EITHER engine emits (so emission misses/extras count, not just shared pairs — pi P0-3),
+# duckvep/fastVEP discordances vs the VEP oracle, and the exact Clopper-Pearson 95% upper bound
+# on the duckvep discordance rate (binom.test) — the provable statement ("matches VEP at < U
+# @95%, N=..."). At 0 discordances the two-sided CP bound is ~3.7/N (the looser one-sided
+# rule-of-three is ~3/N), so certifying a stratum at <1e-5 needs ~3.7e5 examples IN that stratum.
+# NB: this is an EMPIRICAL bound on the sampled corpus's distribution, not over all variants —
+# the dump's variants are deterministic hash draws and (variant,transcript) pairs cluster.
 #
 # Usage: conformance/stratified_conformance.R [annotations.parquet]   (default: newest dump)
 suppressMessages({ library(duckdb); library(DBI) })
@@ -25,32 +28,37 @@ outdir <- file.path(root, "conformance", "data"); dir.create(outdir, showWarning
 con <- dbConnect(duckdb())
 on.exit(dbDisconnect(con, shutdown = TRUE))
 
-# Stratify in SQL: variant type + signed length bin from the minimal alleles (VEP writes '-'
-# for the empty side), consequence class = VEP's SO-term set; compare on shared pairs.
+# Stratify in SQL over the UNION of VEP and duckvep pairs, keyed on the ORIGINAL identity
+# (opos,oref,oalt) the dump now carries — so indels the engines align differently still compare
+# as the same pair (pi P0-5) and emission misses/extras are counted (pi P0-3). var_type + signed
+# length bin from the original alleles; consequence class = VEP's SO-term set (or '(no_vep)' for
+# a duckvep-extra emission). A discordance = any non-'match' status.
 sql <- sprintf("
-  WITH src AS (SELECT source,pos,ref,alt,transcript_id,consequence FROM read_parquet('%s')),
-  v AS (SELECT pos,ref,alt,transcript_id,consequence vc FROM src WHERE source='vep'),
-  d AS (SELECT pos,ref,alt,transcript_id,consequence dc FROM src WHERE source='duckvep'),
-  f AS (SELECT pos,ref,alt,transcript_id,consequence fc FROM src WHERE source='fastvep'),
+  WITH src AS (SELECT source,opos,oref,oalt,transcript_id,consequence FROM read_parquet('%s')),
+  v AS (SELECT opos,oref,oalt,transcript_id,consequence vc FROM src WHERE source='vep'),
+  d AS (SELECT opos,oref,oalt,transcript_id,consequence dc FROM src WHERE source='duckvep'),
+  f AS (SELECT opos,oref,oalt,transcript_id,consequence fc FROM src WHERE source='fastvep'),
+  u AS (SELECT opos,oref,oalt,transcript_id FROM v UNION SELECT opos,oref,oalt,transcript_id FROM d),
   shape AS (
     SELECT v.vc, d.dc, f.fc,
-      CASE WHEN ref='-' THEN 'ins' WHEN alt='-' THEN 'del'
-           WHEN length(ref)=1 AND length(alt)=1 THEN 'snv'
-           WHEN length(ref)=length(alt) THEN 'mnv'
-           WHEN length(alt)>length(ref) THEN 'ins'
-           WHEN length(alt)<length(ref) THEN 'del' ELSE 'delins' END AS var_type,
-      ((CASE WHEN alt='-' THEN 0 ELSE length(alt) END) -
-       (CASE WHEN ref='-' THEN 0 ELSE length(ref) END)) AS net
-    FROM v JOIN d USING(pos,ref,alt,transcript_id) JOIN f USING(pos,ref,alt,transcript_id))
-  SELECT vc AS consequence_class, var_type,
+      CASE WHEN length(u.oref)=1 AND length(u.oalt)=1 THEN 'snv' WHEN length(u.oalt)>length(u.oref) THEN 'ins'
+           WHEN length(u.oref)>length(u.oalt) THEN 'del' ELSE 'mnv' END AS var_type,
+      length(u.oalt)-length(u.oref) AS net,
+      coalesce(v.vc, '(no_vep_emission)') AS cclass,
+      CASE WHEN v.vc IS NULL THEN 'duckvep_extra' WHEN d.dc IS NULL THEN 'duckvep_missing'
+           WHEN v.vc=d.dc THEN 'match' ELSE 'term_mismatch' END AS status
+    FROM u LEFT JOIN v USING(opos,oref,oalt,transcript_id)
+           LEFT JOIN d USING(opos,oref,oalt,transcript_id)
+           LEFT JOIN f USING(opos,oref,oalt,transcript_id))
+  SELECT cclass AS consequence_class, var_type,
     CASE WHEN net=0 THEN '0'
          WHEN abs(net) BETWEEN 1 AND 3 THEN (CASE WHEN net<0 THEN '-' ELSE '+' END)||abs(net)::VARCHAR
          WHEN abs(net) BETWEEN 4 AND 10 THEN (CASE WHEN net<0 THEN '-' ELSE '+' END)||'4..10'
          WHEN abs(net) BETWEEN 11 AND 50 THEN (CASE WHEN net<0 THEN '-' ELSE '+' END)||'11..50'
          ELSE (CASE WHEN net<0 THEN '-' ELSE '+' END)||'>50' END AS length_bin,
     count(*) n,
-    count(*) FILTER (WHERE dc<>vc) dv_discordant,
-    count(*) FILTER (WHERE fc<>vc) fv_discordant
+    count(*) FILTER (WHERE status<>'match') dv_discordant,
+    count(*) FILTER (WHERE fc IS DISTINCT FROM vc) fv_discordant
   FROM shape GROUP BY 1,2,3 ORDER BY dv_discordant DESC, n DESC", dump)
 df <- dbGetQuery(con, sql)
 

@@ -80,20 +80,29 @@ fork <- if (nzchar(pa$options$fork)) pa$options$fork else as.character(max(1, pa
 gene_model <- if (oracle == "gff") c("--gff", MODEL_GFF, "--fasta", fasta) else
   c("--offline", "--cache", "--dir_cache", file.path(root, "data/vep_cache"),
     "--cache_version", rel, "--species", "homo_sapiens", "--assembly", "GRCh38", "--fasta", fasta)
-system2(vep_cmd[1], c(vep_cmd[-1], "-i", SAMPLE_VCF, gene_model, "--distance", "5000",
+vrc <- system2(vep_cmd[1], c(vep_cmd[-1], "-i", SAMPLE_VCF, gene_model, "--distance", "5000",
         "--symbol", "--json", "-o", "/tmp/vep_off.json", "--fork", fork, "--buffer_size",
         pa$options$buffer, "--force_overwrite", "--no_stats"), stdout = FALSE, stderr = FALSE)
-# stream the JSON-lines; one row per (variant, transcript) on VEP's own canonical normalized key
+if (vrc != 0 || !file.exists("/tmp/vep_off.json") || file.info("/tmp/vep_off.json")$size == 0)
+  stop(sprintf("VEP failed (exit %s) or produced empty JSON — refusing to write a partial dump", vrc))
+# Stream the JSON-lines; one row per (variant, transcript). Key on the ORIGINAL input variant
+# (VEP echoes the VCF line in `input`: pos=2, ref=4, alt=5) — NOT VEP's normalized output —
+# so a deletion/insertion that VEP and duckvep left/right-align differently still compares as
+# the same pair (pi P0-5). vmap (orig -> VEP normalized start/allele_string) bridges fastVEP.
+vmap <<- list()
 vep_rows <- function() {
   out <- list(); recs <- stream_in(file("/tmp/vep_off.json"), verbose = FALSE)
   for (i in seq_len(nrow(recs))) {
-    rec <- recs[i, ]; tcs <- rec$transcript_consequences[[1]]
-    if (is.null(tcs) || !length(tcs)) next
+    rec <- recs[i, ]; inf <- strsplit(rec$input, "\t")[[1]]
+    opos <- as.integer(inf[2]); oref <- inf[4]; oalt <- inf[5]
+    vmap[[length(vmap) + 1]] <<- data.frame(opos = opos, oref = oref, oalt = oalt,
+      vkey = paste(rec$start, rec$allele_string), stringsAsFactors = FALSE)
+    tcs <- rec$transcript_consequences[[1]]; if (is.null(tcs) || !length(tcs)) next
     nref <- strsplit(rec$allele_string, "/")[[1]][1]
     for (j in seq_len(nrow(tcs))) {
       tc <- tcs[j, ]
-      out[[length(out) + 1]] <- data.frame(source = "vep", date = DATE, pos = rec$start, ref = nref,
-        alt = if (!is.null(tc$variant_allele)) tc$variant_allele else "",
+      out[[length(out) + 1]] <- data.frame(source = "vep", date = DATE, opos = opos, oref = oref, oalt = oalt,
+        pos = rec$start, ref = nref, alt = if (!is.null(tc$variant_allele)) tc$variant_allele else "",
         transcript_id = tc$transcript_id, gene_symbol = if (!is.null(tc$gene_symbol)) tc$gene_symbol else "",
         consequence = paste(sort(tc$consequence_terms[[1]], method = "radix"), collapse = "&"),
         impact = if (!is.null(tc$impact)) tc$impact else "", stringsAsFactors = FALSE)
@@ -101,17 +110,21 @@ vep_rows <- function() {
   }
   do.call(rbind, out)
 }
-vr <- vep_rows(); msg(sprintf("VEP %s (%s GRCh38): %d (variant,transcript) rows", oracle, rel, nrow(vr)))
+vr <- vep_rows(); vmap <- unique(do.call(rbind, vmap))
+msg(sprintf("VEP %s (%s GRCh38): %d (variant,transcript) rows", oracle, rel, nrow(vr)))
 stream_out(vr, file("/tmp/vep_raw.json"), verbose = FALSE)
 
-## 4. duckvep (CLI, one session): annotate the sample, canonical normalized key, -> JSON.
+## 4. duckvep (CLI, one session): annotate the sample. Carry the ORIGINAL (v.pos,v.ref,a.alt)
+## as the comparison key (opos/oref/oalt) AND the engine-normalized alleles (pos/ref/alt, for
+## shape + the haplotype oracle). -> JSON.
 sql_run(sprintf("LOAD '%s';
 SELECT vep_load_cache('%s', '%s');
 COPY (
   WITH dv AS (
-    SELECT normalize_variant(v.pos, v.ref, a.alt) AS nv, c.transcript_id, c.gene_symbol, c.consequence, c.impact
+    SELECT v.pos AS opos, v.ref AS oref, a.alt AS oalt,
+           normalize_variant(v.pos, v.ref, a.alt) AS nv, c.transcript_id, c.gene_symbol, c.consequence, c.impact
     FROM read_vcf('%s') v, UNNEST(v.alt) AS a(alt), UNNEST(vep_consequence(v.chrom, v.pos, v.ref, a.alt)) AS u(c))
-  SELECT 'duckvep' AS source, '%s' AS date, nv.pos AS pos,
+  SELECT 'duckvep' AS source, '%s' AS date, opos, oref, oalt, nv.pos AS pos,
          CASE WHEN nv.ref='' THEN '-' ELSE nv.ref END AS ref,
          CASE WHEN nv.alt='' THEN '-' ELSE nv.alt END AS alt,
          transcript_id, gene_symbol,
@@ -125,12 +138,18 @@ fv_present <- file.exists(FASTVEP)
 if (fv_present) {
   raw <- system2(FASTVEP, c("annotate", "-i", SAMPLE_VCF, "--gff3", MODEL_GFF, "--fasta", fasta,
                             "--output-format", "json"), stdout = TRUE, stderr = FALSE)
-  arr <- tryCatch(fromJSON(paste(raw, collapse = "\n"), simplifyVector = FALSE), error = function(e) list())
+  arr <- tryCatch(fromJSON(paste(raw, collapse = "\n"), simplifyVector = FALSE),
+                  error = function(e) stop("fastVEP JSON parse failed (not silently skipped): ", conditionMessage(e)))
+  # fastVEP has no `input` field but mirrors VEP's normalization; bridge its (start,allele_string)
+  # back to the original identity via VEP's vmap so all three engines share the original key.
+  vlk <- setNames(seq_len(nrow(vmap)), vmap$vkey)
   out <- list()
   for (rec in arr) for (tc in rec$transcript_consequences) {
     parts <- strsplit(rec$allele_string, "/")[[1]]
-    out[[length(out) + 1]] <- data.frame(source = "fastvep", date = DATE, pos = rec$start,
-      ref = parts[1], alt = parts[length(parts)], transcript_id = tc$transcript_id,
+    mi <- vlk[[paste(rec$start, rec$allele_string)]]; if (is.null(mi)) next   # no VEP anchor -> can't key to original
+    out[[length(out) + 1]] <- data.frame(source = "fastvep", date = DATE,
+      opos = vmap$opos[mi], oref = vmap$oref[mi], oalt = vmap$oalt[mi],
+      pos = rec$start, ref = parts[1], alt = parts[length(parts)], transcript_id = tc$transcript_id,
       gene_symbol = if (!is.null(tc$gene_symbol)) tc$gene_symbol else "",
       consequence = paste(sort(unlist(tc$consequence_terms), method = "radix"), collapse = "&"),
       impact = if (!is.null(tc$impact)) tc$impact else "", stringsAsFactors = FALSE)
@@ -142,16 +161,20 @@ if (fv_present) {
 ## 6. Dated Parquet dump + the recorded concordance CSVs (DuckDB SQL, unchanged from the port).
 fv_union <- if (fv_present && file.exists("/tmp/fv.json")) "UNION ALL BY NAME SELECT * FROM read_json('/tmp/fv.json')" else ""
 dpath <- file.path(root, "correctness/data")
+# All concordance/emission joins key on the ORIGINAL identity (opos,oref,oalt,transcript_id),
+# not each engine's normalized alleles (pi P0-5) — so indels the engines align differently
+# still compare as the same pair, and the EXCEPT-based emission audit counts true misses/extras.
 summary_sql <- sprintf("
 CREATE TABLE ann AS
-  SELECT * FROM read_json('/tmp/vep_raw.json', columns={source:'VARCHAR',date:'VARCHAR',pos:'BIGINT',ref:'VARCHAR',alt:'VARCHAR',transcript_id:'VARCHAR',gene_symbol:'VARCHAR',consequence:'VARCHAR',impact:'VARCHAR'})
+  SELECT * FROM read_json('/tmp/vep_raw.json', columns={source:'VARCHAR',date:'VARCHAR',opos:'BIGINT',oref:'VARCHAR',oalt:'VARCHAR',pos:'BIGINT',ref:'VARCHAR',alt:'VARCHAR',transcript_id:'VARCHAR',gene_symbol:'VARCHAR',consequence:'VARCHAR',impact:'VARCHAR'})
   UNION ALL BY NAME SELECT * FROM read_json('/tmp/dv.json') %s;
-COPY (SELECT * FROM ann ORDER BY pos, transcript_id, source) TO '%s/annotations.parquet' (FORMAT parquet);
-CREATE TABLE vv AS SELECT pos,ref,alt,transcript_id,consequence,impact,
-  CASE WHEN alt='-' THEN 'del' WHEN ref='-' THEN 'ins' WHEN length(ref)=1 AND length(alt)=1 THEN 'snv' ELSE 'mnv' END AS class
+COPY (SELECT * FROM ann ORDER BY opos, transcript_id, source) TO '%s/annotations.parquet' (FORMAT parquet);
+CREATE TABLE vv AS SELECT opos,oref,oalt,transcript_id,consequence,impact,
+  CASE WHEN length(oref)=1 AND length(oalt)=1 THEN 'snv' WHEN length(oalt)>length(oref) THEN 'ins'
+       WHEN length(oref)>length(oalt) THEN 'del' ELSE 'mnv' END AS class
   FROM ann WHERE source='vep';
 CREATE TABLE pairs AS SELECT e.source AS engine, vv.impact, vv.class, vv.consequence AS vep_csq, e.consequence AS eng_csq
-  FROM (SELECT * FROM ann WHERE source<>'vep') e JOIN vv USING (pos,ref,alt,transcript_id);
+  FROM (SELECT * FROM ann WHERE source<>'vep') e JOIN vv USING (opos,oref,oalt,transcript_id);
 COPY (SELECT '%s' AS date, engine, impact, class, %d AS n_variants, count(*) AS pairs,
         count(*) FILTER (WHERE vep_csq=eng_csq) AS agree,
         round(100.0*count(*) FILTER (WHERE vep_csq=eng_csq)/nullif(count(*),0),4) AS pct
@@ -163,19 +186,19 @@ COPY (WITH t AS (SELECT engine, impact, unnest(string_split(vep_csq,'&')) AS so_
         round(1e5*count(*) FILTER (WHERE disc)/count(*)) AS per100k
       FROM t GROUP BY ALL HAVING count(*) >= 20 ORDER BY engine, discordant DESC
 ) TO '%s/discordance_by_consequence.csv' (HEADER, FORMAT csv);
-COPY (WITH v AS (SELECT pos,ref,alt,transcript_id,consequence vc,impact FROM ann WHERE source='vep'),
-        dd AS (SELECT pos,ref,alt,transcript_id,consequence dc FROM ann WHERE source='duckvep'),
-        ff AS (SELECT pos,ref,alt,transcript_id,consequence fc FROM ann WHERE source='fastvep')
+COPY (WITH v AS (SELECT opos,oref,oalt,transcript_id,consequence vc,impact FROM ann WHERE source='vep'),
+        dd AS (SELECT opos,oref,oalt,transcript_id,consequence dc FROM ann WHERE source='duckvep'),
+        ff AS (SELECT opos,oref,oalt,transcript_id,consequence fc FROM ann WHERE source='fastvep')
       SELECT '%s' AS date, v.impact, v.vc AS vep_calls, dd.dc AS duckvep_calls,
         (ff.fc IS NOT DISTINCT FROM v.vc) AS duckvep_specific_regression, count(*) AS n
-      FROM v JOIN dd USING(pos,ref,alt,transcript_id) LEFT JOIN ff USING(pos,ref,alt,transcript_id)
+      FROM v JOIN dd USING(opos,oref,oalt,transcript_id) LEFT JOIN ff USING(opos,oref,oalt,transcript_id)
       WHERE v.vc <> dd.dc GROUP BY ALL ORDER BY n DESC LIMIT 60
 ) TO '%s/error_transitions.csv' (HEADER, FORMAT csv);
-COPY (WITH v AS (SELECT pos,ref,alt,transcript_id,consequence vc,impact FROM ann WHERE source='vep'),
-        dd AS (SELECT pos,ref,alt,transcript_id,consequence dc FROM ann WHERE source='duckvep'),
-        ff AS (SELECT pos,ref,alt,transcript_id,consequence fc FROM ann WHERE source='fastvep'),
+COPY (WITH v AS (SELECT opos,oref,oalt,transcript_id,consequence vc,impact FROM ann WHERE source='vep'),
+        dd AS (SELECT opos,oref,oalt,transcript_id,consequence dc FROM ann WHERE source='duckvep'),
+        ff AS (SELECT opos,oref,oalt,transcript_id,consequence fc FROM ann WHERE source='fastvep'),
       j AS (SELECT v.impact, string_split(v.vc,'&') AS vt, string_split(dd.dc,'&') AS dt, coalesce(string_split(ff.fc,'&'),[]) AS ft
-        FROM v JOIN dd USING(pos,ref,alt,transcript_id) LEFT JOIN ff USING(pos,ref,alt,transcript_id) WHERE v.vc<>dd.dc),
+        FROM v JOIN dd USING(opos,oref,oalt,transcript_id) LEFT JOIN ff USING(opos,oref,oalt,transcript_id) WHERE v.vc<>dd.dc),
       t AS (SELECT impact, list_filter(vt, x -> NOT list_contains(dt,x)) AS vep_only,
               list_filter(dt, x -> NOT list_contains(vt,x)) AS dv_only, ft FROM j)
       SELECT '%s' AS date, impact,
@@ -184,21 +207,21 @@ COPY (WITH v AS (SELECT pos,ref,alt,transcript_id,consequence vc,impact FROM ann
         (len(list_filter(vep_only, x -> NOT list_contains(ft,x)))=0 AND len(list_filter(dv_only, x -> list_contains(ft,x)))=0) AS duckvep_specific_regression,
         count(*) AS n FROM t GROUP BY ALL ORDER BY n DESC LIMIT 60
 ) TO '%s/so_term_transitions.csv' (HEADER, FORMAT csv);
-COPY (WITH v AS (SELECT pos,ref,alt,transcript_id,consequence vc FROM ann WHERE source='vep'),
-        f AS (SELECT pos,ref,alt,transcript_id,consequence fc FROM ann WHERE source='fastvep'),
-        dd AS (SELECT pos,ref,alt,transcript_id,consequence dc FROM ann WHERE source='duckvep'),
-        vk AS (SELECT DISTINCT pos,ref,alt,transcript_id FROM v), fk AS (SELECT DISTINCT pos,ref,alt,transcript_id FROM f),
-        dk AS (SELECT DISTINCT pos,ref,alt,transcript_id FROM dd)
+COPY (WITH v AS (SELECT opos,oref,oalt,transcript_id,consequence vc FROM ann WHERE source='vep'),
+        f AS (SELECT opos,oref,oalt,transcript_id,consequence fc FROM ann WHERE source='fastvep'),
+        dd AS (SELECT opos,oref,oalt,transcript_id,consequence dc FROM ann WHERE source='duckvep'),
+        vk AS (SELECT DISTINCT opos,oref,oalt,transcript_id FROM v), fk AS (SELECT DISTINCT opos,oref,oalt,transcript_id FROM f),
+        dk AS (SELECT DISTINCT opos,oref,oalt,transcript_id FROM dd)
       SELECT * FROM (VALUES
-        ('duckvep_discordant_on_shared',(SELECT count(*) FROM v JOIN dd USING(pos,ref,alt,transcript_id) WHERE vc<>dc)),
+        ('duckvep_discordant_on_shared',(SELECT count(*) FROM v JOIN dd USING(opos,oref,oalt,transcript_id) WHERE vc<>dc)),
         ('duckvep_only_pairs_emission',(SELECT count(*) FROM (SELECT * FROM dk EXCEPT SELECT * FROM vk))),
         ('duckvep_missing_pairs_emission',(SELECT count(*) FROM (SELECT * FROM vk EXCEPT SELECT * FROM dk))),
-        ('duckvep_total_divergence',(SELECT count(*) FROM v JOIN dd USING(pos,ref,alt,transcript_id) WHERE vc<>dc)
+        ('duckvep_total_divergence',(SELECT count(*) FROM v JOIN dd USING(opos,oref,oalt,transcript_id) WHERE vc<>dc)
            + (SELECT count(*) FROM (SELECT * FROM dk EXCEPT SELECT * FROM vk)) + (SELECT count(*) FROM (SELECT * FROM vk EXCEPT SELECT * FROM dk))),
-        ('fastvep_discordant_on_shared',(SELECT count(*) FROM v JOIN f USING(pos,ref,alt,transcript_id) WHERE vc<>fc)),
+        ('fastvep_discordant_on_shared',(SELECT count(*) FROM v JOIN f USING(opos,oref,oalt,transcript_id) WHERE vc<>fc)),
         ('fastvep_only_pairs_emission',(SELECT count(*) FROM (SELECT * FROM fk EXCEPT SELECT * FROM vk))),
         ('fastvep_missing_pairs_emission',(SELECT count(*) FROM (SELECT * FROM vk EXCEPT SELECT * FROM fk))),
-        ('fastvep_total_divergence',(SELECT count(*) FROM v JOIN f USING(pos,ref,alt,transcript_id) WHERE vc<>fc)
+        ('fastvep_total_divergence',(SELECT count(*) FROM v JOIN f USING(opos,oref,oalt,transcript_id) WHERE vc<>fc)
            + (SELECT count(*) FROM (SELECT * FROM fk EXCEPT SELECT * FROM vk)) + (SELECT count(*) FROM (SELECT * FROM vk EXCEPT SELECT * FROM fk)))
       ) t(metric,value)
 ) TO '%s/methodology_audit.csv' (HEADER, FORMAT csv);",
