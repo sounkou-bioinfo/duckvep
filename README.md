@@ -24,11 +24,11 @@ loading.
 Concordance with Ensembl VEP is measured rather than assumed. On a
 controlled `--gff` setup, where VEP, duckvep and the vendored fastVEP
 read the same gene model and results are keyed to the original input
-variant, duckvep diverges from VEP on 239 of roughly 1.44M
-variant/transcript pairs (N=50,000 ClinVar variants): 210 with a
+variant, duckvep diverges from VEP on 161 of roughly 1.44M
+variant/transcript pairs (N=50,000 ClinVar variants): 132 with a
 different consequence on a shared pair plus 29 emission differences. Of
-the shared-pair disagreements, 92 are duckvep-specific (fastVEP matches
-VEP where duckvep does not); fastVEP itself diverges on 5,063 pairs. The
+the shared-pair disagreements, 39 are duckvep-specific (fastVEP matches
+VEP where duckvep does not); fastVEP itself diverges on 5,089 pairs. The
 remaining duckvep cases are boundary indels where VEP 3’-shifts the
 allele before calling consequence. The reports under
 [`conformance/`](conformance/) are stratified by consequence term,
@@ -322,11 +322,11 @@ indels and MNVs at exon/splice boundaries.
 | impact   | class | duckvep /100K | fastVEP /100K |
 |:---------|:------|:--------------|:--------------|
 | HIGH     | del   | 65/100K       | 8713/100K     |
-| HIGH     | ins   | 775/100K      | 4930/100K     |
+| HIGH     | ins   | 383/100K      | 4930/100K     |
 | HIGH     | mnv   | 0/100K        | 37179/100K    |
 | HIGH     | snv   | 2/100K        | 46/100K       |
 | MODERATE | del   | 0/100K        | 5042/100K     |
-| MODERATE | ins   | 2618/100K     | 5707/100K     |
+| MODERATE | ins   | 2304/100K     | 5707/100K     |
 | MODERATE | mnv   | 0/100K        | 20957/100K    |
 | MODERATE | snv   | 0/100K        | 0/100K        |
 | LOW      | del   | 426/100K      | 15449/100K    |
@@ -334,7 +334,7 @@ indels and MNVs at exon/splice boundaries.
 | LOW      | mnv   | 0/100K        | 575/100K      |
 | LOW      | snv   | 0/100K        | 17/100K       |
 | MODIFIER | del   | 0/100K        | 55/100K       |
-| MODIFIER | ins   | 160/100K      | 47/100K       |
+| MODIFIER | ins   | 0/100K        | 47/100K       |
 | MODIFIER | mnv   | 0/100K        | 0/100K        |
 | MODIFIER | snv   | 0/100K        | 5/100K        |
 
@@ -349,16 +349,16 @@ fastVEP matches VEP (`regression` = duckvep worse than upstream;
 `shared` = inherited engine gap) — top by pair count, generated from
 `correctness/data/error_transitions.csv`:
 
-| type       | impact   | VEP calls                                                      | duckvep calls                                                                                |   n |
-|:-----------|:---------|:---------------------------------------------------------------|:---------------------------------------------------------------------------------------------|----:|
-| shared     | LOW      | stop_retained_variant                                          | stop_lost                                                                                    |  28 |
-| shared     | HIGH     | NMD_transcript_variant&frameshift_variant&stop_gained          | NMD_transcript_variant&frameshift_variant&intron_variant&splice_acceptor_variant&stop_gained |  28 |
-| regression | HIGH     | frameshift_variant                                             | frameshift_variant&splice_region_variant                                                     |  21 |
-| regression | MODERATE | NMD_transcript_variant&inframe_insertion&splice_region_variant | NMD_transcript_variant&protein_altering_variant&splice_region_variant                        |  20 |
-| regression | MODERATE | inframe_insertion&splice_region_variant                        | protein_altering_variant&splice_region_variant                                               |  19 |
-| shared     | HIGH     | frameshift_variant&stop_gained                                 | frameshift_variant&intron_variant&splice_acceptor_variant&stop_gained                        |  16 |
-| shared     | HIGH     | protein_altering_variant&stop_gained                           | protein_altering_variant&splice_region_variant&stop_gained                                   |  12 |
-| regression | MODIFIER | 5_prime_UTR_variant&NMD_transcript_variant                     | 5_prime_UTR_variant&NMD_transcript_variant&intron_variant&splice_acceptor_variant            |  10 |
+| type       | impact   | VEP calls                                                                              | duckvep calls                                                                                                                |   n |
+|:-----------|:---------|:---------------------------------------------------------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------|----:|
+| shared     | HIGH     | intron_variant&splice_donor_region_variant&splice_donor_variant                        | intron_variant&splice_donor_region_variant                                                                                   |  33 |
+| shared     | LOW      | stop_retained_variant                                                                  | stop_lost                                                                                                                    |  28 |
+| regression | MODERATE | NMD_transcript_variant&inframe_insertion&splice_region_variant                         | NMD_transcript_variant&protein_altering_variant&splice_region_variant                                                        |  20 |
+| regression | MODERATE | inframe_insertion&splice_region_variant                                                | protein_altering_variant&splice_region_variant                                                                               |  19 |
+| shared     | HIGH     | NMD_transcript_variant&stop_lost                                                       | NMD_transcript_variant&inframe_deletion&stop_lost                                                                            |   6 |
+| shared     | HIGH     | NMD_transcript_variant&intron_variant&splice_donor_region_variant&splice_donor_variant | NMD_transcript_variant&intron_variant&splice_donor_region_variant                                                            |   6 |
+| shared     | MODERATE | inframe_insertion&stop_retained_variant                                                | inframe_insertion&stop_gained                                                                                                |   3 |
+| shared     | HIGH     | transcript_ablation                                                                    | intron_variant&non_coding_transcript_exon_variant&splice_acceptor_variant&splice_donor_5th_base_variant&splice_donor_variant |   2 |
 
 The open work splits into **duckvep-specific regressions** (mainly
 splice sub-term precedence on boundary indels, where VEP 3’-shifts the
@@ -392,7 +392,7 @@ methodology, are in **[`benchmarks/results.md`](benchmarks/results.md)**
 The main accuracy work is to port VEP’s `TranscriptVariationAllele`
 coordinate layer (the cDNA/CDS/protein mapper, `codon()`/`peptide()`,
 and the start/stop/frameshift predicates). VEP 3’-shifts an indel before
-calling consequence; duckvep does not yet, which is the source of the 92
+calling consequence; duckvep does not yet, which is the source of the 39
 duckvep-specific boundary-indel divergences in the conformance report.
 Porting that layer replaces the current windowed-peptide surrogate with
 VEP’s own coordinate model and is what would turn the differential
