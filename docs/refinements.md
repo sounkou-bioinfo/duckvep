@@ -55,6 +55,17 @@ removed by keying VEP/duckvep/fastVEP to the original witness identity — so th
   **windowed-peptide surrogate** mis-reconstructs `ref_pep`/`alt_pep` at the exon boundary — the
   deeper [[port-faithfulness-pivot-to-TVA]] `peptide()` issue, not a one-line fix. Tracked by the
   `correctness/correctness.md` convergence plot.
+  - **pi review of the splice fix (82a3fa2) + empirical resolution.** pi flagged that VEP's
+    `_get_differing_regions` may alt-extend the splice interval for a `ref>1 & alt>1` delins, so
+    `splice_end = var_end` could *under-call* splice when a long ALT reaches a boundary the reference
+    span doesn't. The premise is **falsified by real VEP output**: 6002600 (ref 3, alt 116bp, no
+    common prefix/suffix → exactly `ref>1 & alt>1`) gets **no splice** from VEP despite sitting by the
+    5′UTR/intron boundary — if VEP extended, it would call splice. Plus **0 under-calls** across the
+    N=50000 ClinVar dump (3343 indels), and cargo (39) + regression (35/35) + fuzzer (71/0) green. So
+    the fix matches real VEP; reverting would re-introduce 53 real over-calls to guard a theoretical
+    case the data contradicts. Rigorous long-term: port VEP's `_get_differing_regions` faithfully
+    (the TVA layer) and add a witness for the in-exon-interior-ref + long-ALT-toward-donor geometry
+    to close the coverage gap pi correctly identified.
 - **High-impact indel / MNV tail (shared with fastVEP)** — a frameshift / 3′UTR-straddle deletion
   at the stop (KDM5A 313154: VEP `stop_lost`, duckvep `stop_retained` — the windowed peptide is too
   short to see the read-through; needs the full `peptide()` from item 1), and multi-exon
