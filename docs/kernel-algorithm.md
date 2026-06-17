@@ -340,6 +340,23 @@ is an **eager, serial, statistics-less scan**. `read_parquet` hands DuckDB
 partition**, plus a **parallel** scan; the table function offers neither, so the
 planner falls back to a worse, serial, memory-heavy plan.
 
+And the same holds for a **persisted `.duckdb` table you `ATTACH`** instead of
+`read_parquet`:
+
+| transcript join source | wall | CPU | on-disk |
+|---|---|---|---|
+| `read_parquet(cache)` | 60 s | 1333% (~13 cores) | 46 MB |
+| `ATTACH gene_model.duckdb` table | 82 s | 448% (~4.5 cores) | 483 MB full / 12.6 MB lean |
+
+The attached table is **slower, ~3× less parallel, and the full native file is 10×
+larger** (DuckDB does not zstd-compress the `model` BLOB; Parquet does). DuckDB's
+Parquet scanner is simply the best-tuned parallel source — and the DuckDB-free Rust
+engine needs Parquet anyway (a `.duckdb` file has no standalone reader). So for the
+**transcript cache**, Parquet wins on every axis. `ATTACH` is still the right home
+for the **annotation-database ecosystem** (gnomAD / ClinVar / panels as persisted,
+shareable, multi-source `.duckdb` files joined in one query) — but not for the hot
+transcript scan.
+
 The lesson: **better SQL means leaning *harder* on DuckDB's native operators, not
 wrapping data in custom UDFs.** `read_parquet` *is* the better SQL. The real
 levers are (1) keep the native parquet scan; (2) store the cache **sorted by
