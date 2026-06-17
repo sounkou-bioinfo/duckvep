@@ -67,87 +67,99 @@ impl TranscriptProvider for MemoryTranscriptProvider {
 /// end of the array, enabling early termination when scanning backwards:
 /// if `suffix_max_end[i] < query_start`, no transcript at index <= i can overlap.
 pub struct IndexedTranscriptProvider {
-    /// Transcripts grouped by chromosome, sorted by start position within each group.
-    by_chrom: HashMap<Arc<str>, Vec<Transcript>>,
-    /// Suffix-max-end arrays: `suffix_max_end[chrom][i]` = max(end) for transcripts[i..].
-    /// Enables early termination in backward scan.
-    suffix_max_end: HashMap<Arc<str>, Vec<u64>>,
-    /// Stable-id → `(chrom key, index within by_chrom[chrom])`. Lets the per-pair
-    /// kernel resolve a transcript named by a DuckDB range join in O(1) without a
-    /// spatial scan (see `get_by_id`).
-    by_id: HashMap<Arc<str>, (Arc<str>, usize)>,
+    /// ALL transcripts in one flat array, globally ordered by `(chrom, start,
+    /// stable_id)`. The array index **is** the transcript ordinal (`tx_idx`) — the
+    /// compact integer key DuckDB carries through the candidate join instead of a
+    /// `transcript_id` string (see `get_by_idx`). This is also the first brick of
+    /// the SoA execution model. Because the order is `(chrom, start, …)`, every
+    /// chromosome's transcripts occupy a CONTIGUOUS ordinal range.
+    all: Vec<Transcript>,
+    /// Suffix-max-end, aligned 1:1 with `all`; within each chromosome's `[lo,hi)`
+    /// segment, `sme[i] = max(all[i..hi].end)` — enables backward-scan early-out.
+    sme: Vec<u64>,
+    /// Chromosome → its contiguous `[lo, hi)` ordinal range in `all`.
+    by_chrom: HashMap<Arc<str>, (usize, usize)>,
+    /// stable_id → `tx_idx`.
+    by_id: HashMap<Arc<str>, usize>,
 }
 
 impl IndexedTranscriptProvider {
     pub fn new(mut transcripts: Vec<Transcript>) -> Self {
-        let mut by_chrom: HashMap<Arc<str>, Vec<Transcript>> = HashMap::new();
-        for tr in transcripts.drain(..) {
-            by_chrom
-                .entry(Arc::clone(&tr.chromosome))
-                .or_default()
-                .push(tr);
-        }
-        // Sort each chromosome's transcripts by start position
-        for trs in by_chrom.values_mut() {
-            trs.sort_by_key(|t| t.start);
-        }
-        // Build suffix-max-end arrays for early termination
-        let mut suffix_max_end = HashMap::new();
-        for (chrom, trs) in &by_chrom {
-            let n = trs.len();
-            let mut sme = vec![0u64; n];
-            if n > 0 {
-                sme[n - 1] = trs[n - 1].end;
-                for i in (0..n - 1).rev() {
-                    sme[i] = trs[i].end.max(sme[i + 1]);
-                }
+        // Global total order — IDENTICAL to the cache writer's (vep::tcache::save)
+        // sort, so the on-disk `tx_idx` (parquet row order) equals this ordinal.
+        // stable_id breaks ties so the order is total and reproducible.
+        transcripts.sort_by(|a, b| {
+            a.chromosome
+                .cmp(&b.chromosome)
+                .then(a.start.cmp(&b.start))
+                .then_with(|| a.stable_id.cmp(&b.stable_id))
+        });
+        let all = transcripts;
+        let n = all.len();
+
+        // Contiguous per-chromosome ranges + per-segment suffix-max-end.
+        let mut by_chrom: HashMap<Arc<str>, (usize, usize)> = HashMap::new();
+        let mut sme = vec![0u64; n];
+        let mut lo = 0;
+        while lo < n {
+            let chrom = Arc::clone(&all[lo].chromosome);
+            let mut hi = lo + 1;
+            while hi < n && all[hi].chromosome == chrom {
+                hi += 1;
             }
-            suffix_max_end.insert(Arc::clone(chrom), sme);
-        }
-        // Build the stable-id index AFTER the per-chrom sort (indices are final).
-        let mut by_id = HashMap::new();
-        for (chrom, trs) in &by_chrom {
-            for (i, t) in trs.iter().enumerate() {
-                by_id.insert(Arc::clone(&t.stable_id), (Arc::clone(chrom), i));
+            // suffix-max-end within [lo, hi)
+            sme[hi - 1] = all[hi - 1].end;
+            for i in (lo..hi - 1).rev() {
+                sme[i] = all[i].end.max(sme[i + 1]);
             }
+            by_chrom.insert(chrom, (lo, hi));
+            lo = hi;
+        }
+
+        let mut by_id = HashMap::with_capacity(n);
+        for (i, t) in all.iter().enumerate() {
+            by_id.insert(Arc::clone(&t.stable_id), i);
         }
         Self {
+            all,
+            sme,
             by_chrom,
-            suffix_max_end,
             by_id,
         }
     }
 
     pub fn transcript_count(&self) -> usize {
-        self.by_chrom.values().map(|v| v.len()).sum()
+        self.all.len()
     }
 
-    /// Resolve a transcript by stable id in O(1) — the per-pair kernel's lookup
-    /// when DuckDB's range join has already named the (variant, transcript) pair.
+    /// Resolve a transcript by its compact ordinal (`tx_idx`) in O(1) — the
+    /// per-pair kernel's lookup once DuckDB's range join has named the pair by
+    /// integer ordinal rather than `transcript_id` string. Index = position in the
+    /// `(chrom,start,stable_id)` order, matching the cache's `tx_idx` column.
+    pub fn get_by_idx(&self, tx_idx: usize) -> Option<&Transcript> {
+        self.all.get(tx_idx)
+    }
+
+    /// Resolve a transcript by stable id in O(1).
     pub fn get_by_id(&self, stable_id: &str) -> Option<&Transcript> {
-        let (chrom, i) = self.by_id.get(stable_id)?;
-        self.by_chrom.get(chrom).and_then(|trs| trs.get(*i))
+        self.all.get(*self.by_id.get(stable_id)?)
     }
 
-    /// Iterate every transcript in the model — backs the `vep_transcripts()`
-    /// table function, which exposes the resident gene model as a SQL relation so
-    /// the range join reads it directly instead of re-reading the parquet cache.
+    /// Iterate every transcript in `tx_idx` order — backs `vep_transcripts()`.
     pub fn iter(&self) -> impl Iterator<Item = &Transcript> {
-        self.by_chrom.values().flat_map(|v| v.iter())
+        self.all.iter()
     }
 
     /// Resolve a query chromosome to its stored `(transcripts, suffix_max_end)`
-    /// buckets, tolerating a `chr` prefix mismatch between the VCF and the gene
+    /// slices, tolerating a `chr` prefix mismatch between the VCF and the gene
     /// model — VEP normalizes `chr1`↔`1` and `chrM`↔`MT`. Without this, a
     /// `chr`-prefixed VCF against an Ensembl cache (`1`,`2`,…,`MT`) annotates
     /// **nothing**. The exact match is tried first and is allocation-free; the
     /// fallbacks only run on a miss.
     fn buckets(&self, chrom: &str) -> Option<(&[Transcript], &[u64])> {
         let get = |k: &str| -> Option<(&[Transcript], &[u64])> {
-            Some((
-                self.by_chrom.get(k)?.as_slice(),
-                self.suffix_max_end.get(k)?.as_slice(),
-            ))
+            let &(lo, hi) = self.by_chrom.get(k)?;
+            Some((&self.all[lo..hi], &self.sme[lo..hi]))
         };
         if let Some(x) = get(chrom) {
             return Some(x); // fast path: exact match, no allocation
@@ -468,6 +480,31 @@ mod tests {
 
         // Transcript count
         assert_eq!(provider.transcript_count(), 3);
+    }
+
+    #[test]
+    fn test_tx_idx_ordinal_matches_chrom_start_order() {
+        // The tx_idx ordinal must equal position in (chrom, start, stable_id)
+        // order regardless of input order — this is what makes the on-disk
+        // tx_idx column (same sort in tcache::save) agree with the engine, so
+        // get_by_idx and get_by_id must be consistent.
+        let provider = IndexedTranscriptProvider::new(vec![
+            make_transcript("chr2", 5000, 6000),
+            make_transcript("chr1", 3000, 4000),
+            make_transcript("chr1", 1000, 2000),
+        ]);
+        // ordinal 0,1,2 = chr1@1000, chr1@3000, chr2@5000
+        assert_eq!(provider.get_by_idx(0).unwrap().start, 1000);
+        assert_eq!(&*provider.get_by_idx(0).unwrap().chromosome, "chr1");
+        assert_eq!(provider.get_by_idx(1).unwrap().start, 3000);
+        assert_eq!(provider.get_by_idx(2).unwrap().start, 5000);
+        assert_eq!(&*provider.get_by_idx(2).unwrap().chromosome, "chr2");
+        assert!(provider.get_by_idx(3).is_none());
+        // get_by_id and get_by_idx resolve to the SAME transcript
+        let by_id = provider.get_by_id("ENST_3000").unwrap();
+        let by_idx = provider.get_by_idx(1).unwrap();
+        assert_eq!(by_id.start, by_idx.start);
+        assert_eq!(by_id.stable_id, by_idx.stable_id);
     }
 
     #[test]

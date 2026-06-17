@@ -6,7 +6,7 @@
 //! `arrow`/`parquet` crates, not libduckdb). See docs/DESIGN.md §5.
 
 use arrow::array::{
-    Array, BinaryArray, BooleanArray, Int64Array, Int8Array, RecordBatch, StringArray,
+    Array, BinaryArray, BooleanArray, Int64Array, Int8Array, RecordBatch, StringArray, UInt32Array,
 };
 use arrow::datatypes::{DataType, Field, Schema};
 use fastvep_genome::Transcript;
@@ -52,7 +52,16 @@ const BATCH_ROWS: usize = 8192;
 /// file / slowest build.
 pub(crate) const DEFAULT_ZSTD: i32 = 3;
 
-fn build_batch(schema: &Arc<Schema>, chunk: &[&Transcript]) -> Result<RecordBatch, Box<dyn Error>> {
+fn build_batch(
+    schema: &Arc<Schema>,
+    chunk: &[&Transcript],
+    base_idx: u32,
+) -> Result<RecordBatch, Box<dyn Error>> {
+    // tx_idx = global ordinal in the (chrom,start,stable_id) order — the compact
+    // key the candidate join carries instead of transcript_id, and the index the
+    // engine's flat model uses (IndexedTranscriptProvider::get_by_idx). The engine
+    // re-derives the SAME order on load, so this column and the ordinal agree.
+    let tx_idx: Vec<u32> = (base_idx..base_idx + chunk.len() as u32).collect();
     let mut tid = Vec::with_capacity(chunk.len());
     let (mut chrom, mut gid, mut sym, mut bt, mut model) = (
         Vec::with_capacity(chunk.len()),
@@ -83,6 +92,7 @@ fn build_batch(schema: &Arc<Schema>, chunk: &[&Transcript]) -> Result<RecordBatc
     Ok(RecordBatch::try_new(
         schema.clone(),
         vec![
+            Arc::new(UInt32Array::from(tx_idx)),
             Arc::new(StringArray::from(tid)),
             Arc::new(StringArray::from(chrom)),
             Arc::new(Int64Array::from(start)),
@@ -104,6 +114,7 @@ pub(crate) fn save(
 ) -> Result<(), Box<dyn Error>> {
     let level = zstd_level.clamp(1, 22);
     let schema = Arc::new(Schema::new(vec![
+        Field::new("tx_idx", DataType::UInt32, false),
         Field::new("transcript_id", DataType::Utf8, false),
         Field::new("chrom", DataType::Utf8, false),
         Field::new("start", DataType::Int64, false),
@@ -126,15 +137,20 @@ pub(crate) fn save(
     // row groups during the join (docs/kernel-algorithm.md §8). Sorting refs is
     // cheap (~645k pointers) and keeps the streaming row-group writer.
     let mut order: Vec<&Transcript> = transcripts.iter().collect();
+    // IDENTICAL comparator to IndexedTranscriptProvider::new (chrom, start,
+    // stable_id) so the row order here == the engine's tx_idx ordinal.
     order.sort_by(|a, b| {
         a.chromosome
             .cmp(&b.chromosome)
             .then(a.start.cmp(&b.start))
+            .then_with(|| a.stable_id.cmp(&b.stable_id))
     });
     // Stream one row-group batch at a time: each batch's serialized + Arrow copies
     // are dropped before the next is built, so peak memory is O(BATCH_ROWS).
+    let mut base: u32 = 0;
     for chunk in order.chunks(BATCH_ROWS) {
-        w.write(&build_batch(&schema, chunk)?)?;
+        w.write(&build_batch(&schema, chunk, base)?)?;
+        base += chunk.len() as u32;
     }
     w.close()?;
     Ok(())

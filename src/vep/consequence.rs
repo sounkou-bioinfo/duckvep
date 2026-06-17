@@ -114,6 +114,74 @@ impl VScalar for VepLoadCache {
     }
 }
 
+/// `vep_consequence_pair_idx(chrom, pos, [end_pos,] ref, alt, tx_idx) -> STRUCT`
+/// — the ordinal-keyed per-pair kernel. Identical to `vep_consequence_pair` but
+/// the transcript is named by its compact `tx_idx` (UINTEGER) ordinal, so the
+/// candidate join carries an integer (not a `transcript_id` string) and lookup is
+/// a direct array index. The no-regret hot-path win (docs/kernel-algorithm.md §9).
+pub struct VepConsequencePairIdx;
+
+impl VScalar for VepConsequencePairIdx {
+    type State = ();
+
+    unsafe fn invoke(
+        _: &Self::State,
+        input: &mut DataChunkHandle,
+        output: &mut dyn WritableVector,
+    ) -> Result<(), Box<dyn Error>> {
+        let batch = data_chunk_to_arrow(input)?;
+        // Arities: (chrom,pos,ref,alt,tx_idx) and END-aware
+        // (chrom,pos,end_pos,ref,alt,tx_idx).
+        let has_end = batch.num_columns() == 6;
+        let chrom = batch.column(0).as_string::<i32>();
+        let pos = batch.column(1).as_primitive::<Int64Type>();
+        let end = has_end.then(|| batch.column(2).as_primitive::<Int64Type>());
+        let refa = batch.column(if has_end { 3 } else { 2 }).as_string::<i32>();
+        let alta = batch.column(if has_end { 4 } else { 3 }).as_string::<i32>();
+        let tidx = batch.column(if has_end { 5 } else { 4 }).as_primitive::<Int64Type>();
+        let nrows = input.len();
+
+        let mut rows: Vec<Option<AnnotatedRow>> = Vec::with_capacity(nrows);
+        {
+            let ctx = cache()
+                .load_full()
+                .ok_or("vep_consequence_pair_idx: call vep_load_cache(gff3, fasta) first")?;
+            for i in 0..nrows {
+                let p = pos.value(i) as u64;
+                let e = end.map(|c| c.value(i) as u64).unwrap_or(p);
+                let mut v = ctx.annotate_pair_idx(
+                    chrom.value(i),
+                    p,
+                    e,
+                    refa.value(i),
+                    alta.value(i),
+                    tidx.value(i).max(0) as usize,
+                );
+                rows.push(v.pop());
+            }
+        }
+        write_consequence_struct(output, &rows, nrows);
+        Ok(())
+    }
+
+    fn signatures() -> Vec<ScalarFunctionSignature> {
+        let bigint = || LogicalTypeHandle::from(LogicalTypeId::Bigint);
+        let ret = consequence_struct;
+        vec![
+            // (chrom, pos, ref, alt, tx_idx)
+            ScalarFunctionSignature::exact(
+                vec![varchar(), bigint(), varchar(), varchar(), bigint()],
+                ret(),
+            ),
+            // (chrom, pos, end_pos, ref, alt, tx_idx) — END-aware (SV span)
+            ScalarFunctionSignature::exact(
+                vec![varchar(), bigint(), bigint(), varchar(), varchar(), bigint()],
+                ret(),
+            ),
+        ]
+    }
+}
+
 /// The per-transcript struct type returned inside the list.
 fn consequence_struct() -> LogicalTypeHandle {
     LogicalTypeHandle::struct_type(&[

@@ -193,6 +193,29 @@ impl EngineContext {
         self.annotate_over(chrom, pos, end, ref_str, alt_raw, std::slice::from_ref(&t))
     }
 
+    /// Per-pair entry keyed by the compact transcript ordinal (`tx_idx`) rather
+    /// than the `transcript_id` string — the no-regret hot-path win: DuckDB carries
+    /// a `UINTEGER` through the candidate join, and lookup is a direct array index
+    /// (no string transport, no string hash). Same engine as `annotate_pair`.
+    pub(crate) fn annotate_pair_idx(
+        &self,
+        chrom: &str,
+        pos: u64,
+        end: u64,
+        ref_str: &str,
+        alt_raw: &str,
+        tx_idx: usize,
+    ) -> Vec<AnnotatedRow> {
+        if alt_raw.is_empty() || alt_raw == "." {
+            return Vec::new();
+        }
+        let end = end.max(pos + (ref_str.len() as u64).saturating_sub(1));
+        let Some(t) = self.transcripts.get_by_idx(tx_idx) else {
+            return Vec::new();
+        };
+        self.annotate_over(chrom, pos, end, ref_str, alt_raw, std::slice::from_ref(&t))
+    }
+
     /// Shared core: predict consequences for a variant against a GIVEN candidate
     /// transcript set (from a spatial overlap query or a single by-id lookup) and
     /// materialize the output rows. The candidate-set discovery is the only thing
