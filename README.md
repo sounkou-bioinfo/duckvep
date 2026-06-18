@@ -2,6 +2,15 @@
 <!-- README.md is generated from README.Rmd — edit the .Rmd and run `make readme`.
      SQL blocks below are executed live against the built extension via duckknit. -->
 
+> [!IMPORTANT]
+> **This repository is archived.** `duckvep` has moved from this Rust prototype to a
+> C / DuckDB-extension implementation built on
+> [`duckhts`](https://github.com/RGenomicsETL/duckhts) (htslib-backed) plus the
+> `duckhgvs` engine. The active successor is
+> **➡️ [RGenomicsETL/duckvep](https://github.com/RGenomicsETL/duckvep)**.
+> This repo remains as design reference and as a differential-test **oracle**
+> (its consequence engine + sweep prototypes are run to diff the C kernel against).
+
 # duckvep — VEP-style variant consequences in DuckDB
 
 <!-- badges: start -->
